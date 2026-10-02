@@ -895,8 +895,10 @@ function showSignedIn(who) {
   account = who;
   whoDisplayName.textContent = who.display_name;
   whoAccountName.textContent = "@" + who.account_name;
+  profileCard(who);   // classic-layout: the circle and the two counts
   signedOutSection.hidden = true;
   signedInSection.hidden = false;
+  logoutButton.hidden = false;   // classic-layout: Log out is in the top bar
   showDraft(who);
   loadBookmarks();
   loadBlocked();
@@ -911,6 +913,8 @@ function showSignedOut(reason) {
   account = null;
   signedInSection.hidden = true;
   signedOutSection.hidden = false;
+  logoutButton.hidden = true;   // classic-layout
+  profileCounts = null;         // classic-layout: never show the last person's counts
   hideDraft();
   clearBookmarks();
   clearPictureBoxes();
@@ -1872,6 +1876,7 @@ async function afterAccountChange() {
   signupPasswordBox.value = "";
   await reloadTimeline();
   await askForReports();   // report: who is asking changed
+  askForTrends();          // classic-layout: block and report change what counts
 }
 
 // Log in with an account name and password.
@@ -2025,6 +2030,8 @@ async function sendPost(event) {
     updateCount();
     // The place box is not emptied: the same place is likely next time.
     rememberPlace(place.trim());
+    askForCounts();   // classic-layout: one more post on the profile card
+    askForTrends();   // and perhaps a new #tag
     await checkForNewPosts();
     // timeline-flow: you expect to see your own post, so show every waiting one.
     showWaitingPosts();
@@ -2160,6 +2167,7 @@ function showView(name) {
       button.removeAttribute("aria-current");
     }
   }
+  showStreamHeading(name);   // classic-layout: the header of the right column
 }
 
 // Add a view: its button, and its section (made here, unless the page
@@ -3265,6 +3273,8 @@ async function deletePost(postId, button) {
     showStatus("");
     delete item.dataset.editing;
     applyChange({ post_id: answer.post_id, post: answer.post });
+    askForCounts();   // classic-layout: one post fewer on the profile card
+    askForTrends();
   } catch (error) {
     showStatus("cannot_reach");
   } finally {
@@ -3588,6 +3598,130 @@ addPostPart(function avatarPart(post, slots, item) {
   item.classList.add("with-avatar");
 });
 
+// ---- classic-layout: the profile card, the trends and the stream header ----
+//
+// The page is laid out as in 2012: a dark bar across the top, the left column
+// (profile card, post box, trends) and the right column (the stream). See
+// DESIGN.md, "Classic layout".
+
+const profileAvatar = document.getElementById("profile-avatar");
+const profilePosts = document.getElementById("profile-posts");
+const profileLikes = document.getElementById("profile-likes");
+const trendsList = document.getElementById("trends-list");
+const trendsNone = document.getElementById("trends-none");
+const streamHeading = document.getElementById("stream-heading");
+const topBar = document.querySelector(".top-bar");
+
+// How often the trends (and the profile card's counts) are asked for again.
+const TRENDS_EVERY = 60000;   // one minute, in milliseconds
+
+// The two counts on the profile card, as the server last sent them:
+// { posts, likes }, or null while nobody is logged in or before the answer.
+let profileCounts = null;
+
+// Draw the profile card of the person logged in: the same circle as on their
+// posts, and the counts, if this answer has them (GET /sessions does; the
+// answer to a login does not, so they are asked for).
+function profileCard(who) {
+  profileAvatar.className = "avatar avatar-colour-" + avatarColour(who.account_name);
+  // Array.from keeps an emoji or a rare character in one piece.
+  const letter = Array.from(who.display_name || who.account_name)[0] || "";
+  profileAvatar.textContent = letter.toUpperCase();   // a letter of a name: never a key
+  if (typeof who.post_count === "number") {
+    profileCounts = { posts: who.post_count, likes: who.like_count };
+    drawProfileCounts();
+  } else {
+    profileCounts = null;
+    drawProfileCounts();
+    askForCounts();
+  }
+}
+
+// Write the two counts ("12 posts", "3 likes received"). Written again after
+// a language change.
+function drawProfileCounts() {
+  if (profileCounts === null) {
+    profilePosts.textContent = "";
+    profileLikes.textContent = "";
+    return;
+  }
+  profilePosts.textContent = sayCount("profile_posts", profileCounts.posts);
+  profileLikes.textContent = sayCount("profile_likes", profileCounts.likes);
+}
+
+whenLanguageChanges(drawProfileCounts);
+
+// Ask the server for the counts again (after a post, a delete, and every
+// minute). Both are counted from the rows when asked, never kept. If the
+// login has ended, nothing changes here: the next action that needs a login
+// shows the Log in form.
+async function askForCounts() {
+  if (account === null) {
+    return;
+  }
+  try {
+    const response = await fetch("/sessions");
+    if (!response.ok) {
+      return;
+    }
+    const answer = await response.json();
+    // Someone else may have logged in in this window since we asked.
+    if (account === null || answer.account_name !== account.account_name) {
+      return;
+    }
+    profileCounts = { posts: answer.post_count, likes: answer.like_count };
+    drawProfileCounts();
+  } catch (error) {
+    // The server did not answer. The counts stay as they are until next time.
+  }
+}
+
+// Ask for the trending #tags: the ones in the most posts of the last day.
+// Anyone may ask; the server leaves out posts this viewer may not see.
+async function askForTrends() {
+  try {
+    const response = await fetch("/trends");
+    if (!response.ok) {
+      return;
+    }
+    const answer = await response.json();
+    showTrends(answer.trends);
+  } catch (error) {
+    // The server did not answer. The trends stay as they are until next time.
+  }
+}
+
+// Draw the trends: each tag is a link to its search (searchFor), made the
+// same way as a #tag in a post. A tag is what people wrote: never a key.
+function showTrends(trends) {
+  trendsList.replaceChildren();
+  for (const trend of trends) {
+    const item = document.createElement("li");
+    item.append(searchElement("#" + trend.tag, "post-tag"));
+    trendsList.append(item);
+  }
+  trendsNone.hidden = trends.length > 0;
+}
+
+// The header of the right column names the view it shows. showView calls this.
+// If you had scrolled down past the top of the column (a trend pressed far
+// down the page), the page goes back up to the header, so the new view is seen
+// from its start. The bar stays in front (scroll-padding-top in components.css).
+function showStreamHeading(name) {
+  streamHeading.dataset.words = {
+    timeline: "stream_heading_timeline",
+    search: "stream_heading_search",
+    bookmarks: "stream_heading_bookmarks",
+  }[name];
+  streamHeading.textContent = say(streamHeading.dataset.words);
+  // The bottom of the bar: below it, the header can be seen. (Under 920px the
+  // bar scrolls away, and its bottom is then above the screen.)
+  const barBottom = topBar.getBoundingClientRect().bottom;
+  if (streamHeading.getBoundingClientRect().top < Math.max(0, barBottom)) {
+    streamHeading.scrollIntoView();
+  }
+}
+
 textBox.addEventListener("input", updateCount);
 textBox.addEventListener("input", saveDraft);
 timeline.addEventListener("click", clickOnTimeline);
@@ -3638,4 +3772,12 @@ askWhoIAm().then(function () {
   watchTheBottom();
   keepChecking();
 });
+// classic-layout: the trends when the page opens, then every minute (never
+// every second: they change slowly). The profile card's like count changes
+// when other people press a heart, so it is asked for again then too.
+askForTrends();
+setInterval(function () {
+  askForTrends();
+  askForCounts();
+}, TRENDS_EVERY);
 setInterval(refreshTimes, 30000);   // every 30 seconds: the smallest step shown is a minute

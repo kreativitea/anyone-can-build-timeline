@@ -36,6 +36,13 @@
   --avatar-4: light-dark(#2e7d4f, #2e7d4f);
   --avatar-5: light-dark(#9a5800, #9a5800);
   --avatar-6: light-dark(#2f6f7a, #2f6f7a);
+  /* classic-layout: the dark bar across the top, dark in both modes, as in
+     2012. Its words are white, the view tabs a quieter grey, and the current
+     tab sits on a slightly lighter patch. */
+  --bar: light-dark(#222c33, #05090c);
+  --bar-text: light-dark(#ffffff, #ffffff);
+  --bar-quiet: light-dark(#c3ccd2, #b4c2cc);
+  --bar-current: light-dark(#3a4952, #1f2d38);
 }
 
 /* Light or Dark chosen by hand with the Colours switch (with-backend/ only).
@@ -50,62 +57,81 @@
 
 /* Everything that is not a colour. */
 :root {
-  /* Type. The type is large because the page is read from the back of a room. */
+  /* Type. The type is the size of a 2012 timeline (classic-layout): 15px for the words,
+     13px for the notes, the @name and the time. This REPLACES the old rule
+     "the type is large because the page is read from the back of a room":
+     the owner chose it, so do not put the large type back. See DESIGN.md. */
   --font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
-  --text-small: 18px;      /* notes under a box, who liked, old versions */
-  --text-body: 24px;       /* everything else */
-  --text-large: 30px;      /* a form's heading (Log in, Sign up) */
-  --text-title: 44px;      /* the page's name at the top */
-  --text-meta: 0.85em;     /* the @name and the time: a little smaller than the name */
+  --text-small: 13px;      /* notes under a box, who liked, old versions */
+  --text-body: 15px;       /* everything else */
+  --text-large: 18px;      /* a heading: Log in, Sign up, the stream, the app's name in the bar */
+  --text-title: 24px;      /* the page's name at the top of page-only/ and the style guide */
+  --text-meta: 13px;       /* the @name and the time: a little smaller than the name */
   --line-height: 1.4;
   --weight-normal: 400;
   --weight-medium: 600;    /* labels, #tags and @names */
   --weight-bold: 700;
 
-  /* Space: the room inside and between things (padding, margin, gap). */
+  /* Space: the room inside and between things (padding, margin, gap).
+     Seven steps, tightened to the 2012 page (classic-layout). */
   --space-1: 2px;
   --space-2: 4px;
   --space-3: 6px;
   --space-4: 8px;
-  --space-5: 10px;
-  --space-6: 12px;
-  --space-7: 14px;
-  --space-8: 16px;
-  --space-9: 18px;
-  --space-10: 20px;
-  --space-11: 24px;
-  --space-12: 32px;
+  --space-5: 12px;
+  --space-6: 16px;
+  --space-7: 20px;
 
-  /* Corners. */
+  /* Corners: small, as in 2012. */
   --radius-small: 2px;     /* the focus ring of a link in a post */
-  --radius: 8px;           /* buttons, pictures */
-  --radius-field: 10px;    /* boxes to type in, and the Colours switch */
-  --radius-large: 12px;    /* cards */
+  --radius: 4px;           /* buttons, pictures */
+  --radius-field: 5px;     /* boxes to type in, and the Colours switch */
+  --radius-large: 6px;     /* cards */
   --radius-pill: 999px;    /* the heart and the star */
   --radius-round: 50%;     /* the circle with a letter */
 
   /* Lines. */
-  --line: 2px;             /* the edge of a card, a box or a button */
-  --line-thick: 3px;       /* the line on the left of replies and old versions */
-  --band: 10px;            /* the band of colour across the top of the page */
+  --line: 1px;             /* the edge of a card, a box or a button */
+  --line-thick: 2px;       /* the line on the left of replies and old versions */
+  --band: 10px;            /* the band of colour across the top of page-only/ */
   --focus-ring: 3px solid var(--author);
   --focus-offset: 2px;
 
   /* Sizes. */
-  --page-width: 900px;
-  --avatar: 64px;          /* the circle on a post */
-  --avatar-small: 40px;    /* the circle on a reply, and on a phone */
-  --avatar-letter: 32px;
-  --avatar-small-letter: 20px;
+  --page-width: 940px;     /* the two columns (300 + 20 + 590) and the room around them */
+  --avatar: 48px;          /* the circle on a post, and on the profile card */
+  --avatar-small: 32px;    /* the circle on a reply */
+  --avatar-phone: 40px;    /* the circle on a post, on a phone */
   /* Room on the left of a post for its circle: the space before it, the
-     circle, and the space after it (20 + 64 + 16, and 16 + 40 + 12). */
-  --avatar-indent: 100px;
-  --avatar-indent-small: 68px;
-  --avatar-indent-phone: 64px;   /* 12 + 40 + 12 */
-  --check-size: 24px;      /* a checkbox, as tall as the words beside it */
+     circle, and the space after it (12 + 48 + 10 = 70: the words start 58px
+     from the left of the circle, as in 2012; 12 + 32 + 10; 8 + 40 + 10). */
+  --avatar-indent: 70px;
+  --avatar-indent-small: 54px;
+  --avatar-indent-phone: 58px;
+  --check-size: 18px;      /* a checkbox, as tall as the words beside it */
   --picture-height: 24rem; /* a picture is never taller than about half a screen */
+
+  /* classic-layout: the bar across the top, and the two columns under it. */
+  --bar-height: 46px;
+  /* The bar's contents may be wider than the two columns, so the app's name,
+     three view tabs, search, Colours and Log out fit on one line on a laptop. */
+  --bar-width: 1180px;
+  --dashboard-width: 300px;  /* the left column: profile card, post box, trends */
+  --stream-width: 590px;     /* the right column: the timeline, search results, bookmarks */
+  /* Where something that stays on screen while you scroll ("3 new posts")
+     stops: just under the bar. */
+  --sticky-top: calc(var(--bar-height) + var(--space-3));
 
   /* Layers and see-through. */
   --layer-sticky: 1;       /* "3 new posts", above the posts it floats over */
+  --layer-bar: 2;          /* the top bar, above everything that scrolls under it */
   --faded: 0.6;            /* a post hidden by reports, a heart that cannot be pressed */
+}
+
+/* classic-layout: under 920px wide the columns stack and the bar scrolls away
+   with the page, so "3 new posts" stops at the top of the screen. */
+@media (max-width: 919px) {
+  :root {
+    --sticky-top: var(--space-3);
+  }
 }

@@ -26,13 +26,13 @@ piece of text the browser keeps and sends back by itself), never from a name in 
 | `page-only/index.html` | The demo screen: two name boxes, post box, Post button, timeline. No login. |
 | `page-only/tokens.css`, `base.css`, `components.css`, `features.css` | Exact copies of the four style files in `with-backend/`. Change those, then copy them here. |
 | `page-only/app.js` | Checks the rules and keeps the posts in this window's `sessionStorage`. There are no likes in this version. |
-| `with-backend/index.html` | The parts of the screen: Log in and Sign up forms when signed out; "Signed in as …", Log out and the post box when signed in; the timeline. A tiny script in `<head>` that sets the colours before the page is drawn, and the Colours switch. |
+| `with-backend/index.html` | The parts of the screen, in three areas (see "Classic layout"): the top bar (app name, view tabs, search, Colours, Log out); the left column (Log in and Sign up forms when signed out; the profile card, the post box, Email and Blocked accounts when signed in; the status line; the trends); the right column (the timeline, search results, My bookmarks). A tiny script in `<head>` that sets the colours before the page is drawn. |
 | `with-backend/tokens.css` | The design system's **tokens**: every colour (written once for light and dark, as `light-dark(LIGHT, DARK)`), type size, space, corner, line and size, by name. The only file with raw values. |
 | `with-backend/base.css` | The page itself: the box model, `[hidden]`, `body` (the band of colour at the top), `main`, `h1`. |
-| `with-backend/components.css` | The shared **components**, each one class: field, button (`.button-link`, `.button-quiet`, `.button-pill`), `.card`, `.disclosure`, `.menu`, `.tabs`, `.status`, `.avatar`, and `.post` with its slots and states. The classic light-blue look: all posts in one card, a line between them. |
+| `with-backend/components.css` | The shared **components**, each one class: field, button (`.button-link`, `.button-quiet`, `.button-pill`), `.card`, `.disclosure`, `.menu`, `.tabs`, `.status`, `.avatar`, `.post` with its slots and states, and `.visually-hidden`. Then the **layout** components: `.top-bar`, `.columns`, `.dashboard`, `.stream`, `.stream-header`, `.profile-card`, `.trends`. The classic light-blue look: all posts in one card, a line between them. |
 | `with-backend/features.css` | Each feature's own small block, under its name. It only arranges components, with tokens. |
 | `with-backend/design.html` | The style guide, at `/design.html`: every token and every component, light and dark side by side, with sample posts. For builders: English only, not in `words.js`. |
-| `with-backend/app.js` | Asks the server who is logged in, sends sign-ups, logins, log-outs, posts, likes and likes taken back, and asks for new posts and new like counts every second. Remembers the Colours choice in `localStorage`. It keeps a half-written post in this browser's `localStorage`, one per account, removed after posting or logging out. It shows who liked each post, and asks for the names only when a count changes. It searches posts (`GET /search`) and shows the results in their own view. It asks for the newest page of posts, older pages on scroll, and holds new posts behind a "3 new posts" button while you read lower down. It sends bookmarks and bookmarks taken back, and asks for your bookmarks (never every second). It remembers the last place typed (`timeline-place`), forgotten on log out. It edits and deletes your own posts, shows earlier versions, and asks for changes (`GET /changes`) every second, before new posts. Each post shows a coloured circle with the first letter of the display name (`avatarPart`; the colour comes from the account name, `avatarColour`). |
+| `with-backend/app.js` | Asks the server who is logged in, sends sign-ups, logins, log-outs, posts, likes and likes taken back, and asks for new posts and new like counts every second. Remembers the Colours choice in `localStorage`. It keeps a half-written post in this browser's `localStorage`, one per account, removed after posting or logging out. It shows who liked each post, and asks for the names only when a count changes. It searches posts (`GET /search`) and shows the results in their own view. It asks for the newest page of posts, older pages on scroll, and holds new posts behind a "3 new posts" button while you read lower down. It sends bookmarks and bookmarks taken back, and asks for your bookmarks (never every second). It remembers the last place typed (`timeline-place`), forgotten on log out. It edits and deletes your own posts, shows earlier versions, and asks for changes (`GET /changes`) every second, before new posts. Each post shows a coloured circle with the first letter of the display name (`avatarPart`; the colour comes from the account name, `avatarColour`). It draws the profile card (`profileCard`, counts asked again by `askForCounts` after a post, a delete and every minute), the trends (`askForTrends`, `showTrends`: on load, after a login, a post or a delete, and every 60 seconds, never every second), and the right column's header (`showStreamHeading`, called by `showView`). |
 | `with-backend/server.py` | The backend, in three labelled parts: **controller**, **model**, **view**. |
 | `with-backend/words.js` | Every word the page shows, by key (`WORDS`). English only for now; Japanese comes later. |
 | `with-backend/outbox.py` | Carries emails out, on its own thread: `ConsoleOutbox` prints each one in the terminal (the running server); `KeptOutbox` keeps them in a list (the tests). Nothing is really sent. |
@@ -58,6 +58,7 @@ The three parts of `server.py`:
   `utc_text`, `use_allowance`, `forget_attempts`, `clock`, `check_query`, `escape_like`, `tags_in`,
   `has_tag`, `search_posts`, `picture_kind`, `check_picture`, `check_alt_text`, `picture_for`,
   `not_blocked_sql`, `find_account`, `add_block`, `remove_block`, `blocks_for`,
+  `account_counts`, `trending_tags`,
   `check_not_blocked_by_author`, `check_parent_id`, `check_reply_parent`, `save_reply`,
   `has_replies`, `visible_replies`, `post_as_shown`, `check_change_post_id`, `own_post`,
   `record_change`, `edit_post`, `forget_post_details`, `delete_post`, `changes_after`,
@@ -115,7 +116,7 @@ The three parts of `server.py`:
 - **View** (`post_to_json`, `picture_to_json`, `posts_to_json`, `account_to_json`, `like_to_json`, `likes_to_json`,
   `likers_to_json`, `summaries_to_json`, `search_to_json`, `blocks_to_json`, `change_to_json`,
   `changes_to_json`, `report_to_json`, `reports_to_json`, `deleted_to_json`, `version_to_json`, `versions_to_json`, `problem_to_json`, `session_cookie`, `post_to_log_line`,
-  `email_settings_to_json`, `both_languages`, `make_email`, `reply_email_message`,
+  `email_settings_to_json`, `trends_to_json`, `both_languages`, `make_email`, `reply_email_message`,
   `confirm_email_message`): turns database rows into the JSON the page reads, the
   cookie, the one line printed for each new post, and each email.
 
@@ -200,6 +201,36 @@ DESIGN.md, "Design system". **Look at `/design.html` first** (run the server, op
   and `design.html` link exactly the four files, in order.
 - **Nothing on screen may change** when you only tidy the style. Compare the page before and after
   (light and dark, wide and phone), for example by dumping `getComputedStyle` of every element.
+
+## Classic layout
+
+The page is laid out like a 2012 timeline (DESIGN.md, "Classic layout"). Three areas:
+
+- **The top bar** (`<header class="top-bar">`): the app's name, `#views` (the view tabs),
+  `#search-form`, the Colours switch and `#logout` (shown only when signed in). It is sticky; under
+  920px it scrolls away. Something else that stays on screen while you scroll uses
+  `top: var(--sticky-top)`, so it stops under the bar.
+- **The left column** (`<aside class="dashboard">`): `#signed-out` (the two forms) or
+  `#signed-in` (`#profile-card`, `#post-form`, Email, Blocked accounts), then `#status` and
+  `#trends`. `#signed-in` takes no box of its own (`display: contents`), so Email and Blocked
+  accounts are drawn after the status line (`order`), without changing the keyboard order.
+- **The right column** (`<div class="stream">`): one card with `#stream-heading` (the name of the
+  view, `stream_heading_*`), then the `data-view` sections. A view added with `addView` lands here.
+- Under 920px the columns stack, left first. `page-only/` loads the same style files but has no bar
+  and no columns.
+- **Every `id` that `app.js` looks up stays in `index.html`** (a test checks it). Rearrange; do not
+  rename.
+- **Type is 15px** (`--text-body`), the size of a 2012 timeline. This replaced the old rule "large
+  type for the back of a room"; do not put it back.
+- **Counts:** `GET /sessions` answers `{account_name, display_name, post_count, like_count}`.
+  `account_counts(db_path, user_id)` counts posts that are not deleted, and likes received from
+  other people, from the rows each time. Only `GET /sessions` has them, never a list of names.
+- **Trends:** `GET /trends` (anyone, not printed in the terminal) answers
+  `{"trends": [{"tag", "count"}]}`, from `trending_tags(db_path, viewer_id, now=None)`: the
+  `TRENDS_LIMIT` (10) tags in the most posts of the last `TRENDS_HOURS` (24), through
+  `select_posts` (block and report apply), not deleted, counted with `tags_in` (once per post),
+  ties A to Z. A post with no date never counts. The page shows each as a tag link
+  (`searchElement`), never as a key.
 
 ## Search
 

@@ -23,164 +23,203 @@
   <link rel="stylesheet" href="features.css">
 </head>
 <body>
-  <main>
-    <!-- Every word on this page names its key in words.js: data-words="key"
-         for the text, data-words-placeholder and data-words-aria-label for
-         those attributes. The English stays inside, so the page reads well
-         before app.js runs; app.js writes the words in the chosen language. -->
-    <h1 data-words="app_name">Timeline</h1>
+  <!-- classic-layout: the page has three areas, laid out as in 2012. The dark
+       bar across the top (app name, search, the views, Colours, Log out) stays
+       on screen while you scroll. Under it, two columns: the left one
+       (.dashboard: your profile card, the post box, Email, Blocked accounts,
+       trending #tags) and the right one (.stream: the timeline, the search
+       results or My bookmarks). Under 920px wide the columns stack, left first.
+       Every word on this page names its key in words.js: data-words="key"
+       for the text, data-words-placeholder and data-words-aria-label for
+       those attributes. The English stays inside, so the page reads well
+       before app.js runs; app.js writes the words in the chosen language. -->
+  <header class="top-bar">
+    <div class="top-bar-inner">
+      <h1 class="top-bar-title" data-words="app_name">Timeline</h1>
 
-    <!-- Search: anyone can search, signed in or not. The results show in
-         their own view, "Search results", below. -->
-    <form id="search-form" role="search">
-      <label for="search-box" data-words="search_label">Search posts</label>
-      <input id="search-box" type="search" maxlength="100" placeholder="a word or #tag"
-             data-words-placeholder="search_placeholder" autocomplete="off">
-      <button type="submit" data-words="search_button">Search</button>
-    </form>
+      <!-- The buttons that switch between views. Hidden while there is only one
+           view: app.js shows it when a second view is added (addView). -->
+      <nav id="views" class="tabs" aria-label="Views" data-words-aria-label="views_label" hidden></nav>
 
-    <!-- The Colours switch. Auto follows the computer. The choice is kept in
-         this browser only (localStorage), and never goes to the server.
-         Beside it, the language button: hidden until there is Japanese
-         (japanese Part B). It always shows the other language, in its own
-         words, so it carries its own lang. -->
-    <div class="theme-row">
-      <label for="theme"><span data-words="theme_label">Colours</span></label>
-      <select id="theme">
-        <option value="auto" data-words="theme_auto">Auto (follow this computer)</option>
-        <option value="light" data-words="theme_light">Light</option>
-        <option value="dark" data-words="theme_dark">Dark</option>
-      </select>
-      <button type="button" id="language" class="button-link" lang="ja"
-              data-words="switch_language" hidden>日本語</button>
+      <!-- Search: anyone can search, signed in or not. The results show in
+           their own view, "Search results", in the right column. -->
+      <form id="search-form" role="search">
+        <label for="search-box" class="visually-hidden" data-words="search_label">Search posts</label>
+        <input id="search-box" type="search" maxlength="100" placeholder="a word or #tag"
+               data-words-placeholder="search_placeholder" autocomplete="off">
+        <button type="submit" data-words="search_button">Search</button>
+      </form>
+
+      <!-- The Colours switch. Auto follows the computer. The choice is kept in
+           this browser only (localStorage), and never goes to the server.
+           Beside it, the language button: hidden until there is Japanese
+           (japanese Part B). It always shows the other language, in its own
+           words, so it carries its own lang. -->
+      <div class="theme-row">
+        <label for="theme"><span data-words="theme_label">Colours</span></label>
+        <select id="theme">
+          <option value="auto" data-words="theme_auto">Auto (follow this computer)</option>
+          <option value="light" data-words="theme_light">Light</option>
+          <option value="dark" data-words="theme_dark">Dark</option>
+        </select>
+        <button type="button" id="language" class="button-link" lang="ja"
+                data-words="switch_language" hidden>日本語</button>
+      </div>
+
+      <!-- Shown only when someone is logged in in this window (app.js). -->
+      <button type="button" id="logout" class="button-link" data-words="log_out" hidden>Log out</button>
     </div>
+  </header>
 
-    <!-- The buttons that switch between views. Hidden while there is only one
-         view: app.js shows it when a second view is added (addView). -->
-    <nav id="views" class="tabs" aria-label="Views" data-words-aria-label="views_label" hidden></nav>
-
-    <!-- Shown when nobody is logged in in this window. Both start hidden: the
-         page asks the server who is logged in, then shows one of the two. -->
-    <section id="signed-out" class="account-forms" hidden>
-      <form id="login-form" class="account-form card">
-        <h2 data-words="log_in_heading">Log in</h2>
-        <label for="login-name" data-words="account_name_label">Account name</label>
-        <div class="at-box">
-          <span aria-hidden="true">@</span>
-          <input id="login-name" type="text" autocomplete="username" placeholder="aiko">
-        </div>
-        <label for="login-password" data-words="password_label">Password</label>
-        <input id="login-password" type="password" autocomplete="current-password">
-        <button type="submit" data-words="log_in_button">Log in</button>
-      </form>
-
-      <form id="signup-form" class="account-form card">
-        <h2 data-words="sign_up_heading">Sign up</h2>
-        <label for="signup-name" data-words="account_name_label">Account name</label>
-        <div class="at-box">
-          <span aria-hidden="true">@</span>
-          <input id="signup-name" type="text" autocomplete="username" placeholder="aiko">
-        </div>
-        <label for="signup-display-name" data-words="display_name_label">Display name</label>
-        <input id="signup-display-name" type="text" autocomplete="nickname"
-               placeholder="Aiko Tanaka" data-words-placeholder="display_name_example">
-        <label for="signup-password" data-words="new_password_label">Password (8 characters or more)</label>
-        <input id="signup-password" type="password" autocomplete="new-password">
-        <button type="submit" data-words="sign_up_button">Sign up</button>
-      </form>
-    </section>
-
-    <!-- Shown when someone is logged in in this window. -->
-    <section id="signed-in" hidden>
-      <p class="who">
-        <span data-words="signed_in_as">Signed in as</span>
-        <span id="who-display-name" class="post-author"></span>
-        <span id="who-account-name" class="post-handle"></span> ·
-        <button type="button" id="logout" class="button-link" data-words="log_out">Log out</button>
-      </p>
-
-      <!-- block: the accounts you blocked, each with an Unblock button. A
-           <details> opens and closes by itself, with no JavaScript. app.js
-           hides it while the list is empty. -->
-      <details id="blocked-section" class="blocked-section disclosure" hidden>
-        <summary data-words="blocked_accounts">Blocked accounts</summary>
-        <ul id="blocked-list" class="blocked-list"></ul>
-      </details>
-
-      <form id="post-form" class="card">
-        <!-- replies: shown while writing a reply. app.js writes "Replying to @aiko". -->
-        <p id="replying-to" hidden>
-          <span id="replying-to-words"></span> ·
-          <button type="button" id="cancel-reply" class="button-link"
-                  data-words="reply_cancel">Cancel</button>
-        </p>
-        <label for="text" data-words="post_prompt">What is happening?</label>
-        <textarea id="text" rows="3" placeholder="What is happening?"
-                  data-words-placeholder="post_prompt"></textarea>
-        <!-- Optional. Everyone who reads the post sees the place. -->
-        <label for="place" class="place-label" data-words="place_label">Place (anyone can see this)</label>
-        <input id="place" type="text" autocomplete="off" placeholder="Osaka"
-               data-words-placeholder="place_example">
-        <!-- pictures: one picture, with a description for people who cannot see it. -->
-        <div class="picture-boxes">
-          <label for="picture" data-words="picture_label">Picture (optional): PNG, JPEG, GIF or WebP, up to 2 MB</label>
-          <input id="picture" type="file" accept="image/png,image/jpeg,image/gif,image/webp">
-          <label for="picture-alt" data-words="picture_alt_label">Describe the picture for people who cannot see it</label>
-          <input id="picture-alt" type="text" maxlength="200">
-          <p class="hint" data-words="picture_hint">A JPEG photo is drawn again before it is sent, so the place where it was taken is not shared.</p>
-        </div>
-        <div class="post-row">
-          <span id="count" class="count"></span>
-          <button type="submit" data-words="post_button">Post</button>
-        </div>
-      </form>
-
-      <!-- reply-email: your email address, and the reply emails switch. A
-           <details> opens and closes by itself. Nothing is really sent: the
-           server prints each email in its terminal. novalidate: the page checks
-           the address itself, with the words from words.js. -->
-      <details id="email-settings" class="email-settings disclosure">
-        <summary data-words="email_heading">Email</summary>
-        <form id="email-form" class="email-form" novalidate>
-          <label for="email" data-words="email_label">Your email address</label>
-          <input id="email" type="email" autocomplete="email" maxlength="254">
-          <button type="submit" data-words="email_save">Save</button>
+  <main class="columns">
+    <!-- The left column. -->
+    <aside class="dashboard">
+      <!-- Shown when nobody is logged in in this window. Both start hidden: the
+           page asks the server who is logged in, then shows one of the two. -->
+      <section id="signed-out" class="account-forms" hidden>
+        <form id="login-form" class="account-form card">
+          <h2 data-words="log_in_heading">Log in</h2>
+          <label for="login-name" data-words="account_name_label">Account name</label>
+          <div class="at-box">
+            <span aria-hidden="true">@</span>
+            <input id="login-name" type="text" autocomplete="username" placeholder="aiko">
+          </div>
+          <label for="login-password" data-words="password_label">Password</label>
+          <input id="login-password" type="password" autocomplete="current-password">
+          <button type="submit" data-words="log_in_button">Log in</button>
         </form>
-        <p class="email-state-row">
-          <span id="email-state"></span>
-          <button type="button" id="email-remove" class="button-link"
-                  data-words="email_remove" hidden>Remove</button>
+
+        <form id="signup-form" class="account-form card">
+          <h2 data-words="sign_up_heading">Sign up</h2>
+          <label for="signup-name" data-words="account_name_label">Account name</label>
+          <div class="at-box">
+            <span aria-hidden="true">@</span>
+            <input id="signup-name" type="text" autocomplete="username" placeholder="aiko">
+          </div>
+          <label for="signup-display-name" data-words="display_name_label">Display name</label>
+          <input id="signup-display-name" type="text" autocomplete="nickname"
+                 placeholder="Aiko Tanaka" data-words-placeholder="display_name_example">
+          <label for="signup-password" data-words="new_password_label">Password (8 characters or more)</label>
+          <input id="signup-password" type="password" autocomplete="new-password">
+          <button type="submit" data-words="sign_up_button">Sign up</button>
+        </form>
+      </section>
+
+      <!-- Shown when someone is logged in in this window. -->
+      <section id="signed-in" hidden>
+        <!-- classic-layout: the profile card. app.js draws the circle and the
+             two counts (profileCard), from the answer to GET /sessions. -->
+        <div id="profile-card" class="profile-card card">
+          <span id="profile-avatar" class="avatar" aria-hidden="true"></span>
+          <p class="profile-names">
+            <span class="visually-hidden" data-words="signed_in_as">Signed in as</span>
+            <span id="who-display-name" class="post-author"></span>
+            <span id="who-account-name" class="post-handle"></span>
+          </p>
+          <p class="profile-counts">
+            <span id="profile-posts"></span>
+            <span id="profile-likes"></span>
+          </p>
+        </div>
+
+        <form id="post-form" class="card">
+          <!-- replies: shown while writing a reply. app.js writes "Replying to @aiko". -->
+          <p id="replying-to" hidden>
+            <span id="replying-to-words"></span> ·
+            <button type="button" id="cancel-reply" class="button-link"
+                    data-words="reply_cancel">Cancel</button>
+          </p>
+          <label for="text" data-words="post_prompt">What is happening?</label>
+          <textarea id="text" rows="3" placeholder="What is happening?"
+                    data-words-placeholder="post_prompt"></textarea>
+          <!-- Optional. Everyone who reads the post sees the place. -->
+          <label for="place" class="place-label" data-words="place_label">Place (anyone can see this)</label>
+          <input id="place" type="text" autocomplete="off" placeholder="Osaka"
+                 data-words-placeholder="place_example">
+          <!-- pictures: one picture, with a description for people who cannot see it. -->
+          <div class="picture-boxes">
+            <label for="picture" data-words="picture_label">Picture (optional): PNG, JPEG, GIF or WebP, up to 2 MB</label>
+            <input id="picture" type="file" accept="image/png,image/jpeg,image/gif,image/webp">
+            <label for="picture-alt" data-words="picture_alt_label">Describe the picture for people who cannot see it</label>
+            <input id="picture-alt" type="text" maxlength="200">
+            <p class="hint" data-words="picture_hint">A JPEG photo is drawn again before it is sent, so the place where it was taken is not shared.</p>
+          </div>
+          <div class="post-row">
+            <span id="count" class="count"></span>
+            <button type="submit" data-words="post_button">Post</button>
+          </div>
+        </form>
+
+        <!-- reply-email: your email address, and the reply emails switch. A
+             <details> opens and closes by itself. Nothing is really sent: the
+             server prints each email in its terminal. novalidate: the page checks
+             the address itself, with the words from words.js. -->
+        <details id="email-settings" class="email-settings disclosure">
+          <summary data-words="email_heading">Email</summary>
+          <form id="email-form" class="email-form" novalidate>
+            <label for="email" data-words="email_label">Your email address</label>
+            <input id="email" type="email" autocomplete="email" maxlength="254">
+            <button type="submit" data-words="email_save">Save</button>
+          </form>
+          <p class="email-state-row">
+            <span id="email-state"></span>
+            <button type="button" id="email-remove" class="button-link"
+                    data-words="email_remove" hidden>Remove</button>
+          </p>
+          <!-- Shown only once the address is confirmed. -->
+          <p id="reply-emails-row" class="reply-emails-row" hidden>
+            <input type="checkbox" id="reply-emails">
+            <label for="reply-emails" data-words="reply_emails_label">Email me when someone replies</label>
+          </p>
+        </details>
+
+        <!-- block: the accounts you blocked, each with an Unblock button. A
+             <details> opens and closes by itself, with no JavaScript. app.js
+             hides it while the list is empty. -->
+        <details id="blocked-section" class="blocked-section disclosure" hidden>
+          <summary data-words="blocked_accounts">Blocked accounts</summary>
+          <ul id="blocked-list" class="blocked-list"></ul>
+        </details>
+      </section>
+
+      <!-- The one-line message: a refusal or a problem. Under the post box
+           (features.css puts it there; Email and Blocked accounts come after). -->
+      <p id="status" class="status" role="status"></p>
+
+      <!-- classic-layout: the trending #tags of the last day, for everyone.
+           app.js fills the list (showTrends); each tag opens its search. -->
+      <section id="trends" class="trends card" aria-labelledby="trends-heading">
+        <h2 id="trends-heading" data-words="trends_heading">Trends</h2>
+        <ol id="trends-list" class="trends-list"></ol>
+        <p id="trends-none" class="hint" data-words="trends_none" hidden>No #tags in the last day.</p>
+      </section>
+    </aside>
+
+    <!-- The right column: one view at a time, under a header that names it. -->
+    <div class="stream">
+      <h2 id="stream-heading" class="stream-header" data-words="stream_heading_timeline">Timeline</h2>
+
+      <!-- One view: the timeline. Another view would be a section next to it. -->
+      <section data-view="timeline">
+        <!-- timeline-flow: new posts wait behind this button while you read lower down. -->
+        <button type="button" id="new-posts" class="new-posts" hidden></button>
+        <ol id="timeline" class="timeline card" aria-label="Posts, newest first" tabindex="-1"
+            data-words-aria-label="timeline_label"></ol>
+        <!-- timeline-flow: older posts load when this comes near the screen, or when pressed. -->
+        <p id="older-posts" class="older-posts"><button type="button" id="load-older" class="button-link" data-words="show_older">Show older posts</button></p>
+      </section>
+
+      <!-- The search results view. app.js adds its button with addView("search", ...). -->
+      <section data-view="search" hidden>
+        <p class="results-row">
+          <span id="results-title" role="status"></span>
+          <button type="button" id="back-to-timeline" class="button-link"
+                  data-words="results_back">Back to the timeline</button>
         </p>
-        <!-- Shown only once the address is confirmed. -->
-        <p id="reply-emails-row" class="reply-emails-row" hidden>
-          <input type="checkbox" id="reply-emails">
-          <label for="reply-emails" data-words="reply_emails_label">Email me when someone replies</label>
-        </p>
-      </details>
-    </section>
-
-    <p id="status" class="status" role="status"></p>
-
-    <!-- One view: the timeline. Another view would be a section next to it. -->
-    <section data-view="timeline">
-      <!-- timeline-flow: new posts wait behind this button while you read lower down. -->
-      <button type="button" id="new-posts" class="new-posts" hidden></button>
-      <ol id="timeline" class="timeline card" aria-label="Posts, newest first" tabindex="-1"
-          data-words-aria-label="timeline_label"></ol>
-      <!-- timeline-flow: older posts load when this comes near the screen, or when pressed. -->
-      <p id="older-posts" class="older-posts"><button type="button" id="load-older" class="button-link" data-words="show_older">Show older posts</button></p>
-    </section>
-
-    <!-- The search results view. app.js adds its button with addView("search", ...). -->
-    <section data-view="search" hidden>
-      <p class="results-row">
-        <span id="results-title" role="status"></span>
-        <button type="button" id="back-to-timeline" class="button-link"
-                data-words="results_back">Back to the timeline</button>
-      </p>
-      <ol id="results-list" class="timeline card" aria-label="Search results, newest first"
-          data-words-aria-label="results_label"></ol>
-    </section>
+        <ol id="results-list" class="timeline card" aria-label="Search results, newest first"
+            data-words-aria-label="results_label"></ol>
+      </section>
+    </div>
   </main>
 
   <script src="words.js"></script>

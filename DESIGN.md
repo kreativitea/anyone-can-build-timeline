@@ -31,12 +31,16 @@ the other has a backend that every window shares.
 
 One screen in `with-backend/`:
 
+The page is laid out like a 2012 timeline (see "Classic layout" below): a dark bar across the
+top, a narrow left column and a wide right column with the posts.
+
 - **Signed out.** A *Log in* form (account name, password) and a *Sign up* form (account name,
-  display name, password), side by side. The account name box has an `@` in front of it, so nobody
+  display name, password), one above the other in the left column. The account name box has an `@` in front of it, so nobody
   has to type it. The timeline is below, so anyone can read it. Pressing a heart says *Please log in
   to like a post.*
-- **Signed in.** *Signed in as Aiko Tanaka @aiko · Log out*, then a *What is happening?* box with a
-  live count (*x / 560*) and a **Post** button, and the timeline below it, newest first (display
+- **Signed in.** A profile card (*Aiko Tanaka @aiko*, *12 posts*, *3 likes received*), then a
+  *What is happening?* box with a live count (*x / 560*) and a **Post** button, all in the left
+  column; *Log out* is in the top bar. The timeline is in the right column, newest first (display
   name, `@`account name, time, text, and a heart with the number of people who pressed it). A heart
   you have pressed is shown in a different colour, and pressing it again takes the like back.
 
@@ -44,7 +48,7 @@ When the page opens, it asks the server who is logged in, then shows one of the 
 server answers *401* (nobody is logged in), the page shows the signed-out view and the server's
 reason, and empties the post box.
 
-A **Colours** switch sits just under the title, for everyone, signed in or not. It has three
+A **Colours** switch sits in the top bar, for everyone, signed in or not. It has three
 choices: *Auto* follows the computer's light or dark setting, *Light* and *Dark* stay the same
 whatever the computer says. The choice is remembered in this browser (`localStorage`), not on the
 server, so another browser or device has its own choice. A tiny script in `<head>` uses the saved
@@ -53,7 +57,9 @@ choice before the page is drawn, so the page never flashes the wrong colours.
 `page-only/` is a demo with its own simpler screen: two name boxes, the post box and the timeline,
 with no login and no hearts.
 
-Large type and high contrast, so that it can be read from across a room.
+High contrast, and type the size of a 2012 timeline (15px). This REPLACES the old rule "large
+type, so that it can be read from across a room": the owner chose the smaller type with the
+classic layout. Do not put the large type back.
 
 ---
 
@@ -783,9 +789,9 @@ and phone width, signed in and out.
 
   | File | What it holds |
   |---|---|
-  | `tokens.css` | every **token**: a named value. The colours first (`light-dark(LIGHT, DARK)`, as before), then type (`--text-small`, `--text-body`, `--text-large`, `--text-title`, `--text-meta`, `--line-height`, `--weight-…`), space (`--space-1` 2px … `--space-12` 32px), corners (`--radius-small`, `--radius`, `--radius-field`, `--radius-large`, `--radius-pill`, `--radius-round`), lines (`--line`, `--line-thick`, `--band`, `--focus-ring`, `--focus-offset`), sizes (`--page-width`, `--avatar…`, `--check-size`, `--picture-height`), `--layer-sticky` and `--faded`. |
+  | `tokens.css` | every **token**: a named value. The colours first (`light-dark(LIGHT, DARK)`, as before), then type (`--text-small`, `--text-body`, `--text-large`, `--text-title`, `--text-meta`, `--line-height`, `--weight-…`), space (`--space-1` 2px … `--space-7` 20px), corners (`--radius-small`, `--radius`, `--radius-field`, `--radius-large`, `--radius-pill`, `--radius-round`), lines (`--line`, `--line-thick`, `--band`, `--focus-ring`, `--focus-offset`), sizes (`--page-width`, `--avatar…`, `--check-size`, `--picture-height`, and the layout's `--bar-height`, `--dashboard-width`, `--stream-width`, `--sticky-top`), `--layer-sticky`, `--layer-bar` and `--faded`. |
   | `base.css` | the page itself: the box model, `[hidden]`, `body` (with the band of colour), `main`, `h1`. |
-  | `components.css` | the shared pieces, each one class: **field** (`label`, `input`, `textarea`, `select`, `.hint`, `.count`), **button** (every `<button>`, and `.button-link`, `.button-quiet`, `.button-pill`, with the turned-off look once), **card** (`.card`), **disclosure** (`.disclosure`, a card while open), **menu** (`.menu`, the "⋯"), **tabs** (`.tabs`), **status** (`.status`), **avatar** (`.avatar`, `.avatar-colour-1` … `6`), and **post** (`.timeline`, `.post`, its slots `head`, `body`, `foot`, `menu`, and its states: deleted, hidden by reports, a reply, under the mouse, on a phone). |
+  | `components.css` | the shared pieces, each one class: **field** (`label`, `input`, `textarea`, `select`, `.hint`, `.count`), **button** (every `<button>`, and `.button-link`, `.button-quiet`, `.button-pill`, with the turned-off look once), **card** (`.card`), **disclosure** (`.disclosure`, a card while open), **menu** (`.menu`, the "⋯"), **tabs** (`.tabs`), **status** (`.status`), **avatar** (`.avatar`, `.avatar-colour-1` … `6`), **post** (`.timeline`, `.post`, its slots `head`, `body`, `foot`, `menu`, and its states: deleted, hidden by reports, a reply, under the mouse, on a phone), and **hidden** (`.visually-hidden`). Then the **layout** (classic-layout): **top-bar** (`.top-bar`, `.top-bar-inner`, `.top-bar-title`), **columns** (`.columns`, `.dashboard`, `.stream`), **stream** (`.stream-header`), **profile** (`.profile-card`, `.profile-counts`) and **trends** (`.trends`, `.trends-list`). |
   | `features.css` | each feature's own small block, under its name. A block only **arranges** components and uses tokens: where things sit and the room between them. |
 
 - **The style guide**, `/design.html`, shows every token (it reads `tokens.css` itself, so the list
@@ -803,6 +809,42 @@ and phone width, signed in and out.
   or a gap outside `tokens.css` (`0` and a `1px` hairline are allowed) is a **warning**, printed by
   `make test` with its file and line, not a failure: the owner chose a warning list. Today the list
   is empty.
+
+## Classic layout
+
+The page is laid out like a timeline of 2012–2013, not only coloured like one. The owner chose the
+era, the type size and the four things in the left column; the sizes come from the 2013 page that
+`classic-style` measured.
+
+- **Three areas.** A dark **top bar** (`.top-bar`) with the app's name, the view tabs (Timeline,
+  Search results, My bookmarks), search, Colours and Log out. It stays at the top while you scroll
+  (`position: sticky`), and wraps onto two lines when it must. Under it, two **columns**
+  (`.columns`): the left one (`.dashboard`, 300px) holds the profile card, the post box, the status
+  line, Email, Blocked accounts and the trends; signed out, the Log in and Sign up forms instead of
+  the card and the post box. The right one (`.stream`, 590px, 20px apart) is one card: a header
+  naming the view (`.stream-header`), then the posts.
+- **Under 920px wide** the columns stack, the left one first, and the bar scrolls away with the
+  page. On a phone the circle is 40px.
+- **Type: 15px** for the words, 13px for notes, the `@name` and the time, 18px for headings. This
+  **replaces** the old rule "the type is large because the page is read from the back of a room".
+  The comment in `tokens.css` says so too, so nobody puts the large type back. The space scale has
+  seven steps (2 to 20px), the corners are small (4 to 6px), and the lines 1px.
+- **The profile card** shows your circle, both names, and two counts: your **posts** that are not
+  deleted (a reply is a post) and the **likes received** from other people (the same "popular" as
+  who-liked). `account_counts` counts them from the rows when `GET /sessions` is asked, never
+  stores them. The page asks again after you post, delete or log in, and every minute.
+- **Trends** are the 10 `#tags` in the most posts of the last 24 hours (`trending_tags`), counted
+  with search's `tags_in`, so a post that says `#cat` twice counts once. The posts are read through
+  `select_posts`, so block and report apply, and a deleted post or an old post with no date never
+  counts. Ties are A to Z. `GET /trends` is open to everyone and is not printed in the terminal; the
+  page asks when it opens, after a login, a post or a delete, and every 60 seconds (never every
+  second). Each tag is a link to its search (`searchElement`, `searchFor`).
+- **Colours of the bar** (`--bar`, `--bar-text`, `--bar-quiet`, `--bar-current`) are dark in both
+  modes, and a test checks the words on them read at 4.5 to 1. The focus ring is white in the bar.
+- `index.html` was rearranged, not rewritten: every `id` `app.js` looks up is still there (a test
+  checks it). `page-only/` loads the same four style files and has no bar and no columns.
+- Not in this version: following people, "who to follow", a page for each person, a post box that
+  opens as a pop-up.
 
 ## 8. Build or borrow
 

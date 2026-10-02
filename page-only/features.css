@@ -10,15 +10,15 @@
 .name-row {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-  gap: var(--space-8);
-  margin-bottom: var(--space-10);
+  gap: var(--space-5);
+  margin-bottom: var(--space-5);
 }
 
 /* The @ in front of the account name box, so nobody has to type it. */
 .at-box {
   display: flex;
   align-items: center;
-  gap: var(--space-4);
+  gap: var(--space-3);
   color: var(--quiet);
   font-weight: var(--weight-bold);
 }
@@ -28,15 +28,14 @@
 .account-forms {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-  gap: var(--space-8);
-  margin-bottom: var(--space-10);
+  gap: var(--space-5);
 }
 
 .account-form {
   display: flex;
   flex-direction: column;
-  gap: var(--space-4);
-  padding: var(--space-7) var(--space-9);
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-5);
 }
 
 .account-form h2 {
@@ -45,27 +44,17 @@
 }
 
 .account-form label {
-  margin: var(--space-4) 0 0;
+  margin: var(--space-3) 0 0;
 }
 
 .account-form button {
   align-self: flex-start;
-  margin-top: var(--space-6);
-}
-
-/* "Signed in as Aiko Tanaka @aiko · Log out" */
-.who {
-  margin: 0 0 var(--space-8);
-}
-
-.who .post-handle {
-  margin-left: var(--space-2);
+  margin-top: var(--space-4);
 }
 
 /* The post box (a .card), like the box at the top of the classic list. */
 #post-form {
-  margin-bottom: var(--space-2);
-  padding: var(--space-8) var(--space-10);
+  padding: var(--space-5);
 }
 
 /* The count and the Post button, under the post box. */
@@ -73,7 +62,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-top: var(--space-5);
+  margin-top: var(--space-3);
 }
 
 /* likes: the row under a post (heart, Reply, "3 replies", ☆). It may go onto
@@ -82,8 +71,8 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: var(--space-6);
-  margin-top: var(--space-5);
+  gap: var(--space-4);
+  margin-top: var(--space-3);
 }
 
 /* The heart (a .button-pill) of a post you liked. */
@@ -92,13 +81,13 @@
   color: var(--warning);
 }
 
-/* dark-mode: the Colours switch under the title. */
+/* dark-mode: the Colours switch, in the top bar (classic-layout). */
 .theme-row {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: var(--space-6);
-  margin: calc(-1 * var(--space-4)) 0 var(--space-8);
+  gap: var(--space-4);
+  margin: 0;
 }
 
 .theme-row label {
@@ -121,7 +110,7 @@
 /* Show more: a .button-link under the post, the same weight as the text. */
 .show-more {
   display: block;
-  margin-top: var(--space-3);
+  margin-top: var(--space-2);
   font-weight: var(--weight-normal);
 }
 
@@ -129,14 +118,14 @@
    post", a .button-quiet) and the list of everyone who liked it. */
 .like-summary {
   display: block;
-  margin-top: var(--space-3);
+  margin-top: var(--space-2);
   font-size: var(--text-small);
   overflow-wrap: anywhere;
 }
 
 .likers {
-  margin: var(--space-3) 0 0;
-  padding: 0 0 0 var(--space-9);
+  margin: var(--space-2) 0 0;
+  padding: 0 0 0 var(--space-5);
   font-size: var(--text-small);
   list-style: none;
   overflow-wrap: anywhere;
@@ -147,7 +136,7 @@
 }
 
 .likers .post-handle {
-  margin-left: var(--space-4);
+  margin-left: var(--space-3);
 }
 
 .likers-more {
@@ -165,13 +154,13 @@ time.post-time {
   cursor: help;
 }
 
-/* search: the search box under the title, and the results view. */
+/* search: the search box in the top bar, and the results view. */
 #search-form {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: var(--space-6);
-  margin-bottom: var(--space-8);
+  gap: var(--space-3);
+  margin: 0 0 0 auto;   /* classic-layout: in the top bar, pushed to the right */
 }
 
 #search-form label {
@@ -180,7 +169,7 @@ time.post-time {
 }
 
 #search-form input {
-  flex: 1 1 240px;
+  flex: 1 1 160px;
   width: auto;
 }
 
@@ -190,8 +179,10 @@ time.post-time {
   flex-wrap: wrap;
   align-items: baseline;
   justify-content: space-between;
-  gap: var(--space-6);
-  margin: 0 0 var(--space-6);
+  gap: var(--space-4);
+  margin: 0;
+  padding: var(--space-4) var(--space-5);
+  border-bottom: var(--line) solid var(--border);
   overflow-wrap: anywhere;
 }
 
@@ -200,16 +191,16 @@ time.post-time {
    further down. */
 .new-posts {
   position: sticky;
-  top: 0.5rem;
+  top: var(--sticky-top);   /* just under the top bar */
   z-index: var(--layer-sticky);
   display: block;
-  margin: 0 auto var(--space-6);
-  padding: var(--space-4) var(--space-11);
+  margin: var(--space-4) auto;
+  padding: var(--space-3) var(--space-6);
 }
 
 /* "Show older posts", "Loading…" or "No older posts." under the list. */
 .older-posts {
-  margin: var(--space-8) 0 var(--space-11);
+  margin: var(--space-5) 0 var(--space-6);
   color: var(--quiet);
   text-align: center;
 }
@@ -218,7 +209,7 @@ time.post-time {
    (class "bookmarked") means this post is saved. */
 .bookmark {
   margin-left: auto;
-  padding: var(--space-1) var(--space-7);
+  padding: var(--space-1) var(--space-4);
 }
 
 .bookmark.bookmarked {
@@ -228,20 +219,21 @@ time.post-time {
 
 /* The line shown when My bookmarks is empty: quiet, because it is not a problem. */
 .bookmarks-empty {
+  padding: 0 var(--space-5);
   color: var(--quiet);
 }
 
 /* place */
 /* "· Osaka" after the time, as quiet as the time. */
 .post-place {
-  margin-left: var(--space-4);
+  margin-left: var(--space-3);
   color: var(--quiet);
   overflow-wrap: anywhere;
 }
 
 /* The optional place box, under the post box. */
 .place-label {
-  margin-top: var(--space-5);
+  margin-top: var(--space-3);
 }
 
 #place {
@@ -255,48 +247,48 @@ time.post-time {
   display: block;
   max-width: 100%;
   max-height: var(--picture-height);
-  margin-top: var(--space-5);
+  margin-top: var(--space-3);
   border-radius: var(--radius);
   object-fit: contain;
 }
 
 .picture-boxes {
-  margin-top: var(--space-5);
+  margin-top: var(--space-3);
 }
 
 .picture-boxes input {
-  margin-bottom: var(--space-4);
+  margin-bottom: var(--space-3);
 }
 
 /* block */
-/* "Blocked accounts" under "Signed in as": a .disclosure. */
+/* "Blocked accounts" in the left column, under Email: a .disclosure. */
 .blocked-section {
-  margin: 0 0 var(--space-8);
+  margin: 0;
 }
 
 .blocked-list {
-  margin: var(--space-3) 0 0;
-  padding: 0 0 0 var(--space-9);
+  margin: var(--space-2) 0 0;
+  padding: 0 0 0 var(--space-5);
   list-style: none;
   overflow-wrap: anywhere;
 }
 
 .blocked-list li {
-  margin-top: var(--space-3);
+  margin-top: var(--space-2);
 }
 
 .blocked-list .post-handle {
-  margin-left: var(--space-4);
+  margin-left: var(--space-3);
 }
 
 .blocked-list .unblock {
-  margin-left: var(--space-6);
+  margin-left: var(--space-4);
 }
 
 /* replies */
 /* The Reply button and "2 replies" (a .count), beside the heart. */
 .reply-button {
-  margin-left: var(--space-6);
+  margin-left: var(--space-4);
 }
 
 .reply-count {
@@ -312,7 +304,7 @@ time.post-time {
 
 /* "Replying to @aiko · Cancel", above the post box. */
 #replying-to {
-  margin: 0 0 var(--space-3);
+  margin: 0 0 var(--space-2);
   color: var(--quiet);
   overflow-wrap: anywhere;
 }
@@ -320,21 +312,21 @@ time.post-time {
 /* edit-delete */
 /* "· edited" after the time: a button that looks like quiet text. */
 .post-head .edited {
-  margin-left: var(--space-4);
+  margin-left: var(--space-3);
   color: var(--quiet);
 }
 
 /* The box for new words, with its count, Cancel and Save under it. */
 .edit-box {
-  margin-top: var(--space-3);
+  margin-top: var(--space-2);
 }
 
 .edit-row {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: var(--space-9);
-  margin-top: var(--space-5);
+  gap: var(--space-5);
+  margin-top: var(--space-3);
 }
 
 .edit-row .count {
@@ -343,15 +335,15 @@ time.post-time {
 
 /* The earlier versions of a post, oldest first. */
 .versions {
-  margin: var(--space-4) 0 0;
-  padding: 0 0 0 var(--space-9);
+  margin: var(--space-3) 0 0;
+  padding: 0 0 0 var(--space-5);
   border-left: var(--line-thick) solid var(--border);
   font-size: var(--text-small);
   list-style: none;
 }
 
 .versions li {
-  margin-top: var(--space-3);
+  margin-top: var(--space-2);
 }
 
 .version-text {
@@ -367,7 +359,7 @@ time.post-time {
 /* report */
 /* The note above the text of your own post that several people reported. */
 .hidden-note {
-  margin: var(--space-3) 0 0;
+  margin: var(--space-2) 0 0;
   color: var(--warning);
   font-size: var(--text-small);
 }
@@ -407,7 +399,7 @@ time.post-time {
 /* reply-email */
 /* "Email" under the post box: a .disclosure, like "Blocked accounts". */
 .email-settings {
-  margin: var(--space-8) 0 0;
+  margin: 0;
 }
 
 /* The address box and Save, on one line when they fit. */
@@ -415,8 +407,8 @@ time.post-time {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: var(--space-4);
-  margin: var(--space-5) 0 0;
+  gap: var(--space-3);
+  margin: var(--space-3) 0 0;
 }
 
 .email-form label {
@@ -430,13 +422,13 @@ time.post-time {
 
 /* "Confirmed: aiko@example.com · Remove". An address can be long: it may break anywhere. */
 .email-state-row {
-  margin: var(--space-4) 0 0;
+  margin: var(--space-3) 0 0;
   color: var(--quiet);
   overflow-wrap: anywhere;
 }
 
 #email-remove {
-  margin-left: var(--space-6);
+  margin-left: var(--space-4);
 }
 
 /* The "Email me when someone replies" switch and its words, side by side.
@@ -444,8 +436,8 @@ time.post-time {
 .reply-emails-row {
   display: flex;
   align-items: center;
-  gap: var(--space-4);
-  margin: var(--space-4) 0 0;
+  gap: var(--space-3);
+  margin: var(--space-3) 0 0;
 }
 
 .reply-emails-row input {
@@ -457,6 +449,46 @@ time.post-time {
 /* On a phone: less room inside the post box. */
 @media (max-width: 600px) {
   #post-form {
-    padding: var(--space-6);
+    padding: var(--space-4);
   }
+
+  /* classic-layout: the search box takes a whole line of the bar. */
+  #search-form {
+    flex-basis: 100%;
+  }
+}
+
+/* classic-layout: the left column (.dashboard). #signed-in takes no box of
+   its own, so its parts line up with the rest of the column, one gap apart.
+   The status line stays just under the post box: Email and Blocked accounts
+   are moved after it, and the trends come last. Only the order on screen
+   changes; the order for the keyboard is the same (the status line cannot
+   be focused). */
+.dashboard > #signed-in {
+  display: contents;
+}
+
+.dashboard .email-settings,
+.dashboard .blocked-section {
+  order: 1;
+}
+
+.dashboard > .trends {
+  order: 2;
+}
+
+/* An empty status line takes no room in the column. */
+.dashboard > .status {
+  margin: 0;
+}
+
+.dashboard > .status:empty {
+  min-height: 0;
+  margin-top: calc(-1 * var(--space-5));
+}
+
+/* "Log in" and "Sign up" in the narrow column: one above the other. */
+.dashboard .account-forms {
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-5);
 }

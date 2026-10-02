@@ -18,22 +18,22 @@
       grid-template-columns: repeat(auto-fit, minmax(min(100%, 560px), 1fr));
     }
     .guide-column {
-      padding: var(--space-11) var(--space-8);
+      padding: var(--space-6) var(--space-5);
       background: var(--background);
       color: var(--text);
     }
     .guide-light { color-scheme: light; }
     .guide-dark { color-scheme: dark; }
-    .guide-column h2 {
-      margin: var(--space-12) 0 var(--space-4);
+    .guide-column > h2 {
+      margin: var(--space-7) 0 var(--space-3);
       font-size: var(--text-large);
     }
     .guide-column h3 {
-      margin: var(--space-11) 0 var(--space-4);
+      margin: var(--space-6) 0 var(--space-3);
       font-size: var(--text-body);
     }
     .guide-note {
-      margin: 0 0 var(--space-6);
+      margin: 0 0 var(--space-4);
       color: var(--quiet);
       font-size: var(--text-small);
     }
@@ -41,8 +41,8 @@
       display: flex;
       flex-wrap: wrap;
       align-items: center;
-      gap: var(--space-6);
-      margin-bottom: var(--space-6);
+      gap: var(--space-4);
+      margin-bottom: var(--space-4);
     }
     .guide-tokens {
       width: 100%;
@@ -50,20 +50,28 @@
       font-size: var(--text-small);
     }
     .guide-tokens td {
-      padding: var(--space-2) var(--space-4) var(--space-2) 0;
+      padding: var(--space-2) var(--space-3) var(--space-2) 0;
       border-bottom: 1px solid var(--border);
       vertical-align: middle;
       overflow-wrap: anywhere;
     }
     .guide-sample {
       display: block;
-      min-width: var(--space-11);
-      min-height: var(--space-11);
+      min-width: var(--space-6);
+      min-height: var(--space-6);
       border: 1px solid var(--border);
       background: var(--card);
     }
     .guide-row .avatar {
       position: static;
+    }
+    /* The layout samples sit in the guide's column: the bar does not stick,
+       and the columns may be narrower than on the page. */
+    .guide-column .top-bar {
+      position: static;
+    }
+    .guide-column .columns {
+      grid-template-columns: minmax(0, 1fr);
     }
   </style>
 </head>
@@ -187,6 +195,61 @@
         <div class="post-foot"><div class="like-row"><button type="button" class="like button-pill">♥</button><button type="button" class="like-count button-quiet">0</button></div></div>
       </li>
     </ol>
+
+    <h3>hidden: <code>.visually-hidden</code></h3>
+    <p class="guide-note">Words for a screen reader only. Between these brackets there are
+      words you cannot see: [<span class="visually-hidden">Signed in as</span>].</p>
+
+    <h2>Layout (classic-layout)</h2>
+    <p class="guide-note">The page's three areas: the dark bar across the top, the left
+      column and the right column. On the page the bar stays at the top while you
+      scroll, and the columns sit side by side from 920px wide. Here they are drawn
+      one under the other, to fit the guide.</p>
+
+    <h3>top-bar: <code>.top-bar</code>, <code>.top-bar-inner</code>, <code>.top-bar-title</code></h3>
+    <header class="top-bar">
+      <div class="top-bar-inner">
+        <p class="top-bar-title"><strong>Timeline</strong></p>
+        <nav class="tabs">
+          <button type="button" aria-current="page">Timeline</button>
+          <button type="button">My bookmarks</button>
+        </nav>
+        <div class="theme-row">
+          <label>Colours</label>
+          <select><option>Auto (follow this computer)</option></select>
+        </div>
+        <button type="button" class="button-link">Log out</button>
+      </div>
+    </header>
+
+    <h3>columns: <code>.columns</code>, <code>.dashboard</code> (left), <code>.stream</code> (right)</h3>
+    <div class="columns">
+      <div class="dashboard">
+        <h3>profile: <code>.profile-card</code>, <code>.profile-counts</code></h3>
+        <div class="profile-card card">
+          <span class="avatar avatar-colour-1" aria-hidden="true">A</span>
+          <p><span class="post-author">Aiko Tanaka</span> <span class="post-handle">@aiko</span></p>
+          <p class="profile-counts"><span>12 posts</span><span>3 likes received</span></p>
+        </div>
+        <h3>trends: <code>.trends</code>, <code>.trends-list</code></h3>
+        <section class="trends card">
+          <h2>Trends</h2>
+          <ol class="trends-list">
+            <li><a class="post-tag" href="/?q=%23lunch">#lunch</a></li>
+            <li><a class="post-tag" href="/?q=%23osaka">#osaka</a></li>
+          </ol>
+        </section>
+      </div>
+      <div class="stream">
+        <h2 class="stream-header">Timeline</h2>
+        <ol class="timeline card">
+          <li class="post with-avatar">
+            <div class="post-head"><span class="avatar avatar-colour-3" aria-hidden="true">C</span><span class="post-author">Chika Mori</span><span class="post-handle">@chika</span><time class="post-time">May 1</time></div>
+            <div class="post-body"><p class="post-text">The stream: one card, with the view's name at the top. <a class="post-tag" href="/?q=%23lunch">#lunch</a></p></div>
+          </li>
+        </ol>
+      </div>
+    </div>
   </template>
 
   <script>

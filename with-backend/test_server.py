@@ -3232,8 +3232,10 @@ class RealServerTest(unittest.TestCase):
         self.assertEqual(caught.exception.code, 401)
         caught.exception.close()
         self.sign_up().close()
+        # classic-layout: with the two counts for the profile card.
         self.assertEqual(self.get("/sessions"),
-                         {"account_name": "aiko", "display_name": "Aiko Tanaka"})
+                         {"account_name": "aiko", "display_name": "Aiko Tanaka",
+                          "post_count": 0, "like_count": 0})
 
     def test_post_without_a_cookie_gets_401(self):
         code, reason = self.refused("/posts", {"text": "hello"})
@@ -5346,7 +5348,7 @@ class PageAndServerAgreeTest(unittest.TestCase):
         self.assertEqual(asked, {"/posts", "/likes", "/sessions", "/accounts",
                                  "/likers", "/likesummary", "/search", "/bookmarks",
                                  "/blocks", "/changes", "/versions", "/reports",
-                                 "/email", "/reply"})
+                                 "/email", "/reply", "/trends"})
 
     def test_the_page_names_only_the_methods_tried_below(self):
         # A GET needs no method, so the page names only the others.
@@ -5361,7 +5363,8 @@ class PageAndServerAgreeTest(unittest.TestCase):
                              ("GET", "/blocks"), ("POST", "/blocks"), ("DELETE", "/blocks"),
                              ("PATCH", "/posts"), ("DELETE", "/posts"), ("GET", "/changes"),
                              ("GET", "/changes?after=0"), ("GET", "/versions?post_id=1"),
-                             ("GET", "/reports"), ("POST", "/reports"), ("DELETE", "/reports")]:
+                             ("GET", "/reports"), ("POST", "/reports"), ("DELETE", "/reports"),
+                             ("GET", "/trends")]:
             with self.subTest(request=method + " " + path):
                 code = self.answer_code(method, path)
                 # 400 or 401 is a fine answer here: the body is empty and nobody
@@ -6552,6 +6555,14 @@ class ColoursTest(unittest.TestCase):
         self.check_contrast([("button-text", "avatar-%d" % number)
                              for number in range(1, 7)], 4.5)
 
+    # classic-layout: the dark bar across the top. Its words, the quieter view
+    # tabs, and the current tab's patch, in both modes.
+    def test_the_top_bar_is_easy_to_read_in_both_modes(self):
+        self.check_contrast([("bar-text", "bar"), ("bar-quiet", "bar"),
+                             ("bar-text", "bar-current")], 4.5)
+        # The white focus ring can be seen on the bar and on the current tab.
+        self.check_contrast([("bar-text", "bar"), ("bar-text", "bar-current")], 3)
+
 def functions_in(code):
     """Cut app.js into its top-level functions. Gives a map: name -> body.
 
@@ -6867,9 +6878,9 @@ class ClassicStyleTest(unittest.TestCase):
         self.assertIn("slots.head.prepend(avatar)", part)
 
     def test_room_for_the_avatar_only_when_there_is_one(self):
-        # design-system: the room is the --avatar-indent token, 100px.
+        # classic-layout: the room is the --avatar-indent token, 70px (12 + 48 + 10).
         self.assertIn(".post.with-avatar {\n  padding-left: var(--avatar-indent);", self.css)
-        self.assertIn("--avatar-indent: 100px;", self.read("tokens.css"))
+        self.assertIn("--avatar-indent: 70px;", self.read("tokens.css"))
         post_rule = re.search(r"\n\.post \{(.*?)\}", self.css, re.DOTALL).group(1)
         self.assertNotIn("avatar-indent", post_rule)
         self.assertIn('item.classList.add("with-avatar")', self.avatar_part())
@@ -7018,6 +7029,349 @@ class DesignSystemTest(unittest.TestCase):
                   "(use a token instead):" % len(found))
             for name, number, declaration in found:
                 print("    %s:%d  %s" % (name, number, declaration))
+
+
+
+class ClassicLayoutModelTest(unittest.TestCase):
+    """classic-layout: the profile card's two counts, and the trending #tags.
+
+    Both only read, and both are counted from the rows each time.
+    """
+
+    NOW = SOME_MOMENT
+
+    def setUp(self):
+        self.folder = tempfile.TemporaryDirectory()
+        self.db_path = os.path.join(self.folder.name, "test.db")
+        server.create_tables(self.db_path)
+        self.clock = use_fake_clock(self)
+
+    def tearDown(self):
+        self.folder.cleanup()
+
+    def sign_up(self, name):
+        token, user = server.create_account(self.db_path, name, name.title(), PASSWORD)
+        return user["id"]
+
+    def post(self, user_id, text, hours_ago=1):
+        """Save a post written `hours_ago` hours before NOW. The rate limit's clock
+        moves on first, so a test can save as many posts as it needs."""
+        self.clock.move(60)
+        return server.save_post(self.db_path, user_id, text,
+                                now=self.NOW - timedelta(hours=hours_ago))["id"]
+
+    def trends(self, viewer_id=None):
+        return server.trending_tags(self.db_path, viewer_id, now=self.NOW)
+
+    # -- the counts --
+
+    def test_the_counts_leave_out_deleted_posts_and_your_own_likes(self):
+        aiko, ben = self.sign_up("aiko"), self.sign_up("ben")
+        kept = self.post(aiko, "kept")
+        gone = self.post(aiko, "gone")
+        self.post(ben, "ben's")
+        server.add_like(self.db_path, ben, kept)
+        server.add_like(self.db_path, ben, gone)
+        server.add_like(self.db_path, aiko, kept)   # your own like is not "received"
+        self.assertEqual(server.account_counts(self.db_path, aiko), (2, 2))
+        server.delete_post(self.db_path, aiko, gone)
+        self.assertEqual(server.account_counts(self.db_path, aiko), (1, 1))
+        self.assertEqual(server.account_counts(self.db_path, ben), (1, 0))
+
+    def test_a_reply_is_a_post_in_the_count(self):
+        aiko, ben = self.sign_up("aiko"), self.sign_up("ben")
+        first = self.post(aiko, "first")
+        self.clock.move(60)
+        server.save_reply(self.db_path, ben, "a reply", first)
+        self.assertEqual(server.account_counts(self.db_path, ben), (1, 0))
+
+    def test_the_counts_only_read(self):
+        aiko = self.sign_up("aiko")
+        self.post(aiko, "hello")
+        before = all_values_in(self.db_path)
+        server.account_counts(self.db_path, aiko)
+        server.account_counts(self.db_path, 999)   # nobody: two zeros, and no new user
+        self.assertEqual(server.account_counts(self.db_path, 999), (0, 0))
+        self.assertEqual(all_values_in(self.db_path), before)
+
+    # -- the trends --
+
+    def test_a_post_counts_once_for_each_tag(self):
+        aiko, ben = self.sign_up("aiko"), self.sign_up("ben")
+        self.post(aiko, "#cat #cat #Cat")
+        self.post(ben, "#cat and #dog")
+        self.assertEqual(self.trends(), [("cat", 2), ("dog", 1)])
+
+    def test_only_the_last_day_counts(self):
+        aiko = self.sign_up("aiko")
+        self.post(aiko, "#yesterday", hours_ago=25)
+        self.post(aiko, "#today", hours_ago=23)
+        self.assertEqual(self.trends(), [("today", 1)])
+
+    def test_an_old_post_with_no_date_never_counts(self):
+        aiko = self.sign_up("aiko")
+        connection = server.connect(self.db_path)
+        connection.execute("INSERT INTO posts (author_id, text, old_clock_time) "
+                           "VALUES (?, '#old', '09:00')", (aiko,))
+        connection.commit()
+        connection.close()
+        self.assertEqual(self.trends(), [])
+
+    def test_a_deleted_post_does_not_count(self):
+        aiko, ben = self.sign_up("aiko"), self.sign_up("ben")
+        gone = self.post(aiko, "#gone")
+        kept = self.post(aiko, "#kept")
+        server.delete_post(self.db_path, aiko, gone)
+        # A post kept for its replies has no words, so no tags either.
+        self.clock.move(60)
+        server.save_reply(self.db_path, ben, "a reply", kept)
+        server.delete_post(self.db_path, aiko, kept)
+        self.assertEqual(self.trends(), [])
+
+    def test_a_blocked_persons_tags_do_not_count_for_the_blocker(self):
+        aiko, ben = self.sign_up("aiko"), self.sign_up("ben")
+        self.post(ben, "#ben")
+        self.post(aiko, "#aiko")
+        server.add_block(self.db_path, aiko, "ben")
+        self.assertEqual(self.trends(aiko), [("aiko", 1)])
+        self.assertEqual(self.trends(ben), [("aiko", 1), ("ben", 1)])
+        self.assertEqual(self.trends(None), [("aiko", 1), ("ben", 1)])
+
+    def test_a_post_hidden_by_reports_does_not_count(self):
+        reporters = [self.sign_up(name) for name in ("chika", "dan", "emi")]
+        for reporter in reporters:
+            self.post(reporter, "an earlier post")   # report_too_early needs one
+        aiko = self.sign_up("aiko")
+        hidden = self.post(aiko, "#hidden")
+        for reporter in reporters:
+            server.add_report(self.db_path, reporter, hidden)
+        self.assertEqual(self.trends(None), [])
+        self.assertEqual(self.trends(reporters[0]), [])
+
+    def test_ties_are_a_to_z_and_there_are_at_most_ten(self):
+        aiko = self.sign_up("aiko")
+        self.post(aiko, " ".join("#t%02d" % number for number in range(12, 0, -1)))
+        self.post(aiko, "#t12 again")
+        trends = self.trends()
+        self.assertEqual(len(trends), server.TRENDS_LIMIT)
+        self.assertEqual(server.TRENDS_LIMIT, 10)
+        self.assertEqual(trends[0], ("t12", 2))
+        self.assertEqual([tag for tag, _ in trends[1:]],
+                         ["t%02d" % number for number in range(1, 10)])
+
+    def test_trends_only_read(self):
+        aiko = self.sign_up("aiko")
+        self.post(aiko, "#cat")
+        before = all_values_in(self.db_path)
+        self.trends()
+        self.trends(aiko)
+        self.assertEqual(all_values_in(self.db_path), before)
+
+
+class ClassicLayoutServerTest(unittest.TestCase):
+    """classic-layout: GET /trends and the counts in GET /sessions, over real HTTP,
+    with the database file read with SQL after each step (a journey)."""
+
+    def setUp(self):
+        self.folder = tempfile.TemporaryDirectory()
+        self.db_path = os.path.join(self.folder.name, "test.db")
+        self.server = server.make_server(0, self.db_path)
+        self.base = "http://127.0.0.1:" + str(self.server.server_address[1])
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+        self.clock = use_fake_clock(self)
+
+    def tearDown(self):
+        self.server.shutdown()
+        self.server.server_close()
+        self.folder.cleanup()
+
+    def open_window(self):
+        return urllib.request.build_opener(
+            urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
+
+    def page_sends(self, window, path, data, method="POST"):
+        request = urllib.request.Request(
+            self.base + path,
+            data=json.dumps(data).encode("utf-8") if data is not None else None,
+            headers={"Content-Type": "application/json"}, method=method)
+        with window.open(request) as answer:
+            return answer.status, json.loads(answer.read())
+
+    def page_asks(self, window, path):
+        with window.open(self.base + path) as answer:
+            return json.loads(answer.read())
+
+    def signed_up(self, name):
+        window = self.open_window()
+        self.page_sends(window, "/accounts", {"account_name": name, "display_name": name.title(),
+                                              "password": PASSWORD})
+        return window
+
+    def page_posts(self, window, text):
+        self.clock.move(60)
+        return self.page_sends(window, "/posts", {"text": text})[1]["id"]
+
+    def rows(self, sql, values=()):
+        connection = sqlite3.connect(self.db_path)
+        rows = connection.execute(sql, values).fetchall()
+        connection.close()
+        return rows
+
+    def test_trends_are_open_to_everyone(self):
+        aiko = self.signed_up("aiko")
+        self.page_posts(aiko, "lunch #Osaka")
+        stranger = self.open_window()
+        self.assertEqual(self.page_asks(stranger, "/trends"),
+                         {"trends": [{"tag": "osaka", "count": 1}]})
+        self.assertEqual(self.page_asks(aiko, "/trends"),
+                         {"trends": [{"tag": "osaka", "count": 1}]})
+
+    def test_trends_follow_the_viewer_from_the_cookie(self):
+        aiko, ben = self.signed_up("aiko"), self.signed_up("ben")
+        self.page_posts(ben, "#ben")
+        self.page_sends(aiko, "/blocks", {"account_name": "ben"})
+        self.assertEqual(self.page_asks(aiko, "/trends"), {"trends": []})
+        self.assertEqual(self.page_asks(ben, "/trends"),
+                         {"trends": [{"tag": "ben", "count": 1}]})
+
+    def test_trends_are_not_printed_in_the_terminal(self):
+        with mock.patch("http.server.BaseHTTPRequestHandler.log_message") as printed:
+            self.page_asks(self.open_window(), "/trends")
+        printed.assert_not_called()
+
+    def test_the_profile_counts_come_with_who_am_i(self):
+        aiko, ben = self.signed_up("aiko"), self.signed_up("ben")
+        first = self.page_posts(aiko, "one")
+        self.page_posts(aiko, "two")
+        self.page_sends(ben, "/likes", {"post_id": first})
+        who = self.page_asks(aiko, "/sessions")
+        self.assertEqual((who["post_count"], who["like_count"]), (2, 1))
+        self.assertEqual(self.rows("SELECT COUNT(*) FROM posts WHERE author_id = "
+                                   "(SELECT id FROM users WHERE name = 'aiko')"), [(2,)])
+        # The answers to sign-up and log-in, and other people's names, have no counts.
+        status, answer = self.page_sends(self.open_window(), "/sessions",
+                                         {"account_name": "aiko", "password": PASSWORD})
+        self.assertNotIn("post_count", answer)
+        self.assertNotIn("post_count", json.dumps(self.page_asks(ben, "/likers?post_id=%d" % first)))
+
+    def test_journey_a_tag_trends_and_stops_when_its_post_is_deleted(self):
+        aiko = self.signed_up("aiko")
+        reader = self.open_window()
+        post_id = self.page_posts(aiko, "rain again #kyoto #Kyoto")
+        self.assertEqual(self.rows("SELECT text, deleted_at FROM posts WHERE id = ?", (post_id,)),
+                         [("rain again #kyoto #Kyoto", None)])
+        self.assertEqual(self.page_asks(reader, "/trends"),
+                         {"trends": [{"tag": "kyoto", "count": 1}]})
+        self.assertEqual(self.page_asks(aiko, "/sessions")["post_count"], 1)
+        self.assertEqual(self.page_sends(aiko, "/posts", {"post_id": post_id}, "DELETE")[0], 200)
+        self.assertEqual(self.rows("SELECT id FROM posts WHERE id = ?", (post_id,)), [])
+        self.assertEqual(self.page_asks(reader, "/trends"), {"trends": []})
+        self.assertEqual(self.page_asks(aiko, "/sessions")["post_count"], 0)
+
+
+class ClassicLayoutPageTest(unittest.TestCase):
+    """classic-layout: the page's three areas, read as text (no browser)."""
+
+    def read(self, *path):
+        with open(os.path.join(HERE, *path), encoding="utf-8") as file:
+            return file.read()
+
+    def setUp(self):
+        self.html = self.read("index.html")
+        self.page_code = self.read("app.js")
+        self.functions = functions_in(self.page_code)
+        self.tokens = self.read("tokens.css")
+
+    def test_every_id_app_js_looks_up_is_in_index_html(self):
+        ids = set(re.findall(r'getElementById\("([\w-]+)"\)', self.page_code))
+        self.assertGreater(len(ids), 40)
+        on_page = set(re.findall(r'\bid="([\w-]+)"', self.html))
+        for element_id in sorted(ids):
+            with self.subTest(id=element_id):
+                self.assertIn(element_id, on_page)
+
+    def test_the_page_has_a_top_bar_and_two_columns(self):
+        bar = self.html[self.html.index('<header class="top-bar">'):self.html.index("</header>")]
+        for inside in ('id="views"', 'id="search-form"', 'id="theme"', 'id="logout"',
+                       'data-words="app_name"'):
+            with self.subTest(inside=inside):
+                self.assertIn(inside, bar)
+        main = self.html[self.html.index('<main class="columns">'):self.html.index("</main>")]
+        dashboard = main[main.index('<aside class="dashboard">'):main.index("</aside>")]
+        stream = main[main.index('<div class="stream">'):]
+        for inside in ('id="signed-out"', 'id="profile-card"', 'id="post-form"',
+                       'id="email-settings"', 'id="blocked-section"', 'id="trends"'):
+            with self.subTest(left=inside):
+                self.assertIn(inside, dashboard)
+        for inside in ('id="stream-heading"', 'data-view="timeline"', 'data-view="search"'):
+            with self.subTest(right=inside):
+                self.assertIn(inside, stream)
+        # The left column comes first, so it is first when the columns stack.
+        self.assertLess(main.index("dashboard"), main.index('class="stream"'))
+
+    def test_page_only_has_no_bar_and_no_columns(self):
+        page_only = self.read("..", "page-only", "index.html")
+        for name in ("top-bar", "columns", "dashboard", "stream"):
+            self.assertNotIn(name, page_only)
+
+    def test_the_type_is_the_size_of_a_2012_timeline(self):
+        self.assertIn("--text-body: 15px;", self.tokens)
+        self.assertIn("--text-meta: 13px;", self.tokens)
+        self.assertIn("--avatar: 48px;", self.tokens)
+        self.assertIn("font-size: var(--text-body);", self.read("base.css"))
+        # The old rule is replaced, and says so, so nobody puts it back.
+        self.assertIn("REPLACES the old rule", self.tokens)
+        self.assertIn("REPLACES", self.read("..", "DESIGN.md"))
+
+    def test_the_columns_stack_under_920px(self):
+        components = self.read("components.css")
+        self.assertIn("@media (max-width: 919px)", components)
+        self.assertIn("grid-template-columns: var(--dashboard-width) minmax(0, var(--stream-width));",
+                      components)
+
+    def test_trends_are_asked_for_every_minute_not_every_second(self):
+        self.assertIn("const TRENDS_EVERY = 60000;", self.page_code)
+        self.assertIn("}, TRENDS_EVERY);", self.page_code)
+        for name in ("checkForNewPosts", "keepChecking"):
+            with self.subTest(function=name):
+                self.assertNotIn("askForTrends", self.functions[name])
+                self.assertNotIn("askForCounts", self.functions[name])
+        self.assertIn('fetch("/trends")', self.functions["askForTrends"])
+
+    def test_a_trending_tag_opens_its_search(self):
+        show = self.functions["showTrends"]
+        self.assertIn('searchElement("#" + trend.tag, "post-tag")', show)
+        self.assertIn("trendsNone.hidden", show)
+
+    def test_the_counts_are_asked_for_after_a_post_a_delete_and_a_login(self):
+        self.assertIn("askForCounts()", self.functions["sendPost"])
+        self.assertIn("askForCounts()", self.functions["deletePost"])
+        self.assertIn("profileCard(who)", self.functions["showSignedIn"])
+        self.assertIn("askForCounts()", self.functions["profileCard"])
+        self.assertIn('fetch("/sessions")', self.functions["askForCounts"])
+        self.assertIn('sayCount("profile_posts"', self.functions["drawProfileCounts"])
+        self.assertIn('sayCount("profile_likes"', self.functions["drawProfileCounts"])
+        self.assertIn("profileCounts = null;", self.functions["showSignedOut"])
+
+    def test_log_out_is_in_the_bar_and_shown_only_when_signed_in(self):
+        self.assertIn("logoutButton.hidden = false;", self.functions["showSignedIn"])
+        self.assertIn("logoutButton.hidden = true;", self.functions["showSignedOut"])
+        self.assertRegex(self.html, r'<button type="button" id="logout"[^>]* hidden>')
+
+    def test_the_stream_header_names_the_view(self):
+        self.assertIn("showStreamHeading(name);", self.functions["showView"])
+        words = read_words()[2]
+        for view in ("timeline", "search", "bookmarks"):
+            with self.subTest(view=view):
+                self.assertIn('"stream_heading_%s"' % view, self.functions["showStreamHeading"])
+                self.assertIn("stream_heading_" + view, words)
+
+    def test_the_top_bar_is_listed_in_the_style_guide(self):
+        guide = self.read("design.html")
+        for name in ("top-bar", "columns", "dashboard", "stream", "stream-header",
+                     "profile-card", "trends", "visually-hidden"):
+            with self.subTest(component=name):
+                self.assertIn(name, guide)
 
 
 if __name__ == "__main__":

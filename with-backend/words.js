@@ -658,4 +658,33 @@ const WORDS = {
   reply_emails_off: {
     en: "Reply emails are off.",
   },
+
+  // classic-layout
+  profile_posts_one: {
+    en: "{count} post",
+  },
+  profile_posts_other: {
+    en: "{count} posts",
+  },
+  profile_likes_one: {
+    en: "{count} like received",
+  },
+  profile_likes_other: {
+    en: "{count} likes received",
+  },
+  trends_heading: {
+    en: "Trends",
+  },
+  trends_none: {
+    en: "No #tags in the last day.",
+  },
+  stream_heading_timeline: {
+    en: "Timeline",
+  },
+  stream_heading_search: {
+    en: "Search results",
+  },
+  stream_heading_bookmarks: {
+    en: "My bookmarks",
+  },
 };

@@ -27,10 +27,10 @@ body {
 main {
   max-width: var(--page-width);
   margin: 0 auto;
-  padding: var(--space-11) var(--space-8);
+  padding: var(--space-6) var(--space-5);
 }
 
 h1 {
-  margin: 0 0 var(--space-8);
+  margin: 0 0 var(--space-5);
   font-size: var(--text-title);
 }

@@ -13,14 +13,21 @@
      tabs        .tabs (a row of view buttons, one current)
      status      .status (the one-line message under the post box)
      avatar      .avatar (the circle with a letter), .avatar-colour-1 … 6
-     post        .timeline (a list of posts), .post and its slots and states */
+     post        .timeline (a list of posts), .post and its slots and states
+     hidden      .visually-hidden (words for a screen reader only)
+   The layout (classic-layout), the page's three areas:
+     top-bar     .top-bar (the dark bar across the top), .top-bar-inner, .top-bar-title
+     columns     .columns (the two columns under the bar), .dashboard (left), .stream (right)
+     stream      .stream-header (the name of the view, at the top of the stream)
+     profile     .profile-card (your circle, names and two counts)
+     trends      .trends (the trending #tags), .trends-list */
 
 
 /* ---- field: a label and the box under it ---- */
 
 label {
   display: block;
-  margin-bottom: var(--space-3);
+  margin-bottom: var(--space-2);
   color: var(--quiet);
   font-weight: var(--weight-medium);
 }
@@ -28,7 +35,7 @@ label {
 input,
 textarea {
   width: 100%;
-  padding: var(--space-6) var(--space-7);
+  padding: var(--space-4) var(--space-4);
   border: var(--line) solid var(--border);
   border-radius: var(--radius-field);
   background: var(--card);
@@ -42,7 +49,7 @@ textarea {
 
 /* A choice from a list (the Colours switch): a smaller box of the same kind. */
 select {
-  padding: var(--space-3) var(--space-6);
+  padding: var(--space-2) var(--space-4);
   border: var(--line) solid var(--border);
   border-radius: var(--radius-field);
   background: var(--card);
@@ -82,7 +89,7 @@ button:focus {
 
 /* Every <button> is a button: a rounded rectangle in the button colour. */
 button {
-  padding: var(--space-6) var(--space-12);
+  padding: var(--space-4) var(--space-7);
   border: none;
   border-radius: var(--radius);
   background: var(--button);
@@ -119,7 +126,7 @@ button {
 
 /* .button-pill: a small round button with an edge (the heart, the star). */
 .button-pill {
-  padding: var(--space-1) var(--space-9);
+  padding: var(--space-1) var(--space-5);
   border: var(--line) solid var(--border);
   border-radius: var(--radius-pill);
   background: none;
@@ -170,7 +177,7 @@ button:disabled:not(.button-pill) {
 /* ---- disclosure: a <details> box that opens and closes, with no JavaScript ---- */
 
 .disclosure[open] {
-  padding: var(--space-6) var(--space-8);
+  padding: var(--space-4) var(--space-5);
 }
 
 .disclosure summary,
@@ -192,7 +199,7 @@ button:disabled:not(.button-pill) {
 }
 
 .menu ul {
-  margin: var(--space-3) 0 0;
+  margin: var(--space-2) 0 0;
   padding: 0;
   list-style: none;
 }
@@ -203,8 +210,8 @@ button:disabled:not(.button-pill) {
 .tabs {
   display: flex;
   flex-wrap: wrap;
-  gap: var(--space-6);
-  margin-bottom: var(--space-8);
+  gap: var(--space-4);
+  margin-bottom: var(--space-5);
 }
 
 .tabs > button[aria-current="page"] {
@@ -217,7 +224,7 @@ button:disabled:not(.button-pill) {
 
 .status {
   min-height: calc(var(--line-height) * 1em);
-  margin: var(--space-6) 0;
+  margin: var(--space-4) 0;
   color: var(--warning);
   font-weight: var(--weight-bold);
 }
@@ -229,8 +236,8 @@ button:disabled:not(.button-pill) {
    on its left (.with-avatar). */
 .avatar {
   position: absolute;
-  top: var(--space-8);
-  left: var(--space-10);
+  top: var(--space-4);
+  left: var(--space-5);
   width: var(--avatar);
   height: var(--avatar);
   border-radius: var(--radius-round);
@@ -238,7 +245,7 @@ button:disabled:not(.button-pill) {
   align-items: center;
   justify-content: center;
   color: var(--button-text);
-  font-size: var(--avatar-letter);
+  font-size: calc(var(--avatar) / 2);   /* the letter is half as tall as the circle */
   font-weight: var(--weight-bold);
   line-height: 1;
 }
@@ -268,7 +275,7 @@ button:disabled:not(.button-pill) {
 .post {
   position: relative;
   margin: 0;
-  padding: var(--space-8) var(--space-10);
+  padding: var(--space-4) var(--space-5);
   border: none;
   border-bottom: var(--line) solid var(--border);
   border-radius: 0;
@@ -299,11 +306,11 @@ button:disabled:not(.button-pill) {
 }
 
 .post-handle {
-  margin-left: var(--space-4);
+  margin-left: var(--space-3);
 }
 
 .post-time {
-  margin-left: var(--space-6);
+  margin-left: var(--space-4);
 }
 
 /* The time at the right of the first line of a post. What comes after it in
@@ -314,7 +321,7 @@ button:disabled:not(.button-pill) {
 
 /* body: the words. */
 .post-text {
-  margin: var(--space-3) 0 0;
+  margin: var(--space-2) 0 0;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
@@ -334,7 +341,7 @@ button:disabled:not(.button-pill) {
 
 /* menu: the "⋯" under the post. It is shown only when it has something in it. */
 .post-menu {
-  margin-top: var(--space-5);
+  margin-top: var(--space-3);
 }
 
 /* State: deleted, but kept for its replies: no words, only this line (edit-delete). */
@@ -357,13 +364,13 @@ button:disabled:not(.button-pill) {
    They are moved in to the post's words, with a line on the left, and smaller
    circles (replies). */
 .post:has(+ .reply-thread) {
-  padding-bottom: var(--space-4);
+  padding-bottom: var(--space-3);
   border-bottom: none;
 }
 
 .reply-thread {
   margin: 0;
-  padding: 0 var(--space-10) var(--space-6) var(--avatar-indent);
+  padding: 0 var(--space-5) var(--space-4) var(--avatar-indent);
   border-bottom: var(--line) solid var(--border);
 }
 
@@ -375,7 +382,7 @@ button:disabled:not(.button-pill) {
 }
 
 .replies > .post {
-  padding: var(--space-6) var(--space-8);
+  padding: var(--space-4) var(--space-5);
 }
 
 .replies > .post:last-child {
@@ -387,11 +394,11 @@ button:disabled:not(.button-pill) {
 }
 
 .replies .avatar {
-  top: var(--space-6);
-  left: var(--space-8);
+  top: var(--space-4);
+  left: var(--space-5);
   width: var(--avatar-small);
   height: var(--avatar-small);
-  font-size: var(--avatar-small-letter);
+  font-size: calc(var(--avatar-small) / 2);
 }
 
 /* A light tint under the mouse, only where there is a mouse. A phone and a
@@ -406,24 +413,241 @@ button:disabled:not(.button-pill) {
 @media (max-width: 600px) {
   .post,
   .replies > .post {
-    padding: var(--space-6);
+    padding: var(--space-4);
   }
 
-  .post.with-avatar,
-  .replies > .post.with-avatar {
+  .post.with-avatar {
     padding-left: var(--avatar-indent-phone);
   }
 
-  .avatar,
-  .replies .avatar {
-    top: var(--space-6);
-    left: var(--space-6);
-    width: var(--avatar-small);
-    height: var(--avatar-small);
-    font-size: var(--avatar-small-letter);
+  /* A reply keeps its small circle; the rules for replies above still apply. */
+  .avatar {
+    top: var(--space-4);
+    left: var(--space-4);
+    width: var(--avatar-phone);
+    height: var(--avatar-phone);
+    font-size: calc(var(--avatar-phone) / 2);
   }
 
   .reply-thread {
-    padding: 0 var(--space-6) var(--space-6) var(--space-11);
+    padding: 0 var(--space-4) var(--space-4) var(--space-6);
   }
+}
+
+
+/* ---- hidden: words for a screen reader only ---- */
+
+/* The words are read aloud but take no room on screen (the "Search posts"
+   label beside the search box, "Signed in as" on the profile card). */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+
+/* ==== The layout (classic-layout): a bar across the top, two columns under it ==== */
+
+/* ---- top-bar: the dark bar across the top, with the app's name, the views,
+   search, Colours and Log out. It stays at the top while you scroll. ---- */
+
+.top-bar {
+  position: sticky;
+  top: 0;
+  z-index: var(--layer-bar);
+  border-bottom: var(--line) solid var(--border);   /* seen in dark mode, where the page is dark too */
+  background: var(--bar);
+  color: var(--bar-text);
+}
+
+/* The bar takes the place of the band of colour across the top of the page. */
+body:has(> .top-bar) {
+  border-top: none;
+}
+
+/* A link or a box that gets the keyboard is never hidden under the bar. */
+html:has(.top-bar) {
+  scroll-padding-top: var(--sticky-top);
+}
+
+.top-bar-inner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3) var(--space-5);
+  max-width: var(--bar-width);
+  min-height: var(--bar-height);
+  margin: 0 auto;
+  padding: var(--space-2) var(--space-5);
+}
+
+.top-bar-title {
+  margin: 0;
+  font-size: var(--text-large);
+}
+
+.top-bar label {
+  margin: 0;
+  color: var(--bar-quiet);
+}
+
+.top-bar input,
+.top-bar select {
+  padding: var(--space-1) var(--space-3);
+}
+
+.top-bar button {
+  padding: var(--space-1) var(--space-4);
+}
+
+.top-bar .button-link {
+  padding: 0;
+  color: var(--bar-text);
+}
+
+/* The views, as tabs in the bar: quiet grey words, and the current one white
+   on a lighter patch. */
+.top-bar .tabs {
+  gap: var(--space-1);
+  margin: 0;
+}
+
+.top-bar .tabs > button {
+  background: none;
+  color: var(--bar-quiet);
+}
+
+.top-bar .tabs > button:hover {
+  color: var(--bar-text);
+}
+
+.top-bar .tabs > button[aria-current="page"] {
+  outline: none;
+  background: var(--bar-current);
+  color: var(--bar-text);
+}
+
+/* The focus ring in the bar is white, so it can be seen on the dark bar. */
+.top-bar input:focus,
+.top-bar select:focus,
+.top-bar button:focus,
+.top-bar .tabs > button:focus-visible {
+  outline: var(--line-thick) solid var(--bar-text);
+  outline-offset: var(--focus-offset);
+}
+
+
+/* ---- columns: the left column (.dashboard) and the right one (.stream) ---- */
+
+.columns {
+  display: grid;
+  /* The stream may give up a little room on a screen just over 920px wide. */
+  grid-template-columns: var(--dashboard-width) minmax(0, var(--stream-width));
+  justify-content: center;
+  align-items: start;
+  gap: var(--space-7);
+}
+
+/* The left column: its cards one under the other. */
+.dashboard {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  min-width: 0;
+}
+
+/* The right column is one card: the header, then the posts, with a line
+   between them. The lists of posts inside it have no edge of their own. */
+.stream {
+  min-width: 0;
+  border: var(--line) solid var(--border);
+  border-radius: var(--radius-large);
+  background: var(--card);
+}
+
+.stream .timeline.card {
+  border: none;
+  border-radius: 0;
+}
+
+/* Under 920px wide: one column, the left one first. */
+@media (max-width: 919px) {
+  .top-bar {
+    position: static;
+  }
+
+  .columns {
+    grid-template-columns: minmax(0, var(--stream-width));
+  }
+}
+
+
+/* ---- stream: the header that names the view ---- */
+
+.stream-header {
+  margin: 0;
+  padding: var(--space-4) var(--space-5);
+  border-bottom: var(--line) solid var(--border);
+  font-size: var(--text-large);
+}
+
+
+/* ---- profile: the profile card, at the top of the left column ---- */
+
+/* Your circle on the left (the same .avatar as on your posts), and beside it
+   your names and the two counts. */
+.profile-card {
+  position: relative;
+  min-height: calc(var(--avatar) + 2 * var(--space-5));
+  padding: var(--space-5) var(--space-5) var(--space-5) var(--avatar-indent);
+  overflow-wrap: anywhere;
+}
+
+.profile-card .avatar {
+  top: var(--space-5);
+}
+
+.profile-card p {
+  margin: 0;
+}
+
+/* The @name under the display name. */
+.profile-card .post-handle {
+  display: block;
+  margin: 0;
+}
+
+.profile-counts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-5);
+  padding-top: var(--space-2);
+  color: var(--quiet);
+  font-size: var(--text-small);
+}
+
+
+/* ---- trends: the trending #tags, in the left column ---- */
+
+.trends {
+  padding: var(--space-4) var(--space-5);
+}
+
+.trends h2 {
+  margin: 0 0 var(--space-2);
+  font-size: var(--text-large);
+}
+
+.trends-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  overflow-wrap: anywhere;
+}
+
+.trends-list li {
+  padding: var(--space-1) 0;
 }

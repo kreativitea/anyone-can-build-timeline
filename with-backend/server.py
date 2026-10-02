@@ -23,7 +23,7 @@ import re
 import secrets
 import sqlite3
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from email.message import EmailMessage
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
@@ -120,10 +120,18 @@ class TimelineHandler(BaseHTTPRequestHandler):
         elif url.path.startswith("/pictures/"):
             self.send_picture(url.path)
         elif url.path == "/sessions":
-            # "Who am I?" The page asks this when it opens.
+            # "Who am I?" The page asks this when it opens, and again after a
+            # post or a delete, for the two counts on the profile card.
             user = self.signed_in_user()
             if user is not None:
-                self.send_json(200, account_to_json(user))
+                self.send_json(200, account_to_json(
+                    user, account_counts(self.server.db_path, user["id"])))
+        elif url.path == "/trends":
+            # classic-layout: the #tags in the most posts today. Anyone may
+            # ask; the viewer is read only so that visible_to applies.
+            viewer = self.user_or_none()
+            self.send_json(200, trends_to_json(
+                trending_tags(self.server.db_path, viewer["id"] if viewer else None)))
         elif url.path in PAGE_FILES:
             file_name, content_type = PAGE_FILES[url.path]
             try:
@@ -742,7 +750,8 @@ class TimelineHandler(BaseHTTPRequestHandler):
         if self.command == "GET" and (self.path.startswith("/posts")
                                       or self.path.startswith("/likes")
                                       or self.path.startswith("/search")
-                                      or self.path.startswith("/changes")):
+                                      or self.path.startswith("/changes")
+                                      or self.path.startswith("/trends")):
             return
         BaseHTTPRequestHandler.log_message(self, format, *args)
 
@@ -2520,6 +2529,72 @@ def search_posts(db_path, query, viewer_id=None):
     return rows[:SEARCH_LIMIT], len(rows) > SEARCH_LIMIT
 
 
+
+# ---- classic-layout: the profile card's counts, and the trending #tags ----
+#
+# Both only read, and both are counted from the rows every time they are
+# asked for, never kept as a number (like every count in this app).
+
+# How far back the trends look, and how many tags they show.
+TRENDS_HOURS = 24
+TRENDS_LIMIT = 10
+
+
+def account_counts(db_path, user_id):
+    """The two counts on a person's profile card: (posts, likes).
+
+    posts: their posts that are not deleted (a reply is a post too).
+    likes: the likes their posts have received from other people, the same
+    "popular" as who-liked uses. A like on a deleted post is already gone
+    (forget_post_details), so it never counts.
+    """
+    connection = connect(db_path)
+    try:
+        # One read transaction, so both counts come from the same moment.
+        connection.execute("BEGIN")
+        posts = connection.execute(
+            "SELECT COUNT(*) FROM posts WHERE author_id = ? AND deleted_at IS NULL",
+            (user_id,)).fetchone()[0]
+        likes = connection.execute(
+            "SELECT COUNT(*) FROM likes JOIN posts ON posts.id = likes.post_id "
+            "WHERE posts.author_id = ? AND likes.user_id <> ?",
+            (user_id, user_id)).fetchone()[0]
+    finally:
+        connection.rollback()   # it only read, so there is nothing to keep
+        connection.close()
+    return posts, likes
+
+
+def trending_tags(db_path, viewer_id=None, now=None):
+    """The TRENDS_LIMIT tags in the most posts of the last TRENDS_HOURS hours.
+
+    Returns a list of (tag, count), most posts first, and A to Z when two
+    have the same count. A post counts once for each tag, even if it says
+    #cat twice (tags_in gives a set). The posts are read through
+    select_posts, so a post this viewer may not see (block, report) never
+    counts. A deleted post has no words, and an old post with no date
+    (posted_at NULL) is never "in the last day". `now` lets a test fix the
+    clock. Only reads.
+    """
+    if now is None:
+        now = utc_now()
+    since = utc_text(now - timedelta(hours=TRENDS_HOURS))
+    connection = connect(db_path)
+    try:
+        # A saved time is UTC text of one fixed shape, so text order is time order.
+        rows = select_posts(connection,
+                            ["posts.deleted_at IS NULL", "posts.posted_at >= ?"],
+                            [since], viewer_id, "posts.id")
+    finally:
+        connection.close()
+    counts = {}
+    for row in rows:
+        for tag in tags_in(row["text"]):
+            counts[tag] = counts.get(tag, 0) + 1
+    ranked = sorted(counts.items(), key=lambda pair: (-pair[1], pair[0]))
+    return ranked[:TRENDS_LIMIT]
+
+
 # ---- timeline-flow: one page of older posts at a time ----
 
 # How many posts one page has. The page has the same number (PAGE_SIZE in
@@ -3408,9 +3483,21 @@ def problem_to_json(problem):
     return {"error": str(problem), "code": problem.code, "values": problem.values}
 
 
-def account_to_json(user):
-    """Who is logged in: both names, and nothing about the password."""
-    return {"account_name": user["name"], "display_name": user["display_name"]}
+def account_to_json(user, counts=None):
+    """Who is logged in: both names, and nothing about the password.
+
+    classic-layout: `counts` is (posts, likes) from account_counts, for the
+    profile card. Given only for the person asking (GET /sessions).
+    """
+    answer = {"account_name": user["name"], "display_name": user["display_name"]}
+    if counts is not None:
+        answer["post_count"], answer["like_count"] = counts
+    return answer
+
+
+def trends_to_json(trends):
+    """classic-layout: the trending tags, without their #, most posts first."""
+    return {"trends": [{"tag": tag, "count": count} for tag, count in trends]}
 
 
 def like_to_json(post_id, like_count):

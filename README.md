@@ -14,6 +14,9 @@ in two versions:
 
 The difference between the two is the reason a backend exists.
 
+The backend version is laid out like a 2012 timeline: a dark bar across the top, your profile
+card, the post box and the trending `#tags` on the left, and the posts on the right.
+
 You need a web browser. For the backend version you also need `python3`, version 3.9 or newer.
 A Mac already has it. There is nothing to install.
 
@@ -56,7 +59,8 @@ On the page, fill in the **Sign up** form:
   account name.
 - **Password**: 8 characters or more. Spaces count.
 
-You are logged in at once, and the page says *Signed in as Aiko Tanaka @aiko · Log out*. The login
+You are logged in at once: your profile card shows *Aiko Tanaka @aiko*, and *Log out* is in
+the top bar. The login
 lasts 30 days in that browser. Next time, use the **Log in** form. A private window is a different
 browser, so it can log in as someone else.
 
