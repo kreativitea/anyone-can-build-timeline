@@ -47,8 +47,8 @@ The three parts of `server.py`:
   `hash_password`, `hash_token`, `create_account`, `log_in`, `user_for_session`, `log_out`,
   `start_session`, `account_for`, `save_post`, `posts_after`, `add_like`, `remove_like`,
   `like_count_for`, `likes_for`, `who_liked`, `check_post_ids`, `like_summaries`, `utc_now`,
-  `utc_text`, and `create_tables` with its upgrades): the rules, and the
-  database, in four tables:
+  `utc_text`, `use_allowance`, `forget_attempts`, `clock`, and `create_tables` with its upgrades):
+  the rules, and the database, in five tables:
   - `users`: each person once. `name` is the account name (unique, capitals ignored),
     `display_name` is the name shown, and `password_salt`, `password_hash`, `password_rounds` hold
     a hash of the password. The password itself is never kept.
@@ -57,6 +57,7 @@ The three parts of `server.py`:
   - `likes`: one row for each person who liked each post.
   - `sessions`: one row for each logged-in window. It keeps only a hash of the token, the user's id,
     and when it ends. Logging out deletes the row.
+  - `attempts`: one row for each allowed attempt that a rate limit counts. No password, no post text.
 
   A name is kept once, in `users`; never copy it into another table. Only sign-up
   (`create_account`) adds a user: posting, liking and reading never do. A like count is never kept
@@ -130,13 +131,27 @@ same functions as every other feature. Use them; do not go around them.
 - A path the server does not know gets `404` with one sentence: "There is nothing to {method} at
   {path}."
 
+## Rate limits
+
+A **rate limit** is a rule of the form "at most N times in S seconds". They are written once, in
+`LIMITS` in the model: posts 5 a minute and likes 30 a minute (each signed-in user), logins 5 tries
+in 10 minutes (each account name), sign-ups 30 an hour (each address). The rule lives in the model,
+in `use_allowance(db_path, action, key)`, which counts rows in `attempts` and raises `TooFast`. The
+controller turns `TooFast` into `429` with a `Retry-After` header and `{"error", "retry_after"}`;
+the page shows the words and turns off that form's button for those seconds (`holdForm`).
+
+- Call `use_allowance` **after** the other rules, so a mistake never uses up the allowance.
+- A new way of saving a post must call `use_allowance(db_path, "post", ...)` too.
+- Tests never sleep: they put a `FakeClock` in place of `server.clock` and move it forward.
+- Reading (`GET`) and logging out are never limited.
+
 ## How to run it
 
 - Page-only: open `page-only/index.html` in a browser. Nothing to start.
 - With a backend: `make run`, then open <http://localhost:8009>. Press Ctrl+C to stop.
 - Start again with an empty timeline: `make reset`.
 - See what is saved:
-  `sqlite3 with-backend/timeline.db 'select * from users; select * from posts; select * from likes; select * from sessions'`
+  `sqlite3 with-backend/timeline.db 'select * from users; select * from posts; select * from likes; select * from sessions; select * from attempts'`
 
 It needs only `python3` (3.9 or newer). Do not add libraries, packages or a build step.
 Write code that runs on Python 3.9: no `match` statements, and no `X | Y` in type hints.

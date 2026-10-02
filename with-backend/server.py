@@ -2,7 +2,8 @@
 
 This file has three parts:
   CONTROLLER  reads each request and decides what to do
-  MODEL       the rules, and the database (four tables: users, posts, likes and sessions)
+  MODEL       the rules, and the database (five tables: users, posts, likes, sessions
+              and attempts)
   VIEW        turns database rows into the JSON answer
 It uses only the Python standard library, so there is nothing to install.
 """
@@ -12,6 +13,7 @@ import hashlib
 import hmac
 import http.cookies
 import json
+import math
 import os
 import re
 import secrets
@@ -92,14 +94,19 @@ class TimelineHandler(BaseHTTPRequestHandler):
         data = self.read_json()
         if data is None:
             return
-        if path == "/accounts":
-            self.sign_up(data)
-        elif path == "/sessions":
-            self.log_in(data)
-        elif path == "/likes":
-            self.take_like(data)
-        else:
-            self.take_post(data)
+        # The model raises TooFast before any answer is sent, so it is safe to
+        # catch it here, once, for all four.
+        try:
+            if path == "/accounts":
+                self.sign_up(data)
+            elif path == "/sessions":
+                self.log_in(data)
+            elif path == "/likes":
+                self.take_like(data)
+            else:
+                self.take_post(data)
+        except TooFast as problem:
+            self.send_too_fast(problem)
 
     def do_DELETE(self):
         # The method says what happens: POST adds a like or a session, and
@@ -123,6 +130,9 @@ class TimelineHandler(BaseHTTPRequestHandler):
                                               data.get("post_id"))
         except RuleBroken as problem:
             self.send_json(400, {"error": str(problem)})
+            return
+        except TooFast as problem:
+            self.send_too_fast(problem)
             return
         self.send_json(200, like_to_json(post_id, like_count))   # 200: nothing was created
 
@@ -184,7 +194,10 @@ class TimelineHandler(BaseHTTPRequestHandler):
     def sign_up(self, data):
         try:
             token, user = create_account(self.server.db_path, data.get("account_name"),
-                                         data.get("display_name"), data.get("password"))
+                                         data.get("display_name"), data.get("password"),
+                                         # The address from the connection itself, never
+                                         # from a header: a header can say anything.
+                                         address=self.client_address[0])
         except RuleBroken as problem:
             self.send_json(400, {"error": str(problem)})
             return
@@ -250,6 +263,16 @@ class TimelineHandler(BaseHTTPRequestHandler):
     def send_nothing_here(self, method, path):
         """404, in one sentence for every method, so it stays true when routes are added."""
         self.send_json(404, {"error": f"There is nothing to {method} at {path}."})
+
+    def send_too_fast(self, problem):
+        """429 Too Many Requests. Retry-After is the standard header for the wait, in seconds."""
+        body = json.dumps(too_fast_to_json(problem)).encode("utf-8")
+        self.send_response(429)
+        self.send_header("Retry-After", str(problem.retry_after))
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
 
     def send_json(self, status, data, cookie=None):
         body = json.dumps(data).encode("utf-8")
@@ -333,11 +356,37 @@ class NotSignedIn(Exception):
     """Nobody is logged in, or the login was wrong. The message says which."""
 
 
+# Rate limits: at most this many times, in this many seconds. One place for
+# every limit. A post or a like is counted for each signed-in user, a login
+# for each account name typed, and a sign-up for each address. Sign-ups are
+# 30 an hour because today every request comes from 127.0.0.1, so everyone
+# using the server shares that one count.
+LIMITS = {"post": (5, 60), "like": (30, 60), "login": (5, 600), "signup": (30, 3600)}
+WHAT = {"post": "posts", "like": "likes", "login": "wrong passwords for this account",
+        "signup": "new accounts"}
+
+
+class TooFast(Exception):
+    """Too many attempts too quickly. retry_after says how many seconds to wait.
+
+    Not a kind of RuleBroken, so it can never be sent as a 400 by mistake.
+    """
+
+    def __init__(self, message, retry_after):
+        Exception.__init__(self, message)
+        self.retry_after = retry_after
+
+
 def connect(db_path):
     connection = sqlite3.connect(db_path)
     connection.row_factory = sqlite3.Row  # so a row can be read as row["author"]
     connection.execute("PRAGMA foreign_keys = ON")  # a post must point at a real user
     return connection
+
+
+# The newest version of the database: the number the last upgrade below sets.
+# Each new upgrade raises it by one, and the tests read it from here.
+LATEST_VERSION = 4
 
 
 def create_tables(db_path):
@@ -376,6 +425,8 @@ def create_tables(db_path):
         upgrade_to_groundwork(connection)
     if version < 3:
         upgrade_to_timestamps(connection)
+    if version < 4:
+        upgrade_to_rate_limit(connection)
     connection.close()
 
 
@@ -567,6 +618,26 @@ def upgrade_to_timestamps(connection):
 
     rebuild_table(connection, "posts", add_full_time, user_version=3, prepare=rename_old_time)
 
+def upgrade_to_rate_limit(connection):
+    """Version 4: the attempts table, for the rate limits. Every row is kept.
+
+    (Version 3 is timestamps, built on another branch at the same time. The
+    number 4 is for now: the orchestrator gives the final numbers at merge.)
+
+    One row is one allowed attempt: what was done, by whom, and when. A count
+    is never kept: it is counted from the rows. Nothing points at this table,
+    and it holds no password and no post text.
+    """
+    connection.execute("BEGIN")
+    connection.execute("CREATE TABLE IF NOT EXISTS attempts ("
+                       "action TEXT NOT NULL, "   # 'post', 'like', 'login' or 'signup'
+                       "key TEXT NOT NULL, "      # a user id, an account name, or an address
+                       "at REAL NOT NULL)")       # when, in seconds (see clock)
+    connection.execute("CREATE INDEX IF NOT EXISTS attempts_by_key "
+                       "ON attempts (action, key, at)")
+    connection.execute("PRAGMA user_version = 4")
+    connection.commit()
+
 
 # Each post, with its author's two names looked up in users, and how many people
 # have liked it. The view reads row["author"], row["display_name"] and row["like_count"].
@@ -650,6 +721,58 @@ def hash_token(token):
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
+def clock():
+    """The time now, in seconds. Only the rate limits use it.
+
+    The tests put a fake clock here and move it forward, so they never wait
+    for real. Sessions use time.time() instead, so moving the fake clock never
+    ends a login.
+    """
+    return time.time()
+
+
+def use_allowance(db_path, action, key):
+    """Count one attempt at `action` by `key`, or raise TooFast if there have been too many.
+
+    Call it after the other rules, so a mistake (an empty post, a bad name)
+    never uses up the allowance. An attempt refused here is not counted.
+    It opens its own connection, so the caller has nothing to close.
+    """
+    most, seconds = LIMITS[action]
+    now = clock()
+    connection = connect(db_path)
+    try:
+        # BEGIN IMMEDIATE takes the database's write lock at once, so two
+        # requests at the same moment take turns. Without it, two posts sent
+        # together could both count 4, and both be allowed.
+        connection.execute("BEGIN IMMEDIATE")
+        # Tidy up: a row older than the longest limit can never matter again.
+        longest = max(window for _, window in LIMITS.values())
+        connection.execute("DELETE FROM attempts WHERE at <= ?", (now - longest,))
+        rows = connection.execute("SELECT at FROM attempts WHERE action = ? AND key = ? "
+                                  "AND at > ? ORDER BY at", (action, key, now - seconds)).fetchall()
+        if len(rows) >= most:
+            connection.rollback()
+            # The wait ends when the oldest counted attempt is `seconds` old.
+            # Rounded up to whole seconds, and never less than 1.
+            wait = max(1, math.ceil(rows[0]["at"] + seconds - now))
+            raise TooFast(f"Too many {WHAT[action]}. Please try again in {wait} seconds.",
+                          wait)
+        connection.execute("INSERT INTO attempts (action, key, at) VALUES (?, ?, ?)",
+                           (action, key, now))
+        connection.commit()
+    finally:
+        connection.close()
+
+
+def forget_attempts(db_path, action, key):
+    """Delete every counted attempt at `action` by `key`. Used after a right password."""
+    connection = connect(db_path)
+    connection.execute("DELETE FROM attempts WHERE action = ? AND key = ?", (action, key))
+    connection.commit()
+    connection.close()
+
+
 def account_for(connection, user_id):
     """The user's id and both names. Never anything about the password."""
     return connection.execute("SELECT id, name, display_name FROM users WHERE id = ?",
@@ -666,16 +789,18 @@ def start_session(connection, user_id):
     return token
 
 
-def create_account(db_path, name, display_name, password):
+def create_account(db_path, name, display_name, password, address="local"):
     """Check the rules, make the account, log it in, and return (token, user).
 
     If an old user from before accounts has this name and no password, this
     claims it: the old row gets the password, and its old posts become this
     person's. A name that already has a password is taken.
+    `address` is where the request came from: sign-ups are limited for each one.
     """
     name = check_name(name)
     display_name = check_display_name(display_name) or name
     password = check_password(password)
+    use_allowance(db_path, "signup", address)   # before hashing, so a refusal costs nothing
     salt = secrets.token_bytes(16).hex()
     password_hash = hash_password(password, salt, PASSWORD_ROUNDS)
     connection = connect(db_path)
@@ -712,8 +837,13 @@ def log_in(db_path, name, password):
     """Check the name and password, log in, and return (token, user), or raise NotSignedIn."""
     name = name.strip() if isinstance(name, str) else ""
     password = password if isinstance(password, str) else ""
-    if name == "" or len(password) > MAX_PASSWORD:
+    if name == "" or len(name) > MAX_AUTHOR or len(password) > MAX_PASSWORD:
         raise NotSignedIn(WRONG_LOGIN)
+    # Every try is counted as wrong until it is proved right, and it is counted
+    # before any hashing. So a refused try costs the server nothing, and many
+    # tries sent at once cannot slip past while the first is still hashing.
+    # A name with no account is counted the same way: no hint that it exists.
+    use_allowance(db_path, "login", name.lower())
     connection = connect(db_path)
     user = connection.execute("SELECT id, password_salt, password_hash, password_rounds "
                               "FROM users WHERE name = ? COLLATE NOCASE", (name,)).fetchone()
@@ -727,6 +857,7 @@ def log_in(db_path, name, password):
     if not hmac.compare_digest(attempt, user["password_hash"]):
         connection.close()
         raise NotSignedIn(WRONG_LOGIN)
+    forget_attempts(db_path, "login", name.lower())   # right at last: the count starts again
     token = start_session(connection, user["id"])
     connection.commit()
     account = account_for(connection, user["id"])
@@ -833,6 +964,8 @@ def save_post(db_path, user_id, text, now=None):
     """
     text = check_text(text)
     now = now or utc_now()
+
+    use_allowance(db_path, "post", str(user_id))   # after the rules: an empty post is not counted
     connection = connect(db_path)
     post_id = insert_post(connection, user_id, text, posted_at=utc_text(now))
     connection.commit()
@@ -846,6 +979,19 @@ def like_count_for(connection, post_id):
     row = connection.execute("SELECT COUNT(*) AS like_count FROM likes WHERE post_id = ?",
                              (post_id,)).fetchone()
     return row["like_count"]
+
+
+def count_like(connection, db_path, user_id):
+    """Use one of this user's likes for now, after the like's rules have passed.
+
+    Liking and taking back share one count, so the heart cannot be flipped
+    without end. If it is too fast, close the like's connection and raise TooFast.
+    """
+    try:
+        use_allowance(db_path, "like", str(user_id))
+    except TooFast:
+        connection.close()
+        raise
 
 
 def add_like(db_path, user_id, post_id):
@@ -865,6 +1011,7 @@ def add_like(db_path, user_id, post_id):
     if already is not None:
         connection.close()
         raise RuleBroken("You have already liked that post.")
+    count_like(connection, db_path, user_id)
     try:
         connection.execute("INSERT INTO likes (post_id, user_id) VALUES (?, ?)",
                            (post_id, user_id))
@@ -888,6 +1035,11 @@ def remove_like(db_path, user_id, post_id):
     """
     post_id = check_post_id(post_id)
     connection = connect(db_path)
+    if connection.execute("SELECT 1 FROM likes WHERE post_id = ? AND user_id = ?",
+                          (post_id, user_id)).fetchone() is None:
+        connection.close()
+        raise RuleBroken("You have not liked that post.")
+    count_like(connection, db_path, user_id)
     # One statement both removes the like and says whether it was there, so
     # there is no gap between looking and deleting for a second request to
     # slip into. rowcount is how many rows this DELETE removed.
@@ -1100,6 +1252,11 @@ def account_to_json(user):
 
 def like_to_json(post_id, like_count):
     return {"post_id": post_id, "like_count": like_count}
+
+
+def too_fast_to_json(problem):
+    """A 429 answer: the words to show, and how many seconds to wait."""
+    return {"error": str(problem), "retry_after": problem.retry_after}
 
 
 def likes_to_json(counts, mine):

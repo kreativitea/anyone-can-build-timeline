@@ -175,6 +175,13 @@ Four tables:
 | `user_id` | integer, foreign key: the `id` of a row in `users` |
 | `expires_at` | integer, seconds since 1970: 30 days after the login |
 
+| `attempts` | (rate limits) |
+|---|---|
+| `action` | text: `post`, `like`, `login` or `signup` |
+| `key` | text: a user id (post, like), a lower-case account name (login), or an address (sign-up) |
+| `at` | real, seconds since 1970 (`clock()`): when the attempt was allowed |
+| | index `attempts_by_key (action, key, at)`. One row is one allowed attempt; a count is `COUNT(*)` |
+
 Example rows: `users` `1 · aiko · Aiko Tanaka · 9f3a… · 5c1e… · 600000` · `2 · ben · Ben Ito · …` ·
 `posts` `1 · 1 · the library is open late tonight · 2026-10-02T07:42:10Z · NULL` (an older post: `… · NULL · 15:42`) · `likes` `1 · 2` (Ben liked post 1) ·
 `sessions` `a41b… · 1 · 1793520000`.
@@ -290,6 +297,10 @@ and that the page has the model's limits and patterns.
 | A draft on a shared computer is private text left behind. | security | accept | `localStorage` is plain text that anyone at this browser can read. | The draft is deleted on log out, and the box is emptied whenever nobody is logged in. |
 | Save the draft only after the person stops typing ("debounce"). | design | reject | A draft is a few hundred characters, and saving it takes far less than a millisecond. A timer would lose the last words if the tab closed. | Nothing; it is saved on every change. |
 | Keep drafts on the server, so they follow you to another device. | product | reject | A new table and a new route, for a rare need. | Nothing; a draft stays in this browser. |
+| Keep the rate-limit counts in memory, in a Python dictionary. | design | reject | It needs a lock, and a restart would clear every limit, including the wrong-password one. | A table, `attempts`; `BEGIN IMMEDIATE` makes two requests at once take turns. |
+| Count wrong logins by address, not by account name. | security | reject | Every request comes from `127.0.0.1` today, so five wrong passwords by anyone would stop everyone. | Counted by the lower-case account name. A stranger can hold one account for 10 minutes; a window already logged in is not touched. |
+| Rate limiting is about requests, so it belongs in the controller. | design | reject | "At most 5 posts a minute" is a rule about what a person may do, like "at most 280 characters", and the counts are rows. | `use_allowance` in the model, called from `save_post`, `add_like`, `remove_like`, `log_in` and `create_account`. |
+| Pressing during the wait should make the wait longer. | design | reject | Then the wait the server names would not be true. | Only allowed attempts are counted, and a mistake (an empty post, no such post) is refused before counting. |
 
 ## Groundwork
 

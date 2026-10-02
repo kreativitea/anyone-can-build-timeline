@@ -18,6 +18,7 @@ import sqlite3
 import tempfile
 import threading
 import unittest
+from unittest import mock
 import urllib.error
 import urllib.request
 from datetime import datetime, timedelta, timezone
@@ -47,6 +48,32 @@ def all_values_in(db_path):
             values.extend(str(value) for value in row)
     connection.close()
     return values
+
+
+class FakeClock:
+    """A clock for the rate limits that moves only when a test moves it.
+
+    So no test ever sleeps. The real server in RealServerTest and JourneyTest
+    runs in a thread of this same process, so it sees the fake clock too.
+    """
+
+    def __init__(self):
+        self.now = 1000000.0
+
+    def __call__(self):
+        return self.now
+
+    def move(self, seconds):
+        self.now += seconds
+
+
+def use_fake_clock(test):
+    """Put a FakeClock in place of server.clock for this one test, and return it."""
+    fake = FakeClock()
+    patcher = mock.patch.object(server, "clock", fake)
+    patcher.start()
+    test.addCleanup(patcher.stop)
+    return fake
 
 
 class ModelTests(unittest.TestCase):
@@ -419,7 +446,7 @@ class ModelTests(unittest.TestCase):
         self.assertEqual(self.rows("SELECT id, author_id, text, old_clock_time FROM posts "
                                    "ORDER BY id"), posts)
         self.assertEqual(self.rows("SELECT * FROM likes ORDER BY post_id, user_id"), likes)
-        self.assertEqual(self.rows("PRAGMA user_version"), [(3,)])   # accounts, groundwork, timestamps
+        self.assertEqual(self.rows("PRAGMA user_version"), [(server.LATEST_VERSION,)])
 
     def test_an_old_user_has_their_name_as_display_name_and_no_password(self):
         self.use_an_old_database()
@@ -439,7 +466,7 @@ class ModelTests(unittest.TestCase):
         before = self.rows("SELECT * FROM users ORDER BY id")
         server.create_tables(self.db_path)
         self.assertEqual(self.rows("SELECT * FROM users ORDER BY id"), before)
-        self.assertEqual(self.rows("PRAGMA user_version"), [(3,)])   # accounts, groundwork, timestamps
+        self.assertEqual(self.rows("PRAGMA user_version"), [(server.LATEST_VERSION,)])
 
     def test_the_first_sign_up_with_an_old_name_claims_it_and_its_posts(self):
         self.use_an_old_database()
@@ -561,7 +588,7 @@ class ModelTests(unittest.TestCase):
         # timestamps then moved each old HH:MM from posted_at into old_clock_time.
         before["posts"] = [row[:3] + (None, row[3]) for row in before["posts"]]
         self.assertEqual(after, before)
-        self.assertEqual(self.rows("PRAGMA user_version"), [(3,)])
+        self.assertEqual(self.rows("PRAGMA user_version"), [(server.LATEST_VERSION,)])
         self.assertEqual(self.rows("PRAGMA foreign_key_check"), [])
         # posts now has AUTOINCREMENT, and SQLite remembers the largest id it gave.
         posts_sql = self.rows("SELECT sql FROM sqlite_master WHERE name = 'posts'")[0][0]
@@ -583,7 +610,7 @@ class ModelTests(unittest.TestCase):
         users, posts, likes = self.use_an_old_database()
         self.assertEqual(self.rows("SELECT id, author_id, text, old_clock_time FROM posts "
                                    "ORDER BY id"), posts)
-        self.assertEqual(self.rows("PRAGMA user_version"), [(3,)])   # and timestamps too
+        self.assertEqual(self.rows("PRAGMA user_version"), [(server.LATEST_VERSION,)])
         self.assertEqual(self.rows("PRAGMA foreign_key_check"), [])
         self.assertEqual(self.rows("SELECT seq FROM sqlite_sequence WHERE name = 'posts'"),
                          [(3,)])
@@ -638,7 +665,7 @@ class ModelTests(unittest.TestCase):
         server.create_tables(self.db_path)
         self.assertEqual(self.rows("SELECT * FROM posts"), before)
         self.assertEqual(self.rows("SELECT sql FROM sqlite_master ORDER BY name"), schema)
-        self.assertEqual(self.rows("PRAGMA user_version"), [(3,)])
+        self.assertEqual(self.rows("PRAGMA user_version"), [(server.LATEST_VERSION,)])
         self.assertEqual(server.save_post(self.db_path, aiko, "second")["id"], 2)
 
     # -- long-posts --
@@ -750,8 +777,11 @@ class ModelTests(unittest.TestCase):
 
     def test_posting_a_lot_is_not_popularity(self):
         aiko, anika, ben = self.person("aiko"), self.person("anika"), self.person("ben")
+        # Ben posts ten times, slowly enough that the rate limit never stops him.
+        clock = use_fake_clock(self)
         for _ in range(10):
             self.post_by(ben)
+            clock.move(60)
         self.like(aiko, self.post_by(anika))
         post = self.post_by(aiko)
         self.like(ben, post)
@@ -924,7 +954,7 @@ class ModelTests(unittest.TestCase):
         self.assertEqual(after["users"], before["users"])
         self.assertEqual(after["sessions"], before["sessions"])
         self.assertEqual(self.rows("PRAGMA foreign_key_check"), [])
-        self.assertEqual(self.rows("PRAGMA user_version"), [(3,)])
+        self.assertEqual(self.rows("PRAGMA user_version"), [(server.LATEST_VERSION,)])
         connection = server.connect(self.db_path)
         self.assertEqual(connection.execute("PRAGMA foreign_keys").fetchone()[0], 1)
         connection.close()
@@ -968,6 +998,211 @@ class ModelTests(unittest.TestCase):
             self.assertIn("posted_at", post)
             self.assertIn("old_clock_time", post)
         self.assertEqual(posts[-1]["posted_at"], "2026-10-02T07:42:10Z")
+
+    # -- rate limits: too many, too quickly --
+
+    def post_too_fast(self, user_id, text="one more"):
+        """A post the rate limit refuses. Return the TooFast it raised."""
+        with self.assertRaises(server.TooFast) as caught:
+            server.save_post(self.db_path, user_id, text)
+        return caught.exception
+
+    def test_the_sixth_post_in_a_minute_is_refused(self):
+        clock = use_fake_clock(self)
+        aiko = self.sign_up("aiko")
+        for number in range(5):
+            server.save_post(self.db_path, aiko, f"post {number}")
+        problem = self.post_too_fast(aiko, "the sixth")
+        self.assertEqual(problem.retry_after, 60)
+        self.assertEqual(str(problem), "Too many posts. Please try again in 60 seconds.")
+        self.assertNotIn(("the sixth",), self.rows("SELECT text FROM posts"))
+        self.assertEqual(len(self.rows("SELECT * FROM posts")), 5)
+        # A minute and a second later, the first one no longer counts.
+        clock.move(61)
+        server.save_post(self.db_path, aiko, "allowed again")
+
+    def test_the_wait_counts_down(self):
+        clock = use_fake_clock(self)
+        aiko = self.sign_up("aiko")
+        for number in range(5):
+            server.save_post(self.db_path, aiko, f"post {number}")
+        clock.move(20)
+        self.assertEqual(self.post_too_fast(aiko).retry_after, 40)
+        clock.move(39.5)
+        self.assertEqual(self.post_too_fast(aiko).retry_after, 1)   # rounded up, at least 1
+
+    def test_one_person_s_limit_does_not_touch_another(self):
+        use_fake_clock(self)
+        aiko = self.sign_up("aiko")
+        ben = self.sign_up("ben")
+        for number in range(5):
+            server.save_post(self.db_path, aiko, f"post {number}")
+        self.post_too_fast(aiko)
+        server.save_post(self.db_path, ben, "Ben is fine")
+
+    def test_a_post_that_breaks_a_rule_is_not_counted(self):
+        use_fake_clock(self)
+        aiko = self.sign_up("aiko")
+        for text in ("", "   ", "x" * (server.MAX_TEXT + 1)):
+            with self.assertRaises(server.RuleBroken):
+                server.save_post(self.db_path, aiko, text)
+        self.assertEqual(self.rows("SELECT * FROM attempts WHERE action = 'post'"), [])
+        for number in range(5):
+            server.save_post(self.db_path, aiko, f"post {number}")
+
+    def test_a_refused_attempt_is_not_counted(self):
+        clock = use_fake_clock(self)
+        aiko = self.sign_up("aiko")
+        for number in range(5):
+            server.save_post(self.db_path, aiko, f"post {number}")
+        for _ in range(3):
+            self.post_too_fast(aiko)
+        self.assertEqual(len(self.rows("SELECT * FROM attempts WHERE action = 'post'")), 5)
+        # So pressing during the wait does not make the wait longer.
+        clock.move(61)
+        server.save_post(self.db_path, aiko, "allowed again")
+
+    def test_liking_and_taking_back_share_one_count(self):
+        use_fake_clock(self)
+        aiko = self.sign_up("aiko")
+        post_id = server.save_post(self.db_path, aiko, "hello")["id"]
+        for _ in range(15):
+            server.add_like(self.db_path, aiko, post_id)
+            server.remove_like(self.db_path, aiko, post_id)
+        with self.assertRaises(server.TooFast) as caught:
+            server.add_like(self.db_path, aiko, post_id)
+        self.assertIn("Too many likes", str(caught.exception))
+        self.assertEqual(self.rows("SELECT * FROM likes"), [])
+
+    def test_a_like_that_breaks_a_rule_is_not_counted(self):
+        use_fake_clock(self)
+        aiko = self.sign_up("aiko")
+        post_id = server.save_post(self.db_path, aiko, "hello")["id"]
+        server.add_like(self.db_path, aiko, post_id)
+        for like in (lambda: server.add_like(self.db_path, aiko, 99),        # no such post
+                     lambda: server.add_like(self.db_path, aiko, post_id),   # already liked
+                     lambda: server.add_like(self.db_path, aiko, None),      # no post id
+                     lambda: server.remove_like(self.db_path, aiko, 99)):    # not liked
+            with self.assertRaises(server.RuleBroken):
+                like()
+        self.assertEqual(len(self.rows("SELECT * FROM attempts WHERE action = 'like'")), 1)
+
+    def test_after_five_wrong_passwords_even_the_right_one_waits_and_is_not_hashed(self):
+        use_fake_clock(self)
+        self.sign_up("aiko")
+        with mock.patch.object(server, "hash_password", wraps=server.hash_password) as hashing:
+            for _ in range(5):
+                with self.assertRaises(server.NotSignedIn):
+                    server.log_in(self.db_path, "aiko", "not the password")
+            with self.assertRaises(server.TooFast) as caught:
+                server.log_in(self.db_path, "aiko", PASSWORD)
+        self.assertEqual(hashing.call_count, 5)
+        self.assertEqual(caught.exception.retry_after, 600)
+        self.assertIn("wrong passwords", str(caught.exception))
+
+    def test_login_is_counted_the_same_for_any_capitals_and_for_a_name_with_no_account(self):
+        use_fake_clock(self)
+        self.sign_up("aiko")
+        for name in ("Aiko", "aiko", "AIKO", " aiko ", "aIKo"):
+            with self.assertRaises(server.NotSignedIn):
+                server.log_in(self.db_path, name, "not the password")
+        with self.assertRaises(server.TooFast):
+            server.log_in(self.db_path, "aiko", PASSWORD)
+        # A name with no account is limited the same way, so the limit tells a
+        # stranger nothing about which names exist.
+        for _ in range(5):
+            with self.assertRaises(server.NotSignedIn):
+                server.log_in(self.db_path, "nobody", "not the password")
+        with self.assertRaises(server.TooFast):
+            server.log_in(self.db_path, "nobody", "not the password")
+
+    def test_a_right_password_forgets_the_wrong_ones(self):
+        use_fake_clock(self)
+        self.sign_up("aiko")
+        for _ in range(4):
+            with self.assertRaises(server.NotSignedIn):
+                server.log_in(self.db_path, "aiko", "not the password")
+        server.log_in(self.db_path, "Aiko", PASSWORD)
+        self.assertEqual(self.rows("SELECT * FROM attempts WHERE action = 'login'"), [])
+        for _ in range(5):
+            with self.assertRaises(server.NotSignedIn):
+                server.log_in(self.db_path, "aiko", "not the password")
+
+    def test_sign_ups_are_limited_for_each_address_before_hashing(self):
+        use_fake_clock(self)
+        most, seconds = server.LIMITS["signup"]
+        for number in range(most):
+            server.create_account(self.db_path, f"user{number}", "", PASSWORD, address="1.2.3.4")
+        with mock.patch.object(server, "hash_password", wraps=server.hash_password) as hashing:
+            with self.assertRaises(server.TooFast) as caught:
+                server.create_account(self.db_path, "one_more", "", PASSWORD, address="1.2.3.4")
+        self.assertEqual(hashing.call_count, 0)
+        self.assertIn("new accounts", str(caught.exception))
+        self.assertEqual(len(self.users()), most)
+        # Another address is allowed, and create_account with no address still works.
+        server.create_account(self.db_path, "elsewhere", "", PASSWORD, address="5.6.7.8")
+        server.create_account(self.db_path, "no_address", "", PASSWORD)
+
+    def test_a_sign_up_with_a_bad_name_is_not_counted(self):
+        use_fake_clock(self)
+        with self.assertRaises(server.RuleBroken):
+            server.create_account(self.db_path, "not one word", "", PASSWORD, address="1.2.3.4")
+        self.assertEqual(self.rows("SELECT * FROM attempts"), [])
+
+    def test_ten_posts_at_the_same_moment_save_exactly_five(self):
+        use_fake_clock(self)
+        aiko = self.sign_up("aiko")
+        start = threading.Barrier(10)
+        results = []
+
+        def post(number):
+            start.wait()   # all ten begin together
+            try:
+                server.save_post(self.db_path, aiko, f"post {number}")
+                results.append("saved")
+            except server.TooFast:
+                results.append("too fast")
+
+        threads = [threading.Thread(target=post, args=(n,)) for n in range(10)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        self.assertEqual(sorted(results), ["saved"] * 5 + ["too fast"] * 5)
+        self.assertEqual(len(self.rows("SELECT * FROM posts")), 5)
+
+    def test_old_attempts_are_deleted(self):
+        clock = use_fake_clock(self)
+        aiko = self.sign_up("aiko")
+        for number in range(3):
+            server.save_post(self.db_path, aiko, f"post {number}")
+        longest = max(window for _, window in server.LIMITS.values())
+        clock.move(longest + 1)
+        server.save_post(self.db_path, aiko, "much later")
+        self.assertEqual(self.rows("SELECT action, key, at FROM attempts"),
+                         [("post", str(aiko), clock.now)])
+
+    def test_the_rate_limit_upgrade_keeps_every_row(self):
+        # A version-3 database (accounts, groundwork and timestamps) with rows in every table.
+        aiko = self.sign_up("aiko")
+        ben = self.sign_up("ben")
+        post_id = server.save_post(self.db_path, aiko, "hello")["id"]
+        server.add_like(self.db_path, ben, post_id)
+        connection = sqlite3.connect(self.db_path)
+        connection.executescript("DROP TABLE attempts; PRAGMA user_version = 3;")
+        connection.close()
+        tables = ("users", "posts", "likes", "sessions")
+        before = {table: self.rows("SELECT * FROM " + table + " ORDER BY 1, 2")
+                  for table in tables}
+        server.create_tables(self.db_path)
+        after = {table: self.rows("SELECT * FROM " + table + " ORDER BY 1, 2")
+                 for table in tables}
+        self.assertEqual(after, before)
+        self.assertEqual(self.rows("PRAGMA user_version"), [(server.LATEST_VERSION,)])
+        self.assertEqual(self.rows("SELECT * FROM attempts"), [])
+        self.assertEqual(self.rows("SELECT name FROM sqlite_master WHERE type = 'index' "
+                                   "AND name = 'attempts_by_key'"), [("attempts_by_key",)])
+        server.save_post(self.db_path, aiko, "still works")
 
 
 class RealServerTest(unittest.TestCase):
@@ -1181,6 +1416,48 @@ class RealServerTest(unittest.TestCase):
         self.assertRegex(post["posted_at"], ISO_TIME)
         self.assertIsNone(post["old_clock_time"])
         self.assertEqual(self.get("/posts?after=0")[0]["posted_at"], post["posted_at"])
+
+    def test_the_sixth_post_gets_429_with_the_wait(self):
+        use_fake_clock(self)
+        self.sign_up().close()
+        for number in range(5):
+            self.send("/posts", {"text": f"post {number}"}).close()
+        with self.assertRaises(urllib.error.HTTPError) as caught:
+            self.send("/posts", {"text": "the sixth"})
+        answer = json.loads(caught.exception.read())
+        header = caught.exception.headers["Retry-After"]
+        caught.exception.close()
+        self.assertEqual(caught.exception.code, 429)
+        self.assertTrue(header.isdigit() and int(header) >= 1)
+        self.assertEqual(answer, {"error": "Too many posts. Please try again in "
+                                           + header + " seconds.",
+                                  "retry_after": int(header)})
+        self.assertEqual(len(self.get("/posts?after=0")), 5)
+
+    def test_wrong_passwords_get_401_five_times_then_429(self):
+        use_fake_clock(self)
+        self.sign_up().close()
+        wrong = {"account_name": "aiko", "password": "not the password"}
+        for _ in range(5):
+            self.assertEqual(self.refused("/sessions", wrong)[0], 401)
+        code, reason = self.refused("/sessions", wrong)
+        self.assertEqual(code, 429)
+        self.assertIn("wrong passwords", reason)
+
+    def test_reading_is_never_limited(self):
+        use_fake_clock(self)
+        self.sign_up().close()
+        for _ in range(100):
+            self.get("/posts?after=0")
+            self.get("/likes")
+
+    def test_a_post_with_no_cookie_is_still_401_not_429(self):
+        use_fake_clock(self)
+        self.sign_up().close()
+        for number in range(5):
+            self.send("/posts", {"text": f"post {number}"}).close()
+        self.window = urllib.request.build_opener()   # a window with no cookie
+        self.assertEqual(self.refused("/posts", {"text": "hello"})[0], 401)
 
 
 class JourneyTest(unittest.TestCase):
@@ -1524,6 +1801,62 @@ class JourneyTest(unittest.TestCase):
         # 3. "after" is still a post id, not a time: only the new post comes back.
         self.assertEqual([post["id"] for post in self.page_asks_for_new_posts(ben, 1)], [2])
 
+    def test_too_fast_journey(self):
+        clock = use_fake_clock(self)
+        aiko = self.open_window()
+        ben = self.open_window()
+        stranger = self.open_window()
+
+        # 1. Aiko and Ben sign up.
+        self.page_signs_up(aiko, "aiko", "Aiko Tanaka")
+        self.page_signs_up(ben, "ben", "Ben Ito")
+
+        # 2. Aiko posts five times. The sixth is refused with 429, and the
+        #    store has five posts and five counted attempts, no more.
+        for number in range(5):
+            status, post = self.page_posts(aiko, f"post {number}")
+            self.assertEqual(status, 201)
+        code, reason = self.is_refused(self.page_posts, aiko, "the sixth")
+        self.assertEqual(code, 429)
+        self.assertIn("60 seconds", reason)
+        self.assertEqual(len(self.rows("SELECT * FROM posts")), 5)
+        self.assertEqual(self.rows("SELECT key, COUNT(*) FROM attempts WHERE action = 'post' "
+                                   "GROUP BY key"), [("1", 5)])
+
+        # 3. Ben's own count is his own.
+        status, post = self.page_posts(ben, "Ben is fine")
+        self.assertEqual(status, 201)
+
+        # 4. A stranger tries five wrong passwords for aiko. The sixth is 429.
+        wrong = {"account_name": "aiko", "password": "not the password"}
+        for _ in range(5):
+            code, reason = self.is_refused(self.page_sends, stranger, "/sessions", wrong, "POST")
+            self.assertEqual(code, 401)
+        code, reason = self.is_refused(self.page_sends, stranger, "/sessions", wrong, "POST")
+        self.assertEqual(code, 429)
+        self.assertEqual(self.rows("SELECT COUNT(*) FROM attempts WHERE action = 'login' "
+                                   "AND key = 'aiko'"), [(5,)])
+
+        # 5. Aiko's own window is still logged in: a minute later she can post.
+        clock.move(61)
+        status, post = self.page_posts(aiko, "still here")
+        self.assertEqual(status, 201)
+
+        # 6. Ten minutes later Aiko logs in from a new window. Her wrong-password
+        #    count is gone.
+        clock.move(600)
+        status, me = self.page_logs_in(self.open_window(), "aiko")
+        self.assertEqual(status, 201)
+        self.assertEqual(self.rows("SELECT * FROM attempts WHERE action = 'login' "
+                                   "AND key = 'aiko'"), [])
+
+        # 7. No counted attempt holds a password or a post's words.
+        for action, key, at in self.rows("SELECT action, key, at FROM attempts"):
+            self.assertNotIn(key, (PASSWORD, "not the password"))
+            self.assertNotIn("post", key)
+        for value in all_values_in(self.db_path):
+            self.assertNotIn(PASSWORD, value)
+
 
 class PageAndServerAgreeTest(unittest.TestCase):
     """AGENTS.md: "the page and the server must agree".
@@ -1762,6 +2095,21 @@ class PageAndServerAgreeTest(unittest.TestCase):
         for inside in re.findall(r"JSON\.stringify\(\{([^}]*)\}\)", self.page_code):
             self.assertNotIn("posted_at", inside)
 
+    def test_the_page_and_the_server_agree_on_429(self):
+        self.assertIn("response.status === 429", self.page_code)
+        self.assertIn("answer.retry_after", self.page_code)
+        self.assertEqual(set(server.too_fast_to_json(server.TooFast("Too many.", 3))),
+                         {"error", "retry_after"})
+
+    def test_every_request_that_can_be_too_fast_has_a_refused_branch(self):
+        functions = functions_in(self.page_code)
+        # The five requests the server limits, and the page function that sends each.
+        for name, form in (("sendPost", "postForm"), ("logIn", "loginForm"),
+                           ("signUp", "signupForm"), ("pressHeart", None)):
+            with self.subTest(function=name):
+                self.assertIn("!response.ok", functions[name])
+                if form is not None:
+                    self.assertIn(f"holdForm({form}, answer.retry_after)", functions[name])
 
 
 class ColoursTest(unittest.TestCase):

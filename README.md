@@ -57,6 +57,9 @@ You are logged in at once, and the page says *Signed in as Aiko Tanaka @aiko · 
 lasts 30 days in that browser. Next time, use the **Log in** form. A private window is a different
 browser, so it can log in as someone else.
 
+If the app says *Too many …*, wait the seconds it names: there is a limit on how fast you can post,
+like, sign up or try passwords. The button turns on again by itself.
+
 If your timeline has posts from before accounts, their names are still there. The first person to
 sign up with one of those names gets it, and its old posts. A name with a space in it can never be
 taken this way, so its posts stay with no owner. To stop the server, press **Ctrl+C** in the terminal.

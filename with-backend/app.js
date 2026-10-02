@@ -781,6 +781,17 @@ addPostPart(function expandablePart(post, slots) {
 
 ACTIONS.expand = toggleExpanded;
 
+// The server answered 429: too many, too quickly. Turn off the form's button
+// for the seconds the server names, then turn it on again. The page does not
+// count by itself: it cannot see other windows, so it obeys the server.
+function holdForm(form, seconds) {
+  const button = form.querySelector('button[type="submit"]');
+  button.disabled = true;
+  setTimeout(() => {
+    button.disabled = false;
+  }, seconds * 1000);
+}
+
 // When the page opens, ask the server who is logged in in this window.
 async function askWhoIAm() {
   try {
@@ -855,6 +866,7 @@ async function logIn(event) {
     if (!response.ok) {
       // The same words for a wrong name and a wrong password: see WRONG_LOGIN in server.py.
       showSignedOut(answer.error);
+      if (response.status === 429) holdForm(loginForm, answer.retry_after);
       return;
     }
     showStatus("");
@@ -890,6 +902,7 @@ async function signUp(event) {
     if (!response.ok) {
       // The server refused it. It says which rule was broken.
       showStatus(answer.error);
+      if (response.status === 429) holdForm(signupForm, answer.retry_after);
       return;
     }
     showStatus("");
@@ -942,6 +955,7 @@ async function sendPost(event) {
     if (!response.ok) {
       // The server refused the post. It says which rule was broken.
       showStatus(answer.error);
+      if (response.status === 429) holdForm(postForm, answer.retry_after);
       return;
     }
     // Saved. Ask for new posts now, instead of waiting for the next second.
