@@ -46,13 +46,14 @@ The three parts of `server.py`:
 - **Model** (`check_name`, `check_display_name`, `check_password`, `check_text`, `check_post_id`,
   `hash_password`, `hash_token`, `create_account`, `log_in`, `user_for_session`, `log_out`,
   `start_session`, `account_for`, `save_post`, `posts_after`, `add_like`, `remove_like`,
-  `like_count_for`, `likes_for`, `who_liked`, `check_post_ids`, `like_summaries`, and
-  `create_tables` with `upgrade_to_accounts`): the rules, and the
+  `like_count_for`, `likes_for`, `who_liked`, `check_post_ids`, `like_summaries`, `utc_now`,
+  `utc_text`, and `create_tables` with its upgrades): the rules, and the
   database, in four tables:
   - `users`: each person once. `name` is the account name (unique, capitals ignored),
     `display_name` is the name shown, and `password_salt`, `password_hash`, `password_rounds` hold
     a hash of the password. The password itself is never kept.
-  - `posts`: each post points at its author by `author_id`.
+  - `posts`: each post points at its author by `author_id`. `posted_at` is the time in UTC; a post
+    from before timestamps has only `old_clock_time` (`HH:MM`) instead.
   - `likes`: one row for each person who liked each post.
   - `sessions`: one row for each logged-in window. It keeps only a hash of the token, the user's id,
     and when it ends. Logging out deletes the row.
@@ -60,7 +61,8 @@ The three parts of `server.py`:
   A name is kept once, in `users`; never copy it into another table. Only sign-up
   (`create_account`) adds a user: posting, liking and reading never do. A like count is never kept
   anywhere: it is counted from the rows in `likes`, so a count and its likes can never disagree.
-  Taking a like back deletes its row; nothing is marked as undone. Errors: `RuleBroken` becomes
+  Taking a like back deletes its row; nothing is marked as undone. A time is saved as UTC text by
+  `utc_text`, and shown by `timeElement` in `app.js`. Errors: `RuleBroken` becomes
   `400`, `NotSignedIn` becomes `401`.
 
   `who_liked` and `like_summaries` only read: they must never add a user, a like or a session.
@@ -113,10 +115,11 @@ same functions as every other feature. Use them; do not go around them.
 - `insert_post(connection, user_id, text, **more)` is the only place that adds a post. An extra
   column must be named in `POST_EXTRA_COLUMNS`; any other name raises `ValueError`. A column name
   never comes from a request.
-- `rebuild_table(connection, table, change_sql, user_version=None)` changes a table that SQLite
+- `rebuild_table(connection, table, change_sql, user_version=None, prepare=None)` changes a table that SQLite
   cannot change in place. `change_sql` is a function: it gets the table's `CREATE TABLE` text and
   returns the new text. Every row, index and trigger is kept. It is all one transaction, foreign
-  keys are checked before it is saved, and if anything is wrong nothing changes.
+  keys are checked before it is saved, and if anything is wrong nothing changes. `prepare`, if
+  given, makes a small change first in the same transaction (timestamps renames a column with it).
 - **Post ids are never reused.** `posts.id` is `INTEGER PRIMARY KEY AUTOINCREMENT`, so a deleted
   post's id is never given to a new post. `upgrade_to_groundwork` (database version 2) made this
   change with `rebuild_table`.

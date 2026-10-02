@@ -203,11 +203,76 @@ addPostPart(function namesPart(post, slots) {
 
 // When it was written.
 addPostPart(function timePart(post, slots) {
-  const time = document.createElement("span");
-  time.className = "post-time";
-  time.textContent = post.posted_at;
+  const time = timeElement(post.posted_at, post.old_clock_time);
   slots.head.append(time);
 });
+
+// ---- timestamps: "5 minutes ago", and the full date on hover ----
+// The server sends each time in UTC, like 2026-10-02T07:42:10Z. The page shows
+// it in the reader's own time zone and language ("undefined" as the locale
+// means "the browser's language"). The order of the timeline never uses the
+// time, only the post id.
+
+// How long ago `moment` was, seen from `now`. Both are Date values.
+function timeAgo(moment, now) {
+  const seconds = Math.floor((now - moment) / 1000);
+  // Under a minute, or in the future: the reader's clock may be a little
+  // ahead of or behind the server's, and a new post must never say "in 3 seconds".
+  if (seconds < 60) {
+    return "just now";
+  }
+  const words = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
+  if (seconds < 60 * 60) {
+    return words.format(-Math.floor(seconds / 60), "minute");
+  }
+  if (seconds < 24 * 60 * 60) {
+    return words.format(-Math.floor(seconds / (60 * 60)), "hour");
+  }
+  if (seconds < 7 * 24 * 60 * 60) {
+    return words.format(-Math.floor(seconds / (24 * 60 * 60)), "day");
+  }
+  // A week or more: the date itself ("2 Oct"), with the year if it is not this year.
+  const how = { day: "numeric", month: "short" };
+  if (moment.getFullYear() !== now.getFullYear()) {
+    how.year = "numeric";
+  }
+  return moment.toLocaleDateString(undefined, how);
+}
+
+// The full date and time, in the reader's time zone, for the tooltip.
+function fullLocalTime(moment) {
+  return moment.toLocaleString(undefined, { dateStyle: "full", timeStyle: "medium" });
+}
+
+// One time on the page. Other features reuse this: with a full time it makes
+// <time datetime="..." title="..." data-relative>, and refreshTimes keeps its
+// words up to date. A post from before Timeline kept dates has only its old
+// clock time, so it says so instead of guessing a date.
+function timeElement(postedAt, oldClockTime) {
+  if (!postedAt) {
+    const unknown = document.createElement("span");
+    unknown.className = "post-time post-time-unknown";
+    unknown.setAttribute("title", "Posted before Timeline kept dates");
+    unknown.textContent = oldClockTime + " \u00b7 date unknown";
+    return unknown;
+  }
+  const moment = new Date(postedAt);
+  const time = document.createElement("time");
+  time.className = "post-time";
+  time.setAttribute("datetime", postedAt);
+  time.setAttribute("title", fullLocalTime(moment));
+  time.dataset.relative = "";
+  time.textContent = timeAgo(moment, new Date());
+  return time;
+}
+
+// Write every "… ago" again, so the words change as time passes.
+function refreshTimes() {
+  const now = new Date();
+  for (const time of document.querySelectorAll("time[data-relative]")) {
+    time.textContent = timeAgo(new Date(time.getAttribute("datetime")), now);
+  }
+}
 
 // What it says.
 addPostPart(function textPart(post, slots) {
@@ -1056,3 +1121,4 @@ showView("timeline");
 updateCount();
 askWhoIAm();
 keepChecking();
+setInterval(refreshTimes, 30000);   // every 30 seconds: the smallest step shown is a minute

@@ -40,7 +40,8 @@ make run
 ```
 
 Then open <http://localhost:8009>. Each new post prints one line in the terminal: the time, who
-wrote it, and what it says, in quotes.
+wrote it, and what it says, in quotes. The time is in UTC, exactly as it is saved, for example
+`2026-10-02T07:42:10Z  Aiko Tanaka @aiko: "the library is open late tonight"`.
 
 ## Sign up and log in
 
@@ -93,7 +94,9 @@ A user line is `id|name|display_name|password_salt|password_hash|password_rounds
 long code made from the password that cannot be turned back into it. A user from before accounts
 has nothing after the display name, because nobody has claimed it yet. A session line is
 `token_hash|user_id|expires_at`: again only a hash, and logging out deletes the line. A post line is
-`id|author_id|text|posted_at`: the `author_id` is the `id` of a user. A like line is just
+`id|author_id|text|posted_at|old_clock_time`: the `author_id` is the `id` of a user, and `posted_at`
+is the time in UTC. A post from before timestamps has an empty `posted_at` and only its old `HH:MM`
+in `old_clock_time`. A like line is just
 `post_id|user_id`. Notice what is **not** there: nowhere does
 the database keep "post 3 has 5 likes". The number on screen is counted from these lines every time
 it is asked for, so the count and the likes can never disagree. Taking a like back deletes its line,

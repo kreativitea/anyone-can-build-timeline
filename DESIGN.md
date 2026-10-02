@@ -160,7 +160,8 @@ Four tables:
 | `id` | integer, primary key, given by SQLite |
 | `author_id` | integer, foreign key: the `id` of a row in `users` |
 | `text` | text |
-| `posted_at` | text, `HH:MM`, local time |
+| `posted_at` | text, ISO 8601 in UTC, to the second (`2026-10-02T07:42:10Z`). NULL only for a post from before timestamps |
+| `old_clock_time` | text, `HH:MM`: the only time a post from before timestamps has. NULL for every newer post. Exactly one of the two has a value |
 
 | `likes` | |
 |---|---|
@@ -175,7 +176,7 @@ Four tables:
 | `expires_at` | integer, seconds since 1970: 30 days after the login |
 
 Example rows: `users` `1 · aiko · Aiko Tanaka · 9f3a… · 5c1e… · 600000` · `2 · ben · Ben Ito · …` ·
-`posts` `1 · 1 · the library is open late tonight · 15:42` · `likes` `1 · 2` (Ben liked post 1) ·
+`posts` `1 · 1 · the library is open late tonight · 2026-10-02T07:42:10Z · NULL` (an older post: `… · NULL · 15:42`) · `likes` `1 · 2` (Ben liked post 1) ·
 `sessions` `a41b… · 1 · 1793520000`.
 
 Only sign-up adds a user. Each name is kept once, and each post points at its author by number. A
@@ -365,6 +366,21 @@ post*. Clicking the line, or the number by the heart, opens everyone who liked i
   An open list is asked for again at the same moment.
 - **Every sentence is one template** (*{first}, {second}, and {count} others liked this post*),
   never joined from pieces, so another language can put the names in its own order.
+
+## Times
+
+- **The server saves every time in UTC** (Coordinated Universal Time, the one clock the whole
+  world agrees on), as text to the second: `2026-10-02T07:42:10Z`. The `Z` means "this is UTC".
+  As text it sorts in time order, and a person can read it in `sqlite3`. The time comes from the
+  server's own clock (`utc_now`), never from the request.
+- **The page shows it in the reader's own time zone and language.** A post says "just now",
+  "5 minutes ago", "yesterday" or "3 days ago", and after a week the date ("2 Oct"). The words are
+  written again every 30 seconds. Holding the mouse over the time shows the full date and time.
+- **The order never uses the time.** The timeline, and `GET /posts?after=`, use the post id. Ids
+  only go up; a clock can jump backwards, and two posts can share a second.
+- **Old posts have no date.** Before this, a post kept only `HH:MM`. That cannot become a real date
+  honestly, so the upgrade (database version 3) moves it to `old_clock_time` and leaves `posted_at`
+  empty. The page shows "15:42 · date unknown". It never guesses a date.
 
 ## 8. Build or borrow
 

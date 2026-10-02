@@ -20,6 +20,8 @@ import threading
 import unittest
 import urllib.error
 import urllib.request
+from datetime import datetime, timedelta, timezone
+from unittest import mock
 
 import server
 
@@ -27,6 +29,11 @@ HERE = os.path.dirname(os.path.abspath(server.__file__))
 
 # A password for the tests. It is long enough, and easy to spot in a table.
 PASSWORD = "correct horse battery"
+
+
+ISO_TIME = r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$"   # 2026-10-02T07:42:10Z
+# A fixed moment for the tests, so no test depends on the real clock.
+SOME_MOMENT = datetime(2026, 10, 2, 7, 42, 10, tzinfo=timezone.utc)
 
 
 def all_values_in(db_path):
@@ -93,7 +100,7 @@ class ModelTests(unittest.TestCase):
         self.assertEqual(row["author"], "aiko")
         self.assertEqual(row["display_name"], "Aiko Tanaka")
         self.assertEqual(row["text"], "the library is open late")
-        self.assertRegex(row["posted_at"], r"^\d\d:\d\d$")
+        self.assertRegex(row["posted_at"], r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$")
 
     def test_a_post_points_at_its_author_by_id(self):
         aiko = self.sign_up("aiko", "Aiko Tanaka")
@@ -245,9 +252,10 @@ class ModelTests(unittest.TestCase):
 
     def test_log_line_has_the_time_the_author_and_the_text_in_quotes(self):
         aiko = self.sign_up("aiko", "Aiko Tanaka")
-        row = server.save_post(self.db_path, aiko, "the library is open late tonight")
+        row = server.save_post(self.db_path, aiko, "the library is open late tonight",
+                               now=datetime(2026, 10, 2, 7, 42, 10, tzinfo=timezone.utc))
         self.assertEqual(server.post_to_log_line(row),
-                         row["posted_at"] + '  Aiko Tanaka @aiko: "the library is open late tonight"')
+                         '2026-10-02T07:42:10Z  Aiko Tanaka @aiko: "the library is open late tonight"')
 
     def test_a_line_break_in_a_post_cannot_make_a_second_log_line(self):
         aiko = self.sign_up("aiko")
@@ -407,9 +415,11 @@ class ModelTests(unittest.TestCase):
     def test_the_upgrade_keeps_every_row(self):
         users, posts, likes = self.use_an_old_database()
         self.assertEqual(self.rows("SELECT id, name FROM users ORDER BY id"), users)
-        self.assertEqual(self.rows("SELECT * FROM posts ORDER BY id"), posts)
+        # timestamps moved the old HH:MM into old_clock_time.
+        self.assertEqual(self.rows("SELECT id, author_id, text, old_clock_time FROM posts "
+                                   "ORDER BY id"), posts)
         self.assertEqual(self.rows("SELECT * FROM likes ORDER BY post_id, user_id"), likes)
-        self.assertEqual(self.rows("PRAGMA user_version"), [(2,)])   # accounts, then groundwork
+        self.assertEqual(self.rows("PRAGMA user_version"), [(3,)])   # accounts, groundwork, timestamps
 
     def test_an_old_user_has_their_name_as_display_name_and_no_password(self):
         self.use_an_old_database()
@@ -429,7 +439,7 @@ class ModelTests(unittest.TestCase):
         before = self.rows("SELECT * FROM users ORDER BY id")
         server.create_tables(self.db_path)
         self.assertEqual(self.rows("SELECT * FROM users ORDER BY id"), before)
-        self.assertEqual(self.rows("PRAGMA user_version"), [(2,)])   # accounts, then groundwork
+        self.assertEqual(self.rows("PRAGMA user_version"), [(3,)])   # accounts, groundwork, timestamps
 
     def test_the_first_sign_up_with_an_old_name_claims_it_and_its_posts(self):
         self.use_an_old_database()
@@ -490,7 +500,7 @@ class ModelTests(unittest.TestCase):
     def test_insert_post_refuses_a_column_that_is_not_on_its_list(self):
         aiko = self.sign_up("aiko")
         connection = server.connect(self.db_path)
-        for name in ("author_id", "posted_at", "text) VALUES (1, 'x', 'y'); --"):
+        for name in ("author_id", "old_clock_time", "text) VALUES (1, 'x', 'y'); --"):
             with self.subTest(column=name):
                 with self.assertRaises(ValueError):
                     server.insert_post(connection, aiko, "hello", **{name: "x"})
@@ -548,8 +558,10 @@ class ModelTests(unittest.TestCase):
 
     def test_the_groundwork_upgrade_keeps_every_row(self):
         before, after = self.use_an_accounts_database()
+        # timestamps then moved each old HH:MM from posted_at into old_clock_time.
+        before["posts"] = [row[:3] + (None, row[3]) for row in before["posts"]]
         self.assertEqual(after, before)
-        self.assertEqual(self.rows("PRAGMA user_version"), [(2,)])
+        self.assertEqual(self.rows("PRAGMA user_version"), [(3,)])
         self.assertEqual(self.rows("PRAGMA foreign_key_check"), [])
         # posts now has AUTOINCREMENT, and SQLite remembers the largest id it gave.
         posts_sql = self.rows("SELECT sql FROM sqlite_master WHERE name = 'posts'")[0][0]
@@ -569,8 +581,9 @@ class ModelTests(unittest.TestCase):
 
     def test_a_version_0_database_gets_both_upgrades(self):
         users, posts, likes = self.use_an_old_database()
-        self.assertEqual(self.rows("SELECT * FROM posts ORDER BY id"), posts)
-        self.assertEqual(self.rows("PRAGMA user_version"), [(2,)])
+        self.assertEqual(self.rows("SELECT id, author_id, text, old_clock_time FROM posts "
+                                   "ORDER BY id"), posts)
+        self.assertEqual(self.rows("PRAGMA user_version"), [(3,)])   # and timestamps too
         self.assertEqual(self.rows("PRAGMA foreign_key_check"), [])
         self.assertEqual(self.rows("SELECT seq FROM sqlite_sequence WHERE name = 'posts'"),
                          [(3,)])
@@ -625,7 +638,7 @@ class ModelTests(unittest.TestCase):
         server.create_tables(self.db_path)
         self.assertEqual(self.rows("SELECT * FROM posts"), before)
         self.assertEqual(self.rows("SELECT sql FROM sqlite_master ORDER BY name"), schema)
-        self.assertEqual(self.rows("PRAGMA user_version"), [(2,)])
+        self.assertEqual(self.rows("PRAGMA user_version"), [(3,)])
         self.assertEqual(server.save_post(self.db_path, aiko, "second")["id"], 2)
 
     # -- long-posts --
@@ -852,6 +865,111 @@ class ModelTests(unittest.TestCase):
                                 "who-liked needs SQLite 3.25 or newer, for ROW_NUMBER() OVER.")
 
 
+    # -- timestamps: the full date and time, in UTC --
+
+    def test_a_post_is_saved_with_the_time_it_is_given(self):
+        aiko = self.sign_up("aiko")
+        server.save_post(self.db_path, aiko, "hello", now=SOME_MOMENT)
+        self.assertEqual(self.rows("SELECT posted_at, old_clock_time FROM posts"),
+                         [("2026-10-02T07:42:10Z", None)])
+
+    def test_a_time_in_japan_is_saved_in_utc(self):
+        aiko = self.sign_up("aiko")
+        japan = timezone(timedelta(hours=9))   # JST, nine hours ahead of UTC
+        server.save_post(self.db_path, aiko, "hello",
+                         now=datetime(2026, 10, 2, 16, 42, 10, tzinfo=japan))
+        self.assertEqual(self.rows("SELECT posted_at FROM posts"), [("2026-10-02T07:42:10Z",)])
+
+    def test_a_time_without_a_time_zone_is_refused(self):
+        with self.assertRaises(ValueError):
+            server.utc_text(datetime(2026, 10, 2, 7, 42, 10))
+
+    def test_the_same_clock_time_on_two_days_is_two_different_times(self):
+        aiko = self.sign_up("aiko")
+        server.save_post(self.db_path, aiko, "one", now=SOME_MOMENT)
+        server.save_post(self.db_path, aiko, "two", now=SOME_MOMENT + timedelta(days=1))
+        self.assertEqual(self.rows("SELECT posted_at FROM posts ORDER BY id"),
+                         [("2026-10-02T07:42:10Z",), ("2026-10-03T07:42:10Z",)])
+
+    def test_with_no_time_given_the_server_clock_is_used(self):
+        aiko = self.sign_up("aiko")
+        # Only the shape and the order are checked, never the real time itself.
+        before = server.utc_text(server.utc_now())
+        row = server.save_post(self.db_path, aiko, "hello")
+        after = server.utc_text(server.utc_now())
+        self.assertRegex(row["posted_at"], ISO_TIME)
+        self.assertTrue(before <= row["posted_at"] <= after)
+
+    def test_the_database_refuses_a_wrong_time_or_both_or_neither(self):
+        aiko = self.sign_up("aiko")
+        connection = server.connect(self.db_path)
+        for posted_at, old_clock_time in (("15:42", None), (None, None),
+                                          ("2026-10-02T07:42:10Z", "15:42"),
+                                          (None, "3pm"), ("2026-10-02 07:42:10", None)):
+            with self.subTest(posted_at=posted_at, old_clock_time=old_clock_time):
+                with self.assertRaises(sqlite3.IntegrityError):
+                    connection.execute("INSERT INTO posts (author_id, text, posted_at, "
+                                       "old_clock_time) VALUES (?, 'x', ?, ?)",
+                                       (aiko, posted_at, old_clock_time))
+        connection.close()
+        self.assertEqual(self.rows("SELECT * FROM posts"), [])
+
+    def test_the_timestamps_upgrade_keeps_old_times_as_date_unknown(self):
+        before, after = self.use_an_accounts_database()
+        self.assertEqual(self.rows("SELECT id, author_id, text, posted_at, old_clock_time "
+                                   "FROM posts ORDER BY id"),
+                         [(1, 1, "first", None, "09:00"), (2, 2, "second", None, "09:01"),
+                          (5, 1, "fifth", None, "09:05")])
+        self.assertEqual(after["likes"], before["likes"])   # each like still points at its post
+        self.assertEqual(after["users"], before["users"])
+        self.assertEqual(after["sessions"], before["sessions"])
+        self.assertEqual(self.rows("PRAGMA foreign_key_check"), [])
+        self.assertEqual(self.rows("PRAGMA user_version"), [(3,)])
+        connection = server.connect(self.db_path)
+        self.assertEqual(connection.execute("PRAGMA foreign_keys").fetchone()[0], 1)
+        connection.close()
+        # The column order keeps its shape: posted_at, then old_clock_time.
+        self.assertEqual([row[1] for row in self.rows("PRAGMA table_info(posts)")],
+                         ["id", "author_id", "text", "posted_at", "old_clock_time"])
+
+    def test_after_the_upgrade_a_new_post_gets_a_full_time_and_order_is_by_id(self):
+        self.use_an_accounts_database()
+        row = server.save_post(self.db_path, 1, "new", now=SOME_MOMENT)
+        self.assertEqual(row["id"], 6)
+        posts = server.posts_to_json(server.posts_after(self.db_path, 0))
+        self.assertEqual([post["id"] for post in posts], [1, 2, 5, 6])
+        self.assertEqual((posts[0]["posted_at"], posts[0]["old_clock_time"]), (None, "09:00"))
+        self.assertEqual((posts[3]["posted_at"], posts[3]["old_clock_time"]),
+                         ("2026-10-02T07:42:10Z", None))
+
+    def test_the_upgrade_refuses_an_old_time_that_is_not_hh_mm(self):
+        self.db_path = os.path.join(self.folder.name, "odd.db")
+        connection = sqlite3.connect(self.db_path)
+        connection.executescript("""
+            CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE);
+            CREATE TABLE posts (id INTEGER PRIMARY KEY,
+                                author_id INTEGER NOT NULL REFERENCES users(id),
+                                text TEXT NOT NULL, posted_at TEXT NOT NULL);
+            INSERT INTO users VALUES (1, 'aiko');
+            INSERT INTO posts VALUES (1, 1, 'first', 'teatime');
+        """)
+        connection.close()
+        with self.assertRaises(SystemExit) as caught:
+            server.create_tables(self.db_path)
+        self.assertIn("make reset", str(caught.exception))
+        self.assertEqual(self.rows("SELECT posted_at FROM posts"), [("teatime",)])
+        self.assertEqual(self.rows("PRAGMA user_version"), [(2,)])   # timestamps did not happen
+
+    def test_the_json_has_both_times_for_an_old_and_a_new_post(self):
+        self.use_an_accounts_database()
+        server.save_post(self.db_path, 1, "new", now=SOME_MOMENT)
+        posts = server.posts_to_json(server.posts_after(self.db_path, 0))
+        for post in posts:
+            self.assertIn("posted_at", post)
+            self.assertIn("old_clock_time", post)
+        self.assertEqual(posts[-1]["posted_at"], "2026-10-02T07:42:10Z")
+
+
 class RealServerTest(unittest.TestCase):
 
     def setUp(self):
@@ -1053,6 +1171,16 @@ class RealServerTest(unittest.TestCase):
                 code, reason = self.refused_get(stranger, path)
                 self.assertEqual(code, 400)
                 self.assertIn("which posts", reason)
+
+
+    def test_a_new_post_has_a_full_utc_time_and_no_old_clock_time(self):
+        self.sign_up().close()
+        with self.send("/posts", {"text": "hello"}) as answer:
+            self.assertEqual(answer.status, 201)
+            post = json.loads(answer.read())
+        self.assertRegex(post["posted_at"], ISO_TIME)
+        self.assertIsNone(post["old_clock_time"])
+        self.assertEqual(self.get("/posts?after=0")[0]["posted_at"], post["posted_at"])
 
 
 class JourneyTest(unittest.TestCase):
@@ -1349,6 +1477,54 @@ class JourneyTest(unittest.TestCase):
                          ["Anika", "Ben Ito", "Chika"])
 
 
+    def test_an_old_post_keeps_its_clock_time_and_a_new_one_gets_the_server_s_time(self):
+        # A database file in the old format (before accounts), with one post at 15:42.
+        old_path = os.path.join(self.folder.name, "old.db")
+        connection = sqlite3.connect(old_path)
+        connection.executescript("""
+            CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE);
+            CREATE TABLE posts (id INTEGER PRIMARY KEY,
+                                author_id INTEGER NOT NULL REFERENCES users(id),
+                                text TEXT NOT NULL, posted_at TEXT NOT NULL);
+            CREATE TABLE likes (post_id INTEGER NOT NULL REFERENCES posts(id),
+                                user_id INTEGER NOT NULL REFERENCES users(id),
+                                PRIMARY KEY (post_id, user_id));
+            INSERT INTO users VALUES (1, 'Aiko');
+            INSERT INTO posts VALUES (1, 1, 'from before', '15:42');
+        """)
+        connection.close()
+        self.server.shutdown()
+        self.server.server_close()
+        self.db_path = old_path
+        self.server = server.make_server(0, old_path)   # the server upgrades it as it starts
+        self.base = "http://127.0.0.1:" + str(self.server.server_address[1])
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+        ben = self.open_window()
+
+        # 1. The old post shows its old clock time, and no date.
+        old = self.page_asks_for_new_posts(ben)
+        self.assertEqual([(post["id"], post["posted_at"], post["old_clock_time"]) for post in old],
+                         [(1, None, "15:42")])
+        self.assertEqual(self.rows("SELECT id, posted_at, old_clock_time FROM posts"),
+                         [(1, None, "15:42")])
+
+        # 2. Ben signs up and posts, with a made-up time in the JSON. The server
+        #    never reads it: the time comes from the server's own clock.
+        self.page_signs_up(ben, "ben", "Ben Ito")
+        with mock.patch("server.utc_now", return_value=SOME_MOMENT):
+            status, post = self.page_sends(ben, "/posts", {"text": "hello",
+                                                           "posted_at": "1999-01-01T00:00:00Z"},
+                                           "POST")
+        self.assertEqual(status, 201)
+        self.assertEqual((post["posted_at"], post["old_clock_time"]),
+                         ("2026-10-02T07:42:10Z", None))
+        self.assertEqual(self.rows("SELECT id, posted_at, old_clock_time FROM posts ORDER BY id"),
+                         [(1, None, "15:42"), (2, "2026-10-02T07:42:10Z", None)])
+
+        # 3. "after" is still a post id, not a time: only the new post comes back.
+        self.assertEqual([post["id"] for post in self.page_asks_for_new_posts(ben, 1)], [2])
+
+
 class PageAndServerAgreeTest(unittest.TestCase):
     """AGENTS.md: "the page and the server must agree".
 
@@ -1568,6 +1744,23 @@ class PageAndServerAgreeTest(unittest.TestCase):
     def test_the_page_never_uses_inner_html(self):
         self.assertNotIn("innerHTML =", self.page_code)
         self.assertNotIn("insertAdjacentHTML", self.page_code)
+
+
+    # -- timestamps --
+
+    def test_the_page_reads_both_times_the_server_sends(self):
+        self.assertIn("post.posted_at", self.page_code)
+        self.assertIn("post.old_clock_time", self.page_code)
+        self.assertNotIn("textContent = post.posted_at", self.page_code)
+
+    def test_the_page_makes_a_time_element_and_refreshes_it(self):
+        self.assertIn('createElement("time")', self.page_code)
+        self.assertIn('"datetime"', self.page_code)
+        self.assertIn("setInterval(refreshTimes", self.page_code)
+
+    def test_the_page_never_sends_a_time(self):
+        for inside in re.findall(r"JSON\.stringify\(\{([^}]*)\}\)", self.page_code):
+            self.assertNotIn("posted_at", inside)
 
 
 

@@ -407,3 +407,14 @@ button {
 .likers-more {
   color: var(--quiet);
 }
+
+/* timestamps */
+/* A post from before Timeline kept dates: its old clock time, in italics. */
+.post-time-unknown {
+  font-style: italic;
+}
+
+/* Hold the mouse over a time to see the full date. */
+time.post-time {
+  cursor: help;
+}

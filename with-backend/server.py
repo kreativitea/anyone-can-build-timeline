@@ -17,6 +17,7 @@ import re
 import secrets
 import sqlite3
 import time
+from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
@@ -373,6 +374,8 @@ def create_tables(db_path):
         upgrade_to_accounts(connection)
     if version < 2:
         upgrade_to_groundwork(connection)
+    if version < 3:
+        upgrade_to_timestamps(connection)
     connection.close()
 
 
@@ -413,7 +416,7 @@ def upgrade_to_accounts(connection):
                          "letters. Rename one, or run `make reset`, then start again.")
 
 
-def rebuild_table(connection, table, change_sql, user_version=None):
+def rebuild_table(connection, table, change_sql, user_version=None, prepare=None):
     """Make `table` again from its own CREATE TABLE text, changed by `change_sql`.
 
     SQLite cannot change some things in a table that already exists (for example,
@@ -430,6 +433,10 @@ def rebuild_table(connection, table, change_sql, user_version=None):
     do). If user_version is given, the new version number is saved in the same
     transaction. Foreign keys are turned off while the table is briefly gone,
     then checked by hand before anything is saved.
+
+    If prepare is given, it is a function that gets the connection and makes a
+    small change to the old table first (for example, renames a column), inside
+    the same transaction. The rows are then copied by the new names.
     """
     if connection.in_transaction:
         # A mistake in the code, not a user's broken rule: foreign keys can
@@ -440,6 +447,8 @@ def rebuild_table(connection, table, change_sql, user_version=None):
     try:
         connection.execute("BEGIN")
         try:
+            if prepare is not None:
+                prepare(connection)
             row = connection.execute("SELECT sql FROM sqlite_master "
                                      "WHERE type = 'table' AND name = ?", (table,)).fetchone()
             if row is None:
@@ -513,10 +522,56 @@ def upgrade_to_groundwork(connection):
     rebuild_table(connection, "posts", add_autoincrement, user_version=2)
 
 
+# timestamps: what posted_at and old_clock_time may hold. GLOB is a simple text
+# pattern: [0-9] is one digit. A CHECK on an empty (NULL) value passes, so each
+# column's own check applies only when it has a value. The second CHECK on
+# old_clock_time says that exactly one of the two has a value: never both, never
+# neither. It is written on the column, not at the end of the table, so the
+# table's text still ends with a column, and a later upgrade can add one there.
+POSTED_AT_COLUMN = ("posted_at TEXT CHECK (posted_at GLOB "
+                    "'[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]Z')")
+OLD_CLOCK_TIME_COLUMN = ("old_clock_time TEXT CHECK (old_clock_time GLOB '[0-9][0-9]:[0-9][0-9]') "
+                         "CHECK ((posted_at IS NULL) <> (old_clock_time IS NULL))")
+
+
+def upgrade_to_timestamps(connection):
+    """Version 3: a post keeps its full date and time, in UTC. Every row is kept.
+
+    Before this, posted_at held only the clock time, like 15:42, with no date.
+    That old text cannot become a real date honestly, so it moves to a new
+    column, old_clock_time, and posted_at is left empty (NULL) for those posts.
+    A new post gets a full time, like 2026-10-02T07:42:10Z, and no old_clock_time.
+
+    posted_at was NOT NULL, and SQLite cannot change that in place, so posts is
+    rebuilt with rebuild_table: posted_at is renamed old_clock_time first, then
+    the new table has both columns and their checks. The ids do not change, so
+    every like still points at the right post.
+    """
+    not_a_clock_time = connection.execute(
+        "SELECT COUNT(*) FROM posts WHERE posted_at NOT GLOB '[0-9][0-9]:[0-9][0-9]'"
+    ).fetchone()[0]
+    if not_a_clock_time:
+        connection.close()
+        raise SystemExit("timeline.db has a post whose time is not like 15:42, so it cannot "
+                         "be brought up to date. Run `make reset`, then start again.")
+
+    def rename_old_time(connection):
+        connection.execute("ALTER TABLE posts RENAME COLUMN posted_at TO old_clock_time")
+
+    def add_full_time(sql):
+        old = re.compile(r'"?old_clock_time"?\s+TEXT\s+NOT\s+NULL', re.IGNORECASE)
+        if not old.search(sql):
+            raise SystemExit("timeline.db has a posts table this upgrade does not know. "
+                             "Run `make reset`, then start again.")
+        return old.sub(POSTED_AT_COLUMN + ", " + OLD_CLOCK_TIME_COLUMN, sql, count=1)
+
+    rebuild_table(connection, "posts", add_full_time, user_version=3, prepare=rename_old_time)
+
+
 # Each post, with its author's two names looked up in users, and how many people
 # have liked it. The view reads row["author"], row["display_name"] and row["like_count"].
 POSTS_WITH_AUTHORS = ("SELECT posts.id, users.name AS author, users.display_name, "
-                      "posts.text, posts.posted_at, "
+                      "posts.text, posts.posted_at, posts.old_clock_time, "
                       "(SELECT COUNT(*) FROM likes WHERE likes.post_id = posts.id) "
                       "AS like_count "
                       "FROM posts JOIN users ON users.id = posts.author_id")
@@ -705,10 +760,38 @@ def log_out(db_path, token):
 
 
 # The extra columns insert_post may be given, besides the author and the text.
-# Empty for now. A feature that adds a column to posts adds its name here, in
-# one line (for example "place" or "parent_id"). A column name never comes from
-# a request: only a name on this list can reach the SQL.
-POST_EXTRA_COLUMNS = ()
+# A feature that adds a column to posts adds its name here, in one line (for
+# example "place" or "parent_id"). A column name never comes from a request:
+# only a name on this list can reach the SQL. old_clock_time is not on it:
+# only the timestamps upgrade ever writes it.
+POST_EXTRA_COLUMNS = ("posted_at",)
+
+
+# A time is saved as text in UTC (the one clock the whole world agrees on), to
+# the second: 2026-10-02T07:42:10Z. The Z means "this is UTC". As text it sorts
+# in time order, and the page's new Date(...) reads it directly.
+TIME_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
+
+
+def utc_now():
+    """The time now, in UTC. The only place that reads the real clock for posts.
+
+    A test can replace it (unittest.mock.patch("server.utc_now", ...)), so no
+    test depends on the real clock.
+    """
+    return datetime.now(timezone.utc)
+
+
+def utc_text(moment):
+    """A time as it is saved: 2026-10-02T07:42:10Z. Any time zone is turned into UTC first.
+
+    A time with no time zone cannot be placed honestly, so it is refused. That
+    is a mistake in the code, not a user's broken rule.
+    """
+    if moment.tzinfo is None or moment.utcoffset() is None:
+        raise ValueError("utc_text needs a time with a time zone, for example "
+                         "datetime.now(timezone.utc).")
+    return moment.astimezone(timezone.utc).strftime(TIME_FORMAT)
 
 
 def insert_post(connection, user_id, text, **more):
@@ -723,7 +806,7 @@ def insert_post(connection, user_id, text, **more):
             # A mistake in the code, not a user's broken rule.
             raise ValueError(f"insert_post does not know the column {name!r}. "
                              "Add it to POST_EXTRA_COLUMNS.")
-    values = {"author_id": user_id, "text": text, "posted_at": time.strftime("%H:%M")}
+    values = {"author_id": user_id, "text": text, "posted_at": utc_text(utc_now())}
     values.update(more)
     columns = ", ".join(values)
     marks = ", ".join("?" for _ in values)
@@ -742,11 +825,16 @@ def post_by_id(connection, post_id):
                               (post_id,)).fetchone()
 
 
-def save_post(db_path, user_id, text):
-    """Check the rules, save the post by this user, and return the saved row."""
+def save_post(db_path, user_id, text, now=None):
+    """Check the rules, save the post by this user, and return the saved row.
+
+    The time comes from the server's clock (utc_now), never from the request.
+    A test passes `now` to choose the time.
+    """
     text = check_text(text)
+    now = now or utc_now()
     connection = connect(db_path)
-    post_id = insert_post(connection, user_id, text)
+    post_id = insert_post(connection, user_id, text, posted_at=utc_text(now))
     connection.commit()
     row = post_by_id(connection, post_id)
     connection.close()
@@ -998,7 +1086,7 @@ def posts_after(db_path, after, viewer_id=None):
 def post_to_json(row):
     return {"id": row["id"], "author": row["author"], "display_name": row["display_name"],
             "text": row["text"], "posted_at": row["posted_at"],
-            "like_count": row["like_count"]}
+            "old_clock_time": row["old_clock_time"], "like_count": row["like_count"]}
 
 
 def posts_to_json(rows):
