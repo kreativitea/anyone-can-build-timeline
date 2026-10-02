@@ -341,6 +341,31 @@ A post can be up to 560 characters (140, then 280, then 560: each step doubles).
   button is a real `<button>` with `aria-expanded` and `aria-controls`.
 - `page-only/` keeps its own limit of 280. Its `style.css` has the new rules only to stay a copy.
 
+## Who liked a post
+
+Under every post with likes, one line says who liked it: *You, Anika, and 10 others liked this
+post*. Clicking the line, or the number by the heart, opens everyone who liked it.
+
+- **No database change.** A like is a row that points at a user, not a number, so the names were
+  already there. If the app had kept only `like_count = 3`, this feature could never say who.
+- **Two new routes**, both open to anyone, signed in or not:
+  `GET /likers?post_id=7` gives everyone who liked one post, A to Z by account name (capitals
+  ignored), at most 50, plus the total. `GET /likesummary?post_ids=3,7,9` gives the line for up to
+  100 posts at once: the count, whether *you* liked it, and the names to show. They are new paths,
+  not a second shape of `GET /likes`: one path, one shape of answer.
+- **Why A to Z, and not newest first:** `likes` has no time, and SQLite's hidden `rowid` can change
+  when the file is tidied (`VACUUM`), so it is not an order to rely on.
+- **Who is named:** the two most *popular* people who liked it. Popular means how many likes their
+  own posts have received from other people, counted from `likes` each time and never stored.
+  Not how many posts they wrote (posting a lot is not popularity), and not their likes on their own
+  posts. Ties go A to Z. If you liked the post, *You* comes first, then one more name. The server
+  decides who is named; the page only puts it into words.
+- **How the page asks:** no new polling. When `GET /likes` (asked every second already) shows that
+  a post's count, or your heart, changed, the page asks for all the changed lines in one request.
+  An open list is asked for again at the same moment.
+- **Every sentence is one template** (*{first}, {second}, and {count} others liked this post*),
+  never joined from pieces, so another language can put the names in its own order.
+
 ## 8. Build or borrow
 
 - **Built:** the page, the server and the data model.

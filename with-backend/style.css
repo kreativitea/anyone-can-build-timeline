@@ -359,3 +359,51 @@ button {
   outline: 3px solid var(--author);
   outline-offset: 2px;
 }
+
+/* who-liked: the line under a post ("You, Anika, and 10 others liked this
+   post") and the list of everyone who liked it. The number by the heart and
+   the line are buttons that look like text. Only with-backend/ has likes,
+   but both copies of this file stay the same. */
+.like-count,
+.like-summary {
+  padding: 0;
+  border-radius: 0;
+  background: none;
+  color: var(--quiet);
+  font-weight: 400;
+  text-align: left;
+}
+
+.like-count:hover,
+.like-count:focus-visible,
+.like-summary:hover,
+.like-summary:focus-visible {
+  text-decoration: underline;
+}
+
+.like-summary {
+  display: block;
+  margin-top: 6px;
+  font-size: 18px;
+  overflow-wrap: anywhere;
+}
+
+.likers {
+  margin: 6px 0 0;
+  padding: 0 0 0 18px;
+  font-size: 18px;
+  list-style: none;
+  overflow-wrap: anywhere;
+}
+
+.likers li {
+  margin-top: 2px;
+}
+
+.likers .post-handle {
+  margin-left: 8px;
+}
+
+.likers-more {
+  color: var(--quiet);
+}

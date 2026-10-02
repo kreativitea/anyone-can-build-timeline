@@ -64,6 +64,10 @@ class TimelineHandler(BaseHTTPRequestHandler):
             user = self.user_or_none()
             counts, mine = likes_for(self.server.db_path, user["id"] if user else None)
             self.send_json(200, likes_to_json(counts, mine))
+        elif url.path == "/likers":
+            self.show_likers(parse_qs(url.query).get("post_id", [None])[0])
+        elif url.path == "/likesummary":
+            self.show_like_summaries(parse_qs(url.query).get("post_ids", [""])[0])
         elif url.path == "/sessions":
             # "Who am I?" The page asks this when it opens.
             user = self.signed_in_user()
@@ -217,6 +221,31 @@ class TimelineHandler(BaseHTTPRequestHandler):
             return
         self.send_json(201, like_to_json(post_id, like_count))
 
+    # who-liked: anyone may read who liked a post, signed in or not.
+
+    def show_likers(self, post_id):
+        """GET /likers?post_id=7: everyone who liked one post, A to Z. No cookie is read."""
+        try:
+            post_id, rows, like_count = who_liked(self.server.db_path, post_id)
+        except RuleBroken as problem:
+            self.send_json(400, {"error": str(problem)})
+            return
+        self.send_json(200, likers_to_json(post_id, rows, like_count))
+
+    def show_like_summaries(self, post_ids):
+        """GET /likesummary?post_ids=3,7,9: the line under each post.
+
+        The text is passed on as it is: splitting and checking it is the model's rule.
+        """
+        user = self.user_or_none()
+        try:
+            summaries = like_summaries(self.server.db_path, user["id"] if user else None,
+                                       post_ids)
+        except RuleBroken as problem:
+            self.send_json(400, {"error": str(problem)})
+            return
+        self.send_json(200, summaries_to_json(summaries))
+
     def send_nothing_here(self, method, path):
         """404, in one sentence for every method, so it stays true when routes are added."""
         self.send_json(404, {"error": f"There is nothing to {method} at {path}."})
@@ -257,6 +286,12 @@ MAX_AUTHOR = 40
 MAX_DISPLAY_NAME = 50
 MIN_PASSWORD = 8
 MAX_PASSWORD = 200
+
+# who-liked
+MAX_LIKERS = 50          # at most this many names in the full list; the total is sent too
+SUMMARY_NAMES = 2        # names in the summary line ("Anika, Chika, and 10 others")
+MAX_SUMMARY_POSTS = 100  # at most this many posts in one GET /likesummary
+POST_ID_TEXT = re.compile(r"[0-9]{1,18}")   # one post id, as text
 
 # The largest request body the server will read: 4 MB, in bytes. Enough for a
 # 2 MB picture written as text (base64 makes it about a third bigger), with room
@@ -795,6 +830,129 @@ def likes_for(db_path, user_id):
     return counts, mine
 
 
+# ---- who-liked: who liked a post, and the line under it ----
+#
+# Both functions below only read. They never add, change or delete a row, and
+# never commit; they never make a user or a session. They name their columns
+# (users.name, users.display_name), never users.*, so a password salt or hash
+# can never reach an answer by accident.
+#
+# "Popular" means: how many likes this person's own posts have received from
+# other people. It is counted from the rows in likes every time it is asked
+# for, and never kept as a number anywhere, for the same reason as a like
+# count: a kept number could drift away from the rows; a count of the rows
+# cannot.
+
+def who_liked(db_path, post_id):
+    """Everyone who liked this post, A to Z, at most MAX_LIKERS of them.
+
+    Returns (post_id, rows, like_count). Each row has name and display_name.
+    like_count is how many liked it in all, which can be more than the rows.
+    Only reads. MAX_LIKERS is read when it runs, so a test can lower it.
+    """
+    post_id = check_post_id(post_id)
+    connection = connect(db_path)
+    try:
+        # One read transaction, so the names and the count come from the same moment.
+        connection.execute("BEGIN")
+        if connection.execute("SELECT id FROM posts WHERE id = ?",
+                              (post_id,)).fetchone() is None:
+            raise RuleBroken("That post does not exist.")
+        rows = connection.execute(
+            "SELECT users.name, users.display_name "
+            "FROM likes JOIN users ON users.id = likes.user_id "
+            "WHERE likes.post_id = ? "
+            "ORDER BY users.name COLLATE NOCASE "
+            "LIMIT ?", (post_id, MAX_LIKERS)).fetchall()
+        like_count = like_count_for(connection, post_id)
+    finally:
+        connection.rollback()   # it only read, so there is nothing to keep
+        connection.close()
+    return post_id, rows, like_count
+
+
+def check_post_ids(text):
+    """The post ids in "3,7,9", as a list of whole numbers, or raise RuleBroken.
+
+    The same id twice counts once. At most MAX_SUMMARY_POSTS different ids.
+    """
+    pieces = text.split(",") if isinstance(text, str) else []
+    # Only the digits 0 to 9, at most 18 of them, so every id fits in the database.
+    if not pieces or not all(POST_ID_TEXT.fullmatch(piece.strip()) for piece in pieces):
+        raise RuleBroken("The request must say which posts it is about.")
+    # dict.fromkeys keeps the first of each id, in order.
+    post_ids = list(dict.fromkeys(int(piece) for piece in pieces))
+    if len(post_ids) > MAX_SUMMARY_POSTS:
+        raise RuleBroken(f"One request may ask about at most {MAX_SUMMARY_POSTS} posts.")
+    return post_ids
+
+
+def like_summaries(db_path, viewer_id, post_ids):
+    """The line under each post: {post_id: {"like_count", "you", "leaders"}}.
+
+    viewer_id is None for a window that is not logged in. post_ids is the text
+    from the request ("3,7,9"), checked by check_post_ids. Every asked id gets
+    an entry; a post that does not exist has count 0 and no names.
+
+    "leaders" are the most popular people who liked the post, most popular
+    first, then A to Z. If the viewer liked it, "you" is true, the viewer is
+    never a leader, and one name fewer is kept, so the line still has at most
+    SUMMARY_NAMES names. So the model decides who is named; the page only
+    words it. Only reads.
+    """
+    post_ids = check_post_ids(post_ids)
+    # The marks are made from the NUMBER of ids only. The ids themselves are
+    # always passed as values, never written into the SQL.
+    marks = ", ".join("?" * len(post_ids))
+    connection = connect(db_path)
+    try:
+        connection.execute("BEGIN")
+        # ROW_NUMBER() OVER (PARTITION BY ...) numbers the likers of each post
+        # 1, 2, 3... in popularity order, so place <= 2 keeps the top two of
+        # every post in one query. "IS NOT ?" with None leaves everyone in.
+        leaders = connection.execute(
+            "SELECT post_id, name, display_name FROM ("
+            "  SELECT likes.post_id, users.name, users.display_name,"
+            "         ROW_NUMBER() OVER ("
+            "           PARTITION BY likes.post_id"
+            "           ORDER BY"
+            # popularity: likes on this person's own posts, by other people
+            "             (SELECT COUNT(*) FROM likes AS got"
+            "              JOIN posts AS theirs ON theirs.id = got.post_id"
+            "              WHERE theirs.author_id = users.id"
+            "                AND got.user_id != users.id) DESC,"
+            "             users.name COLLATE NOCASE"
+            "         ) AS place"
+            "  FROM likes JOIN users ON users.id = likes.user_id"
+            f"  WHERE likes.post_id IN ({marks})"
+            "    AND likes.user_id IS NOT ?"   # the viewer is "You", not a leader
+            ") WHERE place <= ? "
+            "ORDER BY post_id, place",
+            (*post_ids, viewer_id, SUMMARY_NAMES)).fetchall()
+        counts = connection.execute(
+            "SELECT post_id, COUNT(*) AS like_count FROM likes "
+            f"WHERE post_id IN ({marks}) GROUP BY post_id", post_ids).fetchall()
+        mine = set()
+        if viewer_id is not None:
+            mine = {row["post_id"] for row in connection.execute(
+                f"SELECT post_id FROM likes WHERE user_id = ? AND post_id IN ({marks})",
+                (viewer_id, *post_ids))}
+    finally:
+        connection.rollback()   # it only read, so there is nothing to keep
+        connection.close()
+
+    summaries = {post_id: {"like_count": 0, "you": post_id in mine, "leaders": []}
+                 for post_id in post_ids}
+    for row in counts:
+        summaries[row["post_id"]]["like_count"] = row["like_count"]
+    for row in leaders:
+        summaries[row["post_id"]]["leaders"].append(row)
+    for summary in summaries.values():
+        names = SUMMARY_NAMES - 1 if summary["you"] else SUMMARY_NAMES
+        summary["leaders"] = summary["leaders"][:names]
+    return summaries
+
+
 def visible_to(viewer_id):
     """Which posts this viewer may see, as (sql, params): one part of a WHERE.
 
@@ -863,6 +1021,19 @@ def likes_to_json(counts, mine):
     """
     return {"counts": {str(row["post_id"]): row["like_count"] for row in counts},
             "mine": [row["post_id"] for row in mine]}
+
+
+def likers_to_json(post_id, rows, like_count):
+    """Everyone who liked one post (at most MAX_LIKERS), and how many in all."""
+    return {"post_id": post_id, "like_count": like_count,
+            "likers": [account_to_json(row) for row in rows]}
+
+
+def summaries_to_json(summaries):
+    """The line under each post. A JSON name is always text, so the post ids are too."""
+    return {"summaries": {str(post_id): {"like_count": s["like_count"], "you": s["you"],
+                                         "leaders": [account_to_json(r) for r in s["leaders"]]}
+                          for post_id, s in summaries.items()}}
 
 
 def session_cookie(token):

@@ -28,7 +28,7 @@ piece of text the browser keeps and sends back by itself), never from a name in 
 | `page-only/app.js` | Checks the rules and keeps the posts in this window's `sessionStorage`. There are no likes in this version. |
 | `with-backend/index.html` | The parts of the screen: Log in and Sign up forms when signed out; "Signed in as …", Log out and the post box when signed in; the timeline. A tiny script in `<head>` that sets the colours before the page is drawn, and the Colours switch. |
 | `with-backend/style.css` | How the screen looks. Each colour is written once for light and dark, as `light-dark(LIGHT, DARK)`. |
-| `with-backend/app.js` | Asks the server who is logged in, sends sign-ups, logins, log-outs, posts, likes and likes taken back, and asks for new posts and new like counts every second. Remembers the Colours choice in `localStorage`. It keeps a half-written post in this browser's `localStorage`, one per account, removed after posting or logging out. |
+| `with-backend/app.js` | Asks the server who is logged in, sends sign-ups, logins, log-outs, posts, likes and likes taken back, and asks for new posts and new like counts every second. Remembers the Colours choice in `localStorage`. It keeps a half-written post in this browser's `localStorage`, one per account, removed after posting or logging out. It shows who liked each post, and asks for the names only when a count changes. |
 | `with-backend/server.py` | The backend, in three labelled parts: **controller**, **model**, **view**. |
 | `with-backend/test_server.py` | The checks for `server.py`, and for the page and the server agreeing. |
 | `with-backend/timeline.db` | The database, in four tables. The server creates it when it starts, and brings an older one up to date. It is not in git. |
@@ -46,7 +46,8 @@ The three parts of `server.py`:
 - **Model** (`check_name`, `check_display_name`, `check_password`, `check_text`, `check_post_id`,
   `hash_password`, `hash_token`, `create_account`, `log_in`, `user_for_session`, `log_out`,
   `start_session`, `account_for`, `save_post`, `posts_after`, `add_like`, `remove_like`,
-  `like_count_for`, `likes_for`, and `create_tables` with `upgrade_to_accounts`): the rules, and the
+  `like_count_for`, `likes_for`, `who_liked`, `check_post_ids`, `like_summaries`, and
+  `create_tables` with `upgrade_to_accounts`): the rules, and the
   database, in four tables:
   - `users`: each person once. `name` is the account name (unique, capitals ignored),
     `display_name` is the name shown, and `password_salt`, `password_hash`, `password_rounds` hold
@@ -61,8 +62,12 @@ The three parts of `server.py`:
   anywhere: it is counted from the rows in `likes`, so a count and its likes can never disagree.
   Taking a like back deletes its row; nothing is marked as undone. Errors: `RuleBroken` becomes
   `400`, `NotSignedIn` becomes `401`.
+
+  `who_liked` and `like_summaries` only read: they must never add a user, a like or a session.
+  A person's popularity (likes on their own posts from other people) is counted from `likes`
+  every time, never stored.
 - **View** (`post_to_json`, `posts_to_json`, `account_to_json`, `like_to_json`, `likes_to_json`,
-  `session_cookie`, `post_to_log_line`): turns database rows into the JSON the page reads, the
+  `likers_to_json`, `summaries_to_json`, `session_cookie`, `post_to_log_line`): turns database rows into the JSON the page reads, the
   cookie, and the one line printed for each new post.
 
 The database knows its own version (`PRAGMA user_version`). An older `timeline.db` from before

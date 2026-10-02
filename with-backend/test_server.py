@@ -641,6 +641,216 @@ class ModelTests(unittest.TestCase):
         with self.assertRaises(server.RuleBroken):
             server.save_post(self.db_path, aiko, "\U0001F600" * (server.MAX_TEXT + 1))
 
+    # -- who-liked --
+    #
+    # People are made straight with SQL here, so no test hashes a password
+    # 600,000 times for each of them. They have no password, like an old user.
+
+    def person(self, name, display_name=None):
+        """Add a user with SQL. Return the id."""
+        connection = server.connect(self.db_path)
+        user_id = connection.execute("INSERT INTO users (name, display_name) VALUES (?, ?)",
+                                     (name, display_name or name)).lastrowid
+        connection.commit()
+        connection.close()
+        return user_id
+
+    def post_by(self, user_id, text="hello"):
+        return server.save_post(self.db_path, user_id, text)["id"]
+
+    def like(self, user_id, *post_ids):
+        for post_id in post_ids:
+            server.add_like(self.db_path, user_id, post_id)
+
+    def names(self, rows):
+        return [row["name"] for row in rows]
+
+    def summary(self, viewer_id, post_id):
+        return server.like_summaries(self.db_path, viewer_id, str(post_id))[post_id]
+
+    def leaders(self, viewer_id, post_id):
+        return self.names(self.summary(viewer_id, post_id)["leaders"])
+
+    def counts_of_every_table(self):
+        return [self.rows(f"SELECT COUNT(*) FROM {table}")[0][0]
+                for table in ("users", "posts", "likes", "sessions")]
+
+    def test_who_liked_a_post_nobody_liked(self):
+        aiko = self.person("aiko")
+        post = self.post_by(aiko)
+        self.assertEqual(server.who_liked(self.db_path, post), (post, [], 0))
+
+    def test_who_liked_is_a_to_z_ignoring_capitals(self):
+        aiko, chika, ben = self.person("aiko"), self.person("Chika"), self.person("ben")
+        post = self.post_by(aiko)
+        self.like(chika, post)
+        self.like(ben, post)
+        post_id, rows, count = server.who_liked(self.db_path, str(post))
+        self.assertEqual((post_id, self.names(rows), count), (post, ["ben", "Chika"], 2))
+
+    def test_a_like_taken_back_is_gone_from_the_list(self):
+        aiko, ben = self.person("aiko"), self.person("ben")
+        post = self.post_by(aiko)
+        self.like(ben, post)
+        server.remove_like(self.db_path, ben, post)
+        self.assertEqual(server.who_liked(self.db_path, post), (post, [], 0))
+
+    def test_who_liked_refuses_a_missing_or_wrong_post_id(self):
+        for post_id in (None, "", "seven"):
+            with self.subTest(post_id=post_id):
+                with self.assertRaises(server.RuleBroken) as caught:
+                    server.who_liked(self.db_path, post_id)
+                self.assertIn("which post", str(caught.exception))
+        with self.assertRaises(server.RuleBroken) as caught:
+            server.who_liked(self.db_path, 99)
+        self.assertIn("does not exist", str(caught.exception))
+
+    def test_who_liked_names_at_most_max_likers_but_counts_them_all(self):
+        aiko = self.person("aiko")
+        post = self.post_by(aiko)
+        for name in ("ben", "chika", "dan"):
+            self.like(self.person(name), post)
+        old = server.MAX_LIKERS
+        server.MAX_LIKERS = 2
+        try:
+            post_id, rows, count = server.who_liked(self.db_path, post)
+        finally:
+            server.MAX_LIKERS = old
+        self.assertEqual((self.names(rows), count), (["ben", "chika"], 3))
+
+    def test_an_old_unclaimed_user_s_like_is_listed(self):
+        self.use_an_old_database()   # Ben and Daniel Radcliffe liked post 1
+        post_id, rows, count = server.who_liked(self.db_path, 1)
+        self.assertEqual([tuple(row) for row in rows],
+                         [("Ben", "Ben"), ("Daniel Radcliffe", "Daniel Radcliffe")])
+
+    def test_the_most_popular_likers_are_the_leaders(self):
+        aiko, anika, ben, chika = (self.person(n) for n in ("aiko", "anika", "ben", "chika"))
+        chika_posts = [self.post_by(chika) for _ in range(3)]
+        self.like(aiko, *chika_posts)        # Chika: 3 likes from others
+        self.like(aiko, self.post_by(anika))  # Anika: 1
+        post = self.post_by(aiko)
+        self.like(anika, post)
+        self.like(ben, post)
+        self.like(chika, post)
+        self.assertEqual(self.leaders(None, post), ["chika", "anika"])
+
+    def test_posting_a_lot_is_not_popularity(self):
+        aiko, anika, ben = self.person("aiko"), self.person("anika"), self.person("ben")
+        for _ in range(10):
+            self.post_by(ben)
+        self.like(aiko, self.post_by(anika))
+        post = self.post_by(aiko)
+        self.like(ben, post)
+        self.like(anika, post)
+        self.assertEqual(self.leaders(None, post), ["anika", "ben"])
+
+    def test_liking_yourself_is_not_popularity(self):
+        aiko, anika, ben = self.person("aiko"), self.person("anika"), self.person("ben")
+        for _ in range(5):
+            self.like(ben, self.post_by(ben))
+        post = self.post_by(aiko)
+        self.like(ben, post)
+        self.like(anika, post)
+        # Both have 0 from other people, so it is A to Z: Anika before Ben.
+        self.assertEqual(self.leaders(None, post), ["anika", "ben"])
+
+    def test_equal_popularity_is_a_to_z_ignoring_capitals(self):
+        aiko = self.person("aiko")
+        post = self.post_by(aiko)
+        for name in ("dan", "Bea", "chika"):
+            self.like(self.person(name), post)
+        self.assertEqual(self.leaders(None, post), ["Bea", "chika"])
+
+    def test_popularity_is_counted_from_the_rows_every_time(self):
+        aiko, anika, chika = self.person("aiko"), self.person("anika"), self.person("chika")
+        chika_post = self.post_by(chika)
+        self.like(aiko, chika_post)
+        post = self.post_by(aiko)
+        self.like(anika, post)
+        self.like(chika, post)
+        tables = [self.rows(f"PRAGMA table_info({t})") for t in ("users", "posts", "likes")]
+        self.assertEqual(self.leaders(None, post), ["chika", "anika"])
+        server.remove_like(self.db_path, aiko, chika_post)
+        self.assertEqual(self.leaders(None, post), ["anika", "chika"])
+        self.assertEqual([self.rows(f"PRAGMA table_info({t})") for t in ("users", "posts", "likes")],
+                         tables)
+
+    def test_you_come_first_and_are_never_a_leader(self):
+        aiko, anika, ben, chika = (self.person(n) for n in ("aiko", "anika", "ben", "chika"))
+        post = self.post_by(aiko)
+        self.like(anika, post)
+        self.like(ben, post)
+        self.like(chika, post)
+        mine = self.summary(ben, post)
+        self.assertEqual((mine["you"], mine["like_count"], self.names(mine["leaders"])),
+                         (True, 3, ["anika"]))
+        theirs = self.summary(aiko, post)   # Aiko did not like it
+        self.assertEqual((theirs["you"], self.names(theirs["leaders"])),
+                         (False, ["anika", "ben"]))
+        nobody = self.summary(None, post)
+        self.assertEqual((nobody["you"], self.names(nobody["leaders"])),
+                         (False, ["anika", "ben"]))
+
+    def test_each_summary_count_is_the_count_of_rows(self):
+        aiko, ben = self.person("aiko"), self.person("ben")
+        one, two = self.post_by(aiko), self.post_by(aiko)
+        self.like(ben, one)
+        self.like(aiko, one, two)
+        summaries = server.like_summaries(self.db_path, None, f"{one},{two},99")
+        for post_id in (one, two):
+            self.assertEqual(summaries[post_id]["like_count"],
+                             self.rows("SELECT COUNT(*) FROM likes WHERE post_id = ?",
+                                       (post_id,))[0][0])
+        self.assertEqual(summaries[99], {"like_count": 0, "you": False, "leaders": []})
+
+    def test_check_post_ids(self):
+        for text in ("", "a,b", "1,,2", "1;2", None, "-1"):
+            with self.subTest(text=text):
+                with self.assertRaises(server.RuleBroken) as caught:
+                    server.check_post_ids(text)
+                self.assertIn("which posts", str(caught.exception))
+        with self.assertRaises(server.RuleBroken) as caught:
+            server.check_post_ids(",".join(str(n) for n in range(1, 102)))
+        self.assertIn("at most 100", str(caught.exception))
+        self.assertEqual(len(server.check_post_ids(",".join(str(n) for n in range(1, 101)))),
+                         100)
+        self.assertEqual(server.check_post_ids("7,7"), [7])
+
+    def test_asking_who_liked_adds_nothing(self):
+        aiko, ben = self.person("aiko"), self.person("ben")
+        post = self.post_by(aiko)
+        self.like(ben, post)
+        before = self.counts_of_every_table()
+        server.who_liked(self.db_path, post)
+        with self.assertRaises(server.RuleBroken):
+            server.who_liked(self.db_path, 99)
+        server.like_summaries(self.db_path, None, f"{post},99")
+        server.like_summaries(self.db_path, ben, f"{post},99")
+        server.like_summaries(self.db_path, 12345, f"{post}")   # a viewer who does not exist
+        self.assertEqual(self.counts_of_every_table(), before)
+
+    def test_a_liker_in_an_answer_has_only_the_two_names(self):
+        aiko = self.sign_up("aiko", "Aiko Tanaka")   # a real account, with a password hash
+        post = self.post_by(aiko)
+        self.like(aiko, post)
+        secrets_in_file = [value for row in self.rows(
+            "SELECT password_salt, password_hash FROM users") for value in row]
+        post_id, rows, count = server.who_liked(self.db_path, post)
+        likers = server.likers_to_json(post_id, rows, count)
+        summaries = server.summaries_to_json(server.like_summaries(self.db_path, None, str(post)))
+        people = likers["likers"] + summaries["summaries"][str(post)]["leaders"]
+        self.assertEqual(len(people), 2)
+        for person in people:
+            self.assertEqual(person, {"account_name": "aiko", "display_name": "Aiko Tanaka"})
+        answer = json.dumps([likers, summaries])
+        for secret in secrets_in_file:
+            self.assertNotIn(secret, answer)
+
+    def test_sqlite_has_window_functions(self):
+        self.assertGreaterEqual(sqlite3.sqlite_version_info, (3, 25, 0),
+                                "who-liked needs SQLite 3.25 or newer, for ROW_NUMBER() OVER.")
+
 
 class RealServerTest(unittest.TestCase):
 
@@ -797,6 +1007,52 @@ class RealServerTest(unittest.TestCase):
         code, reason = self.refused("/posts", {"text": "a" * (server.MAX_TEXT + 1)})
         self.assertEqual(code, 400)
         self.assertIn("560", reason)
+
+    # -- who-liked --
+
+    def refused_get(self, opener, path):
+        with self.assertRaises(urllib.error.HTTPError) as caught:
+            opener.open(self.base + path)
+        reason = json.loads(caught.exception.read())["error"]
+        caught.exception.close()
+        return caught.exception.code, reason
+
+    def test_anyone_can_see_who_liked_a_post(self):
+        self.sign_up().close()
+        self.send("/posts", {"text": "hello"}).close()
+        self.send("/likes", {"post_id": 1}).close()
+        stranger = urllib.request.build_opener()   # no cookie at all
+        with stranger.open(self.base + "/likers?post_id=1") as answer:
+            self.assertEqual(json.loads(answer.read()), {
+                "post_id": 1, "like_count": 1,
+                "likers": [{"account_name": "aiko", "display_name": "Aiko Tanaka"}]})
+        for path, words in (("/likers", "which post"), ("/likers?post_id=abc", "which post"),
+                            ("/likers?post_id=99", "does not exist")):
+            with self.subTest(path=path):
+                code, reason = self.refused_get(stranger, path)
+                self.assertEqual(code, 400)
+                self.assertIn(words, reason)
+
+    def test_the_summary_says_you_only_with_your_cookie(self):
+        self.sign_up().close()
+        self.send("/posts", {"text": "hello"}).close()
+        self.send("/likes", {"post_id": 1}).close()
+        stranger = urllib.request.build_opener()
+        with stranger.open(self.base + "/likesummary?post_ids=1") as answer:
+            self.assertEqual(json.loads(answer.read()), {"summaries": {"1": {
+                "like_count": 1, "you": False,
+                "leaders": [{"account_name": "aiko", "display_name": "Aiko Tanaka"}]}}})
+        self.assertEqual(self.get("/likesummary?post_ids=1"), {"summaries": {"1": {
+            "like_count": 1, "you": True, "leaders": []}}})
+        code, reason = self.refused_get(stranger, "/likesummary?post_ids=" +
+                                        ",".join(str(n) for n in range(1, 102)))
+        self.assertEqual(code, 400)
+        self.assertIn("at most 100", reason)
+        for path in ("/likesummary?post_ids=x", "/likesummary"):
+            with self.subTest(path=path):
+                code, reason = self.refused_get(stranger, path)
+                self.assertEqual(code, 400)
+                self.assertIn("which posts", reason)
 
 
 class JourneyTest(unittest.TestCase):
@@ -1003,6 +1259,95 @@ class JourneyTest(unittest.TestCase):
         for value in all_values_in(self.db_path):
             self.assertNotIn(PASSWORD, value)
 
+    # -- who-liked --
+
+    def page_asks_for_summaries(self, window, *post_ids):
+        """askForSummaries: GET /likesummary?post_ids=3,7,9, with the cookie if any"""
+        path = "/likesummary?post_ids=" + ",".join(str(p) for p in post_ids)
+        with window.open(self.base + path) as answer:
+            return json.loads(answer.read())["summaries"]
+
+    def page_asks_who_liked(self, window, post_id):
+        """showLikers: GET /likers?post_id=7"""
+        with window.open(self.base + "/likers?post_id=" + str(post_id)) as answer:
+            return json.loads(answer.read())
+
+    def counts_of_every_table(self):
+        return [self.rows(f"SELECT COUNT(*) FROM {table}")[0][0]
+                for table in ("users", "posts", "likes", "sessions")]
+
+    def test_the_whole_journey_of_who_liked(self):
+        anika, ben, chika = self.open_window(), self.open_window(), self.open_window()
+        nobody = self.open_window()
+
+        def names(people):
+            return [person["account_name"] for person in people]
+
+        def read_only(ask, *arguments):
+            # Asking who liked a post never adds or removes a row anywhere.
+            before = self.counts_of_every_table()
+            answer = ask(*arguments)
+            self.assertEqual(self.counts_of_every_table(), before)
+            return answer
+
+        # 1. Three people sign up. Chika posts twice and Anika once; Ben likes
+        #    all three, so Chika's popularity is 2 and Anika's is 1. Ben posts P.
+        self.page_signs_up(anika, "anika", "Anika")
+        self.page_signs_up(ben, "ben", "Ben Ito")
+        self.page_signs_up(chika, "chika", "Chika")
+        chika_one = self.page_posts(chika, "one")[1]["id"]
+        chika_two = self.page_posts(chika, "two")[1]["id"]
+        anika_one = self.page_posts(anika, "three")[1]["id"]
+        for post_id in (chika_one, chika_two, anika_one):
+            self.page_presses_heart(ben, post_id, already_liked=False)
+        p = self.page_posts(ben, "P")[1]["id"]
+
+        # 2. Nobody liked P yet: no names, count 0, and an empty list.
+        self.assertEqual(read_only(self.page_asks_for_summaries, nobody, p),
+                         {str(p): {"like_count": 0, "you": False, "leaders": []}})
+        self.assertEqual(read_only(self.page_asks_who_liked, nobody, p),
+                         {"post_id": p, "like_count": 0, "likers": []})
+
+        # 3. Anika and Chika like P. The more popular one, Chika, comes first.
+        self.page_presses_heart(anika, p, already_liked=False)
+        self.page_presses_heart(chika, p, already_liked=False)
+        summary = read_only(self.page_asks_for_summaries, nobody, p)[str(p)]
+        self.assertEqual(names(summary["leaders"]), ["chika", "anika"])
+        self.assertEqual(self.rows(f"SELECT user_id FROM likes WHERE post_id = {p} "
+                                   "ORDER BY user_id"), [(1,), (3,)])
+
+        # 4. Ben likes P. In his window he is "You", with one leader; the count
+        #    is 3, the same as GET /likes. A window not logged in sees two names.
+        #    P is Ben's own post, and Anika and Chika liked it, so Ben's
+        #    popularity is 2 now, the same as Chika's: A to Z, Ben comes first.
+        self.page_presses_heart(ben, p, already_liked=False)
+        summary = read_only(self.page_asks_for_summaries, ben, p)[str(p)]
+        self.assertEqual((summary["you"], names(summary["leaders"]), summary["like_count"]),
+                         (True, ["chika"], 3))
+        self.assertEqual(self.page_asks_for_counts(ben)["counts"][str(p)], 3)
+        summary = read_only(self.page_asks_for_summaries, nobody, p)[str(p)]
+        self.assertEqual((summary["you"], names(summary["leaders"]), summary["like_count"]),
+                         (False, ["ben", "chika"], 3))
+
+        # 5. Ben takes back one like on Chika's post: Chika's popularity is now
+        #    1, the same as Anika's, so Ben's window (where Ben is "You") gets
+        #    the first of them A to Z: Anika. With no cookie: Ben, then Anika.
+        self.page_presses_heart(ben, chika_one, already_liked=True)
+        summary = read_only(self.page_asks_for_summaries, ben, p)[str(p)]
+        self.assertEqual((summary["you"], names(summary["leaders"])), (True, ["anika"]))
+        summary = read_only(self.page_asks_for_summaries, nobody, p)[str(p)]
+        self.assertEqual(names(summary["leaders"]), ["ben", "anika"])
+
+        # 6. The full list: everyone, A to Z, and the rows agree.
+        likers = read_only(self.page_asks_who_liked, nobody, p)
+        self.assertEqual((names(likers["likers"]), likers["like_count"]),
+                         (["anika", "ben", "chika"], 3))
+        self.assertEqual(self.rows(f"SELECT users.name FROM likes JOIN users "
+                                   f"ON users.id = likes.user_id WHERE post_id = {p} "
+                                   "ORDER BY users.name"), [("anika",), ("ben",), ("chika",)])
+        self.assertEqual([person["display_name"] for person in likers["likers"]],
+                         ["Anika", "Ben Ito", "Chika"])
+
 
 class PageAndServerAgreeTest(unittest.TestCase):
     """AGENTS.md: "the page and the server must agree".
@@ -1047,7 +1392,8 @@ class PageAndServerAgreeTest(unittest.TestCase):
 
     def test_the_page_asks_only_for_routes_the_server_answers(self):
         asked = set(re.findall(r'fetch\("(/[a-z]*)', self.page_code))
-        self.assertEqual(asked, {"/posts", "/likes", "/sessions", "/accounts"})
+        self.assertEqual(asked, {"/posts", "/likes", "/sessions", "/accounts",
+                                 "/likers", "/likesummary"})
 
     def test_the_page_names_only_the_methods_tried_below(self):
         # A GET needs no method, so the page names only the other two.
@@ -1195,6 +1541,34 @@ class PageAndServerAgreeTest(unittest.TestCase):
         self.assertNotIn("makeExpandable", self.function_body("showPost"))
         # The height is measured again whenever the text changes size on the page.
         self.assertIn("textSizeWatcher.observe(textElement);", self.function_body("makeExpandable"))
+
+    # -- who-liked --
+
+    def test_the_server_answers_the_who_liked_requests(self):
+        for path in ("/likers?post_id=1", "/likesummary?post_ids=1"):
+            with self.subTest(path=path):
+                self.assertNotIn(self.answer_code("GET", path), (404, 501))
+
+    def test_the_page_asks_for_at_most_as_many_posts_as_the_model_allows(self):
+        self.assertIn(f"const MAX_SUMMARY_POSTS = {server.MAX_SUMMARY_POSTS};", self.page_code)
+
+    def test_the_page_reads_the_names_the_who_liked_answers_have(self):
+        likers = server.likers_to_json(1, [{"name": "a", "display_name": "A"}], 1)
+        summaries = server.summaries_to_json(
+            {1: {"like_count": 1, "you": False,
+                 "leaders": [{"name": "a", "display_name": "A"}]}})
+        keys = set(likers) | set(likers["likers"][0]) | set(summaries) \
+            | set(summaries["summaries"]["1"])
+        for key in ("likers", "summaries", "leaders", "you", "account_name", "display_name",
+                    "like_count"):
+            with self.subTest(key=key):
+                self.assertIn("." + key, self.page_code)
+                self.assertIn(key, keys)
+
+    def test_the_page_never_uses_inner_html(self):
+        self.assertNotIn("innerHTML =", self.page_code)
+        self.assertNotIn("insertAdjacentHTML", self.page_code)
+
 
 
 class ColoursTest(unittest.TestCase):

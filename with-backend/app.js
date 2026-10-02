@@ -232,8 +232,15 @@ addPostPart(function heartPart(post, slots) {
   likeButton.setAttribute("aria-pressed", "false");
   likeButton.textContent = "\u2665";
 
-  const likeCount = document.createElement("span");
+  // The count is a button too: it opens the list of who liked the post (who-liked).
+  const likeCount = document.createElement("button");
+  likeCount.type = "button";
   likeCount.className = "like-count";
+  likeCount.dataset.action = "likers";
+  likeCount.dataset.postId = post.id;
+  likeCount.setAttribute("aria-expanded", "false");
+  likeCount.setAttribute("aria-controls", "likers-" + post.id);
+  likeCount.setAttribute("aria-label", whoLikedSay("likers_show"));
   likeCount.textContent = post.like_count;
 
   likeRow.append(likeButton, likeCount);
@@ -253,7 +260,225 @@ function showLike(postId, count, liked) {
   parts.likeButton.setAttribute("aria-pressed", liked ? "true" : "false");
   // What the button would do if it were pressed now, for a screen reader.
   parts.likeButton.setAttribute("aria-label", liked ? "Unlike this post" : "Like this post");
+  // who-liked: the line under the post is out of date when either one changed.
+  if (parts.summaryFor !== count + ":" + liked) {
+    parts.summaryFor = count + ":" + liked;
+    wantSummary(postId);
+  }
 }
+
+// ---- who-liked: who liked a post ----
+//
+// Under every post with likes, one line: "You, Anika, and 10 others liked this
+// post". The server decides who is named (the most popular people who liked
+// it, and "You" first if you did); the page only puts it into words. The line
+// is asked for only when a post's count, or whether you liked it, changes:
+// showLike notices, and wantSummary collects every changed post of one second
+// into one GET /likesummary. Clicking the line (or the number by the heart)
+// opens everyone who liked the post, A to Z, from GET /likers.
+
+// The same limit as MAX_SUMMARY_POSTS in server.py.
+const MAX_SUMMARY_POSTS = 100;
+
+// The words of this feature. One sentence is one template, never joined from
+// pieces, because another language may put the names in another order. Names
+// go in as {first} and {second}. (These move to words.js with the Japanese
+// words table.)
+const WHO_LIKED_WORDS = {
+  liked_you: "You",
+  liked_by_one: "{first} liked this post",
+  liked_by_two: "{first} and {second} liked this post",
+  liked_by_two_and_others_one: "{first}, {second}, and {count} other liked this post",
+  liked_by_two_and_others_other: "{first}, {second}, and {count} others liked this post",
+  liked_by_one_and_others_one: "{first} and {count} other liked this post",
+  liked_by_one_and_others_other: "{first} and {count} others liked this post",
+  liked_by_others_one: "{count} person liked this post",
+  liked_by_others_other: "{count} people liked this post",
+  likers_none: "No likes yet.",
+  likers_more_one: "and {count} more",
+  likers_more_other: "and {count} more",
+  likers_show: "Show who liked this post",
+};
+
+// The words for this key, with each {name} replaced by values[name]. It only
+// replaces, in one pass: a display name like "{count}" stays as it is typed.
+function whoLikedSay(key, values) {
+  return WHO_LIKED_WORDS[key].replace(/\{(\w+)\}/g, function (all, name) {
+    return String(values[name]);
+  });
+}
+
+// For words with a number: key_one for 1, key_other for every other number.
+function whoLikedSayCount(key, count, values) {
+  const form = new Intl.PluralRules("en").select(count) === "one" ? "_one" : "_other";
+  return whoLikedSay(key + form, Object.assign({ count: count }, values));
+}
+
+// The line and the list, under the heart. Both start hidden.
+addPostPart(function whoLikedPart(post, slots) {
+  const summary = document.createElement("button");
+  summary.type = "button";
+  summary.className = "like-summary";
+  summary.dataset.action = "likers";
+  summary.dataset.postId = post.id;
+  summary.setAttribute("aria-expanded", "false");
+  summary.setAttribute("aria-controls", "likers-" + post.id);
+  summary.hidden = true;
+
+  const list = document.createElement("ul");
+  list.className = "likers";
+  list.id = "likers-" + post.id;
+  list.hidden = true;
+
+  slots.foot.append(summary, list);
+  // summaryFor: the count and "liked" the line was last asked for; "" at first.
+  return { summary: summary, likersList: list, summaryFor: "" };
+});
+
+// The posts whose line must be asked for again, and whether asking is under way.
+const summariesWanted = new Set();
+let summariesAsking = false;
+
+// Ask for this post's line soon. Every showLike in one pass runs before the
+// asking starts, so all the posts that changed in one second go in one request.
+function wantSummary(postId) {
+  summariesWanted.add(Number(postId));
+  if (!summariesAsking) {
+    summariesAsking = true;
+    setTimeout(askForSummaries, 0);
+  }
+}
+
+// Ask for every wanted line, at most MAX_SUMMARY_POSTS posts per request, one
+// request after the other, so an older answer never arrives after a newer one.
+async function askForSummaries() {
+  while (summariesWanted.size > 0) {
+    const ids = Array.from(summariesWanted).slice(0, MAX_SUMMARY_POSTS);
+    for (const id of ids) {
+      summariesWanted.delete(id);
+    }
+    try {
+      const response = await fetch("/likesummary?post_ids=" + ids.join(","));
+      const answer = await response.json();
+      if (!response.ok) {
+        throw new Error(answer.error);
+      }
+      for (const id of ids) {
+        const parts = postParts[id];
+        if (parts === undefined || answer.summaries[id] === undefined) {
+          continue;
+        }
+        showSummary(parts, answer.summaries[id]);
+        // An open list is out of date too: ask for it again.
+        if (!parts.likersList.hidden) {
+          showLikers(parts.likersList, id);
+        }
+      }
+    } catch (error) {
+      // Not answered: forget what was asked, so the next second asks again.
+      for (const id of ids) {
+        if (postParts[id] !== undefined) {
+          postParts[id].summaryFor = "";
+        }
+      }
+    }
+  }
+  summariesAsking = false;
+}
+
+// Write the line: "You, Anika, and 10 others liked this post". The server has
+// already chosen the names; here they are only put into one sentence.
+function showSummary(parts, summary) {
+  const names = [];
+  if (summary.you) {
+    names.push(whoLikedSay("liked_you"));
+  }
+  for (const leader of summary.leaders) {
+    names.push(leader.display_name);
+  }
+  const others = Math.max(0, summary.like_count - names.length);
+  if (summary.like_count === 0) {
+    parts.summary.hidden = true;
+    parts.summary.textContent = "";
+    return;
+  }
+  const values = { first: names[0], second: names[1] };
+  let words;
+  if (names.length === 0) {
+    words = whoLikedSayCount("liked_by_others", others, values);
+  } else if (names.length === 1) {
+    words = others === 0 ? whoLikedSay("liked_by_one", values)
+      : whoLikedSayCount("liked_by_one_and_others", others, values);
+  } else {
+    words = others === 0 ? whoLikedSay("liked_by_two", values)
+      : whoLikedSayCount("liked_by_two_and_others", others, values);
+  }
+  // textContent, never innerHTML: a display name is text a stranger typed.
+  parts.summary.textContent = words;
+  parts.summary.hidden = false;
+}
+
+// Open or close the list of who liked a post. The list is found from the
+// button itself, so this works in any list of posts, not only the timeline.
+function toggleLikers(postId, button) {
+  const post = button.closest(".post");
+  const list = post.querySelector(".likers");
+  const open = list.hidden;
+  list.hidden = !open;
+  for (const opener of post.querySelectorAll('[data-action="likers"]')) {
+    opener.setAttribute("aria-expanded", open ? "true" : "false");
+  }
+  if (open) {
+    showLikers(list, postId);
+  }
+}
+
+// Ask the server who liked this post, and show them.
+async function showLikers(list, postId) {
+  try {
+    const response = await fetch("/likers?post_id=" + postId);
+    const answer = await response.json();
+    if (!response.ok) {
+      // The server refused, and says why (for example, the post is gone).
+      showStatus(answer.error);
+      return;
+    }
+    buildLikers(list, answer);
+  } catch (error) {
+    showStatus(CANNOT_REACH);
+  }
+}
+
+// One line for each person: display name, then @account name, A to Z. If
+// there are more than the server sends, a last line says how many more.
+function buildLikers(list, answer) {
+  list.replaceChildren();
+  if (answer.likers.length === 0) {
+    const row = document.createElement("li");
+    row.textContent = whoLikedSay("likers_none");
+    list.append(row);
+    return;
+  }
+  for (const liker of answer.likers) {
+    const author = document.createElement("span");
+    author.className = "post-author";
+    author.textContent = liker.display_name;
+    const handle = document.createElement("span");
+    handle.className = "post-handle";
+    handle.textContent = "@" + liker.account_name;
+    const row = document.createElement("li");
+    row.append(author, handle);
+    list.append(row);
+  }
+  if (answer.like_count > answer.likers.length) {
+    const row = document.createElement("li");
+    row.className = "likers-more";
+    row.textContent = whoLikedSayCount("likers_more", answer.like_count - answer.likers.length);
+    list.append(row);
+  }
+}
+
+ACTIONS.likers = toggleLikers;
 
 function showStatus(words) {
   statusLine.textContent = words;
