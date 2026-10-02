@@ -1,12 +1,14 @@
 # Timeline
 
 A small app where people post short messages. Everyone's posts appear on one timeline, newest
-first. It comes in two versions with the same screen:
+first, and each post has a heart: press it to like, press it again to take the like back. It comes
+in two versions with the same screen:
 
 - **`page-only/`**: everything runs in the browser. There is no server. Each window keeps its own
   posts, so nothing is shared.
-- **`with-backend/`**: the page sends each post to a small Python server, which saves it in a
-  database. Every window asks the server for new posts once a second, so every window sees every post.
+- **`with-backend/`**: the page sends each post and each like to a small Python server, which saves
+  them in a database. Every window asks the server for new posts and new like counts once a second,
+  so every window sees every post, and every heart.
 
 The difference between the two is the reason a backend exists.
 
@@ -47,7 +49,9 @@ In the Claude Code desktop app, `.claude/launch.json` starts the same server and
 
 Open the app in two windows side by side, one of them a **private window** (Chrome: Incognito,
 Safari: Private Window), and post from each. With the backend, a post from one window appears in the
-other within a second. Page-only, it never does: each window keeps only its own posts. Open a new
+other within a second, and a heart pressed in one window changes the count in the other within a
+second. Press the same heart again and the count goes back down, in both windows. Page-only, none of
+it happens: each window keeps only its own posts, and has no hearts at all. Open a new
 window rather than duplicating a tab, because a duplicated tab copies the first tab's
 `sessionStorage`.
 
@@ -56,16 +60,19 @@ Stop the server with **Ctrl+C**, and both windows say *Cannot reach the server*.
 
 ## Open the store
 
-The backend keeps everything in one file, `with-backend/timeline.db`, in two tables: `users`,
-with each person once, and `posts`, where each post points at its author by number. To see what is
-inside:
+The backend keeps everything in one file, `with-backend/timeline.db`, in three tables: `users`,
+with each person once, `posts`, where each post points at its author by number, and `likes`, with
+one line for each person who liked each post. To see what is inside:
 
 ```
-sqlite3 with-backend/timeline.db 'select * from users; select * from posts'
+sqlite3 with-backend/timeline.db 'select * from users; select * from posts; select * from likes'
 ```
 
 A user line is `id|name`. A post line is `id|author_id|text|posted_at`: the `author_id` is the
-`id` of a user.
+`id` of a user. A like line is just `post_id|user_id`. Notice what is **not** there: nowhere does
+the database keep "post 3 has 5 likes". The number on screen is counted from these lines every time
+it is asked for, so the count and the likes can never disagree. Taking a like back deletes its line,
+and the count reads one lower because there is one line fewer to count.
 
 To start again with an empty timeline, stop the server and run `make reset`.
 
@@ -76,8 +83,10 @@ make test
 ```
 
 This runs the checks in `with-backend/test_server.py`. They test the rules (an empty post and a
-post over 280 characters are refused), saving a post, asking only for newer posts, and one full
-trip through the real server.
+post over 280 characters are refused), saving a post, asking only for newer posts, likes (counting
+them, refusing a second one from the same name, and taking one back), full trips through the real
+server, and one whole journey through all three levels at once: two people liking and unliking the
+same post, with the database file opened and read after every step.
 
 ## Things to try
 
@@ -86,14 +95,20 @@ trip through the real server.
    **view**, and where the data lives.
 2. **Add one feature, with a test.** Pick one from this list:
    - follow someone, and show a "following" timeline
-   - like a post, with a count
    - reply to a post
    - delete your own post
    - edit your own post
+   - show *who* liked a post, not only how many
 3. **Say what changed and why.** Which parts did your feature change: the page, the controller, the
    model, the view, the database? Why those parts, and not the others?
 
 Each feature changes a different set of parts.
+
+The heart under each post was built this way, and it is worth reading as an example: it added a
+third table, `likes`, one new rule in the model, three new requests, and a heart in the page. See
+section 5 of `DESIGN.md` for the two parts that matter most — the three places that stop you liking
+the same post twice, and why only the last of them is a guarantee; and why taking a like back
+deletes a row instead of marking one.
 
 Keep the three parts of `server.py` separate. A new rule goes in the model. `make test` must pass
 when you finish.

@@ -150,3 +150,33 @@ button {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+
+/* The heart under a post, and how many people have pressed it. Only
+   with-backend/ has likes, but both copies of this file stay the same. */
+.like-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 10px;
+}
+
+.like {
+  padding: 2px 18px;
+  border: 2px solid var(--border);
+  background: none;
+  color: var(--quiet);
+}
+
+.like:hover {
+  border-color: var(--author);
+  color: var(--author);
+}
+
+.like.liked {
+  border-color: var(--warning);
+  color: var(--warning);
+}
+
+.like-count {
+  color: var(--quiet);
+}
