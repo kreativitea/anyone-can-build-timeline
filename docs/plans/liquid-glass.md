@@ -1,4 +1,4 @@
-Status: draft
+Status: approved
 
 # Liquid glass
 
@@ -537,3 +537,9 @@ written as our own small runtime map, only in Chromium, only on the bar and "3 n
 no picture files, no library and no build; it degrades to good frosted glass in Safari and Firefox
 and to a crisp solid look with the accessibility settings; and it keeps the number of blurred
 areas small.
+
+## Changes made at approval (owner)
+
+- **All decisions (D1–D8) approved as recommended.** Cards are not glass: glass is only for the
+  floating control layer.
+- **Order:** Part A first (merged on its own), then Part B on top of it.
