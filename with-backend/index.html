@@ -95,6 +95,14 @@
         <button type="button" id="logout" class="link-button" data-words="log_out">Log out</button>
       </p>
 
+      <!-- block: the accounts you blocked, each with an Unblock button. A
+           <details> opens and closes by itself, with no JavaScript. app.js
+           hides it while the list is empty. -->
+      <details id="blocked-section" class="blocked-section" hidden>
+        <summary data-words="blocked_accounts">Blocked accounts</summary>
+        <ul id="blocked-list" class="blocked-list"></ul>
+      </details>
+
       <form id="post-form">
         <label for="text" data-words="post_prompt">What is happening?</label>
         <textarea id="text" rows="3" placeholder="What is happening?"

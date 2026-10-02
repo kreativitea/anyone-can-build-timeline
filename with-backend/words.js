@@ -420,4 +420,45 @@ const WORDS = {
   picture_hint: {
     en: "A JPEG photo is drawn again before it is sent, so the place where it was taken is not shared.",
   },
+  // block: refusals
+  account_missing: {
+    en: "There is no account @{name}.",
+  },
+  block_self: {
+    en: "You cannot block yourself.",
+  },
+  block_already: {
+    en: "You have already blocked @{name}.",
+  },
+  block_not_there: {
+    en: "You have not blocked @{name}.",
+  },
+  like_blocked: {
+    en: "You cannot like this post.",
+  },
+  // block: the words of the page
+  block_menu: {
+    en: "Block @{name}",
+  },
+  block_confirm: {
+    en: "Block @{name}? You will no longer see their posts.",
+  },
+  block_done: {
+    en: "You blocked @{name}. Their posts are hidden.",
+  },
+  block_log_in: {
+    en: "Please log in to block an account.",
+  },
+  blocked_accounts: {
+    en: "Blocked accounts",
+  },
+  unblock_button: {
+    en: "Unblock",
+  },
+  unblock_label: {
+    en: "Unblock @{name}",
+  },
+  unblock_done: {
+    en: "You unblocked @{name}.",
+  },
 };

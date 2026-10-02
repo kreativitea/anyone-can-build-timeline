@@ -32,7 +32,7 @@ piece of text the browser keeps and sends back by itself), never from a name in 
 | `with-backend/server.py` | The backend, in three labelled parts: **controller**, **model**, **view**. |
 | `with-backend/words.js` | Every word the page shows, by key (`WORDS`). English only for now; Japanese comes later. |
 | `with-backend/test_server.py` | The checks for `server.py`, and for the page and the server agreeing. |
-| `with-backend/timeline.db` | The database, in seven tables. The server creates it when it starts, and brings an older one up to date. It is not in git. |
+| `with-backend/timeline.db` | The database, in eight tables. The server creates it when it starts, and brings an older one up to date. It is not in git. |
 | `Makefile` | Short commands: `make run`, `make test`, `make reset`, `make worktree BRANCH=name`. |
 
 The Colours choice (Auto, Light or Dark) is the only thing the page keeps in `localStorage`
@@ -50,9 +50,10 @@ The three parts of `server.py`:
   `add_like`, `remove_like`,
   `like_count_for`, `likes_for`, `who_liked`, `check_post_ids`, `like_summaries`, `utc_now`,
   `utc_text`, `use_allowance`, `forget_attempts`, `clock`, `check_query`, `escape_like`, `tags_in`,
-  `has_tag`, `search_posts`, `picture_kind`, `check_picture`, `check_alt_text`, `picture_for`, and
-  `create_tables` with its upgrades):
-  the rules, and the database, in seven tables:
+  `has_tag`, `search_posts`, `picture_kind`, `check_picture`, `check_alt_text`, `picture_for`,
+  `not_blocked_sql`, `find_account`, `add_block`, `remove_block`, `blocks_for`,
+  `check_not_blocked_by_author`, and `create_tables` with its upgrades):
+  the rules, and the database, in eight tables:
   - `users`: each person once. `name` is the account name (unique, capitals ignored),
     `display_name` is the name shown, and `password_salt`, `password_hash`, `password_rounds` hold
     a hash of the password. The password itself is never kept.
@@ -71,6 +72,9 @@ The three parts of `server.py`:
     user. `GET /bookmarks` is 401 when signed out. The view is `bookmark_to_json`.
   - `pictures`: at most one picture for each post (`post_id` is the primary key, `ON DELETE
     CASCADE`): its `kind` (`png`, `jpeg`, `gif` or `webp`), its `alt_text` and its `bytes`.
+  - `blocks`: one row for each person who blocked another (`blocker_id`, `blocked_id`).
+    `PRIMARY KEY (blocker_id, blocked_id)` stops the same block twice, and
+    `CHECK (blocker_id <> blocked_id)` stops anyone blocking themselves. Unblocking deletes the row.
 
   A name is kept once, in `users`; never copy it into another table. Only sign-up
   (`create_account`) adds a user: posting, liking and reading never do. A like count is never kept
@@ -85,7 +89,7 @@ The three parts of `server.py`:
   A person's popularity (likes on their own posts from other people) is counted from `likes`
   every time, never stored.
 - **View** (`post_to_json`, `picture_to_json`, `posts_to_json`, `account_to_json`, `like_to_json`, `likes_to_json`,
-  `likers_to_json`, `summaries_to_json`, `search_to_json`, `problem_to_json`, `session_cookie`, `post_to_log_line`): turns database rows into the JSON the page reads, the
+  `likers_to_json`, `summaries_to_json`, `search_to_json`, `blocks_to_json`, `problem_to_json`, `session_cookie`, `post_to_log_line`): turns database rows into the JSON the page reads, the
   cookie, and the one line printed for each new post.
 
 The database knows its own version (`PRAGMA user_version`). An older `timeline.db` from before
@@ -185,6 +189,27 @@ Anyone may search. Searches are never printed in the terminal.
   is lower down), and every post is put on the page by `putPost(post, "top" | "bottom")`, which
   skips a post already in `postParts`. `lastId` is the newest post received, shown or waiting.
 
+## Blocking
+
+A signed-in person can block another account (`POST /blocks`, `DELETE /blocks`, `GET /blocks`, all
+with `{"account_name"}` and a login). The block's condition, `not_blocked_sql(viewer_id)`, is one
+line in the list of conditions inside `visible_to`, so **every list of posts leaves out the people
+the viewer blocked**: the timeline (`after` and `before`), search, bookmarks and pictures. A new
+list of posts gets this for free by using `select_posts`. A block is never checked only in the
+page: the server leaves the posts out.
+
+- A blocked person can still read the blocker's posts (reading is open to everyone), but cannot
+  like them: `add_like` calls `check_not_blocked_by_author(connection, post_id, user_id)`. A new
+  way to answer a post (replies) adds one line to `BLOCKED_CODES` (`"reply": "reply_blocked"`)
+  and calls it with `what="reply"`.
+- Like counts still include blocked people. `who_liked` and `like_summaries` leave the blocked
+  people's *names* out for the person who blocked them; the count stays the same.
+- `find_account` only reads: blocking a name that does not exist never adds a user.
+- The page: "Block @name" is a "⋯" menu item (`blockPart`, `ACTIONS.block`), only on other
+  people's posts when signed in. `hidePostsBy` takes their posts off the page at once.
+  `reloadTimeline` draws the timeline again from the newest page (after an unblock, a login or a
+  log-out), and starts every timeline-flow mark again.
+
 ## Rate limits
 
 A **rate limit** is a rule of the form "at most N times in S seconds". They are written once, in
@@ -273,7 +298,7 @@ its text.
 - With a backend: `make run`, then open <http://localhost:8009>. Press Ctrl+C to stop.
 - Start again with an empty timeline: `make reset`.
 - See what is saved:
-  `sqlite3 with-backend/timeline.db 'select * from users; select * from posts; select * from likes; select * from sessions; select * from attempts; select * from bookmarks; select post_id, kind, length(bytes), alt_text from pictures'`
+  `sqlite3 with-backend/timeline.db 'select * from users; select * from posts; select * from likes; select * from sessions; select * from attempts; select * from bookmarks; select * from blocks; select post_id, kind, length(bytes), alt_text from pictures'`
 
 It needs only `python3` (3.9 or newer). Do not add libraries, packages or a build step.
 Write code that runs on Python 3.9: no `match` statements, and no `X | Y` in type hints.

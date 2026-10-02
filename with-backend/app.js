@@ -730,6 +730,7 @@ function showSignedIn(who) {
   signedInSection.hidden = false;
   showDraft(who);
   loadBookmarks();
+  loadBlocked();
 }
 
 // Not logged in: show the Log in and Sign up forms, and why, if there is a
@@ -743,6 +744,7 @@ function showSignedOut(reason) {
   hideDraft();
   clearBookmarks();
   clearPictureBoxes();
+  showBlocked([]);
   showStatus(reason);
 }
 
@@ -1420,11 +1422,13 @@ async function keepChecking() {
 }
 
 // After a login, a sign-up or a log-out, the hearts this window shows as
-// pressed belong to someone else. Ask the server again straight away.
+// pressed belong to someone else, and so do the posts (block: each person
+// sees no posts by the people they blocked) and the Block items in the
+// menus. Draw the whole timeline again.
 async function afterAccountChange() {
   loginPasswordBox.value = "";
   signupPasswordBox.value = "";
-  await checkForNewPosts();
+  await reloadTimeline();
 }
 
 // Log in with an account name and password.
@@ -2137,9 +2141,244 @@ function setUpBookmarks() {
   showViewsNavIfNeeded();
 }
 
+// ---- block: block an account, and see who you blocked ----
+//
+// "Block @ben" is in the "⋯" menu of every post by someone else, when you are
+// logged in. The server then leaves Ben's posts out of everything it sends
+// you (the timeline, older posts, search, bookmarks), so the page only takes
+// away the posts it already shows. Unblocking is in the "Blocked accounts"
+// list under "Signed in as", because the blocked person's posts are no
+// longer there to press anything on.
+//
+// Another window of yours keeps Ben's older posts until it is reloaded. His
+// new posts never arrive there: the server already leaves them out.
+//
+// The words of this feature are in words.js (block_..., unblock_..., blocked_...).
+
+const blockedSection = document.getElementById("blocked-section");
+const blockedList = document.getElementById("blocked-list");
+
+// The accounts this person has blocked, as the server last said.
+let blockedNow = [];
+
+// One block or unblock at a time, so a fast second press does not send it twice.
+let blockBusy = false;
+
+// Two account names are the same account if they differ only in capitals,
+// as in the server (name = ? COLLATE NOCASE).
+function sameAccount(one, other) {
+  return one.toLowerCase() === other.toLowerCase();
+}
+
+// Every post remembers its author, so hidePostsBy can find it. Then, only for
+// someone logged in, and only on another person's post (the page's copy of
+// the rule block_self), a "Block @name" item in the "⋯" menu.
+addPostPart(function blockPart(post, slots, item) {
+  item.dataset.author = post.author;
+  if (account === null || sameAccount(post.author, account.account_name)) {
+    return;
+  }
+  const button = addMenuItem(slots, "block", "block_menu");
+  button.dataset.author = post.author;
+  drawBlockMenuItem(button);
+});
+
+// "Block @ben": words with a value, so not data-words. Written again by
+// redrawBlockWords when the language changes.
+function drawBlockMenuItem(button) {
+  delete button.dataset.words;
+  button.textContent = say("block_menu", { name: button.dataset.author });
+}
+
+// "Block @ben" was pressed. Ask first, because the posts disappear at once.
+async function pressBlock(postId, button) {
+  const name = button.dataset.author;
+  if (account === null) {
+    showStatus("block_log_in");
+    return;
+  }
+  if (blockBusy || !confirm(say("block_confirm", { name: name }))) {
+    return;
+  }
+  blockBusy = true;
+  try {
+    const response = await fetch("/blocks", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ account_name: name }),
+    });
+    const answer = await response.json();
+    if (response.status === 401) {
+      // The login has ended. Show the Log in form, and the server's reason.
+      showSignedOut("");
+      showProblem(answer);
+      await reloadTimeline();
+      return;
+    }
+    if (!response.ok) {
+      // The server refused it, and says which rule was broken.
+      showProblem(answer);
+      return;
+    }
+    hidePostsBy(answer.account_name);
+    showStatus("block_done", { name: answer.account_name });
+    await loadBlocked();
+  } catch (error) {
+    showStatus("cannot_reach");
+  } finally {
+    blockBusy = false;
+  }
+}
+
+ACTIONS.block = pressBlock;
+
+// Take every post by this account off the page: the live timeline (with
+// removePost), the posts waiting behind "new posts", and any other list of
+// posts (search results, My bookmarks). The line under each post that is left
+// is asked for again, so the blocked person's name leaves it too (who-liked).
+function hidePostsBy(name) {
+  for (const postId of Object.keys(postParts)) {
+    if (sameAccount(postParts[postId].item.dataset.author, name)) {
+      removePost(postId);
+    }
+  }
+  for (let i = waitingPosts.length - 1; i >= 0; i--) {
+    if (sameAccount(waitingPosts[i].author, name)) {
+      waitingPosts.splice(i, 1);
+    }
+  }
+  updateNewPostsButton();
+  for (const item of document.querySelectorAll("li.post")) {
+    if (item.dataset.author !== undefined && sameAccount(item.dataset.author, name)) {
+      item.remove();
+    }
+  }
+  for (const postId of Object.keys(postParts)) {
+    postParts[postId].summaryFor = "";
+  }
+}
+
+// Ask the server who this person has blocked, and show the list.
+async function loadBlocked() {
+  try {
+    const response = await fetch("/blocks");
+    const answer = await response.json();
+    if (response.ok) {
+      showBlocked(answer.blocked);
+    }
+    // 401: nobody is logged in, so there is no list to show.
+  } catch (error) {
+    showStatus("cannot_reach");
+  }
+}
+
+// One line for each blocked account: display name, @name, and an Unblock
+// button. The whole list is hidden while it is empty.
+function showBlocked(blocked) {
+  blockedNow = blocked;
+  blockedList.replaceChildren();
+  for (const person of blocked) {
+    const author = document.createElement("span");
+    author.className = "post-author";
+    author.textContent = person.display_name;
+    const handle = document.createElement("span");
+    handle.className = "post-handle";
+    handle.textContent = "@" + person.account_name;
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "link-button unblock";
+    button.dataset.unblock = person.account_name;
+    button.dataset.words = "unblock_button";
+    button.textContent = say("unblock_button");
+    button.setAttribute("aria-label", say("unblock_label", { name: person.account_name }));
+    const row = document.createElement("li");
+    row.append(author, handle, button);
+    blockedList.append(row);
+  }
+  blockedSection.hidden = blocked.length === 0;
+}
+
+// The words with values of their own, again in the language now shown.
+whenLanguageChanges(function redrawBlockWords() {
+  for (const button of document.querySelectorAll('[data-action="block"]')) {
+    drawBlockMenuItem(button);
+  }
+  showBlocked(blockedNow);
+});
+
+// Unblock was pressed. The posts that come back are older than the newest one
+// shown, and "after" would never bring them, so the timeline is drawn again.
+async function unblock(name) {
+  if (blockBusy) {
+    return;
+  }
+  blockBusy = true;
+  try {
+    const response = await fetch("/blocks", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ account_name: name }),
+    });
+    const answer = await response.json();
+    if (response.status === 401) {
+      showSignedOut("");
+      showProblem(answer);
+      await reloadTimeline();
+      return;
+    }
+    if (!response.ok) {
+      showProblem(answer);
+      await loadBlocked();
+      return;
+    }
+    showStatus("unblock_done", { name: answer.account_name });
+    await loadBlocked();
+    await reloadTimeline();
+  } catch (error) {
+    showStatus("cannot_reach");
+  } finally {
+    blockBusy = false;
+  }
+}
+
+function clickOnBlockedList(event) {
+  const button = event.target.closest("[data-unblock]");
+  if (button !== null) {
+    unblock(button.dataset.unblock);
+  }
+}
+
+// Draw the whole timeline again, from the newest page, as when the page
+// opens. Used when the posts this window may see have changed: after a login
+// or a log-out, and after an unblock. Every mark timeline-flow keeps starts
+// again, and "Show older posts" comes back.
+async function reloadTimeline() {
+  for (const postId of Object.keys(postParts)) {
+    removePost(postId);
+  }
+  timeline.replaceChildren();
+  waitingPosts.length = 0;
+  updateNewPostsButton();
+  lastId = 0;
+  oldestId = 0;
+  firstPageLoaded = false;
+  noOlderPosts = false;
+  delete olderPosts.dataset.words;
+  olderPosts.replaceChildren(loadOlderButton);
+  loadOlderButton.dataset.words = "show_older";
+  loadOlderButton.textContent = say("show_older");
+  if (olderObserver !== null) {
+    olderObserver.disconnect();
+    olderObserver.observe(olderPosts);
+  }
+  // The newest page first, then the hearts and their counts.
+  await checkForNewPosts();
+}
+
 textBox.addEventListener("input", updateCount);
 textBox.addEventListener("input", saveDraft);
 timeline.addEventListener("click", clickOnTimeline);
+blockedList.addEventListener("click", clickOnBlockedList);
 postForm.addEventListener("submit", sendPost);
 loginForm.addEventListener("submit", logIn);
 signupForm.addEventListener("submit", signUp);
@@ -2169,9 +2408,12 @@ window.addEventListener("popstate", searchFromAddress);
 searchFromAddress();
 updateCount();
 showWords();
-askWhoIAm();
 newPostsButton.addEventListener("click", pressNewPosts);
 loadOlderButton.addEventListener("click", loadOlderPosts);
-watchTheBottom();
-keepChecking();
+// Who is logged in first, then the posts: so the first posts are drawn with
+// the right Block items in their menus (block).
+askWhoIAm().then(function () {
+  watchTheBottom();
+  keepChecking();
+});
 setInterval(refreshTimes, 30000);   // every 30 seconds: the smallest step shown is a minute

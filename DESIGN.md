@@ -328,6 +328,8 @@ and that the page has the model's limits and patterns.
 | Keep tags in a `tags` table. | design | reject | A tag is already in the text: one fact, one place. | `tags_in` finds them in the text; `has_tag` checks them inside the SQL. |
 | A search for `100%` would find every post, because `%` means "anything" in `LIKE`. | design | accept | The person meant the sign. | `escape_like`, and `ESCAPE '\'` in the SQL. |
 | Print each search in the terminal, like each post. | security | reject | A search can say what a person is worried about, and the terminal is shown on a screen in class. | `GET /search` is not printed. |
+| Blocking could just hide the posts in the page. | security | reject | The posts would still be sent to the browser, and anyone can read what their browser receives. | The server leaves them out, inside `visible_to`. |
+| Blocking should also hide your posts from the blocked person. | product | reject | Reading is open to everyone: the blocked person can log out, or open a private window, and read them at once. It would only look like protection. | They cannot like (or reply to) your posts; that the server can really stop. |
 | Filter tags in Python after the SQL. | design | reject | Then 50 `#catalog` posts would use up the limit and hide a real `#cat`. | The tag rule is a SQL function, so the `LIMIT` counts only real matches. |
 
 ## Groundwork
@@ -553,6 +555,43 @@ A signed-in person presses ☆ on a post to save it (★), and presses again to 
   so the hidden EXIF notes, and any GPS place in them, are left behind. The browser turns the photo
   the right way up as it draws. A big photo is made smaller until it fits 2 MB. A GIF is never drawn
   again, so it still moves. The server checks every picture anyway.
+
+## Blocking
+
+A signed-in person can block another account from the "⋯" menu on that person's posts. The
+browser asks *"Block @ben? You will no longer see their posts."* first, because the posts
+disappear at once. The "Blocked accounts" list under "Signed in as" has an **Unblock** button for
+each.
+
+- **One table, `blocks (blocker_id, blocked_id)`** (database version 8). One row means "this
+  person blocked that person". `PRIMARY KEY (blocker_id, blocked_id)` stops the same block twice,
+  even if two presses arrive together. `CHECK (blocker_id <> blocked_id)` means nobody can block
+  themselves, even if the model is got around. A block points at a user by id, so a block on an
+  old, unclaimed name still holds after someone claims it. Unblocking deletes the row.
+- **The server leaves the posts out; the page does not hide them.** The block's condition is one
+  line inside `visible_to`, so every list of posts obeys it: the timeline, older posts, search,
+  bookmarks and pictures. A post the page never receives cannot be seen by looking at the page's
+  code. A bookmark on a blocked person's post is kept, but the post is left out of My bookmarks
+  until you unblock.
+- **Decision 1: a blocked person still reads your posts**, but cannot like them ("You cannot like
+  this post."), and later cannot reply to them. Reading is open to everyone, so hiding your posts
+  from them would only be pretend.
+- **Decision 2: like counts include blocked people.** A count is the same number for everyone.
+  But the *names* under a post (who liked it) leave out the people you blocked. So the count and
+  the list may differ: "Carol and 1 other liked this post", where the other is someone you
+  blocked, and the full list says "and 1 more". The number stays true; only the name is not shown
+  to you.
+- **Decision 3: likes given before the block stay**, and are counted. Unblock puts everything back
+  exactly as it was. A blocked person may still take back a like they gave before.
+- **Decision 4: the blocked person is told only when they try to like your post.** The page
+  cannot check this rule before sending, because it does not know (and should not know) who blocked
+  you, so it shows the server's words (`like_blocked`).
+- **Decision 5: your other open windows** keep the blocked person's *older* posts until they are
+  reloaded. Their *new* posts never arrive there: the server already leaves them out. Asking
+  `GET /blocks` every second in every window would cost a third request a second for a rare case.
+- **Unblocking draws the timeline again**, from the newest page. The posts that come back are
+  mixed in among the ones shown, and neither `after` nor `before` would bring them. Logging in or
+  out also draws it again, because someone else (or nobody) is now looking.
 
 ## 8. Build or borrow
 

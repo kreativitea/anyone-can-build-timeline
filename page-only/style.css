@@ -561,3 +561,34 @@ time.post-time {
   color: var(--quiet);
   font-size: 18px;
 }
+
+/* block */
+/* "Blocked accounts" under "Signed in as": a box that opens and closes. */
+.blocked-section {
+  margin: 0 0 16px;
+}
+
+.blocked-section summary {
+  width: fit-content;
+  color: var(--quiet);
+  cursor: pointer;
+}
+
+.blocked-list {
+  margin: 6px 0 0;
+  padding: 0 0 0 18px;
+  list-style: none;
+  overflow-wrap: anywhere;
+}
+
+.blocked-list li {
+  margin-top: 6px;
+}
+
+.blocked-list .post-handle {
+  margin-left: 8px;
+}
+
+.blocked-list .unblock {
+  margin-left: 12px;
+}

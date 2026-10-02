@@ -146,6 +146,11 @@ signing up, posting, liking and unliking, with the database file opened and read
    **"1 new post"** button waits at the top. Scroll to the bottom to load older posts.
 8. **Try a bookmark.** Press ☆ on a post, then open **My bookmarks**. Log in as someone else in
    another browser: they cannot see it, and no post shows a bookmark count.
+9. **Try blocking.** Sign up as two people in two different browsers (or one normal and one
+   private window), and post from both. In the first, open the "⋯" menu on the other person's post
+   and choose **Block**: their posts disappear, from search too. In the second window, press the
+   heart on the first person's post: the server says *"You cannot like this post."* Back in the
+   first window, open **Blocked accounts** and press **Unblock**: their posts come back.
 
 Each feature changes a different set of parts.
 

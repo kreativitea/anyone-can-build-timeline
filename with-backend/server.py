@@ -2,8 +2,8 @@
 
 This file has three parts:
   CONTROLLER  reads each request and decides what to do
-  MODEL       the rules, and the database (seven tables: users, posts, likes, sessions,
-              attempts, bookmarks and pictures)
+  MODEL       the rules, and the database (eight tables: users, posts, likes, sessions,
+              attempts, bookmarks, pictures and blocks)
   VIEW        turns database rows into the JSON answer
 The server never translates: a refusal names its rule by a code (see PROBLEMS),
 and the page shows the words for that code in the reader's language (words.js).
@@ -96,6 +96,8 @@ class TimelineHandler(BaseHTTPRequestHandler):
             self.show_like_summaries(parse_qs(url.query).get("post_ids", [""])[0])
         elif url.path == "/bookmarks":
             self.show_bookmarks()
+        elif url.path == "/blocks":
+            self.show_blocks()
         elif url.path.startswith("/pictures/"):
             self.send_picture(url.path)
         elif url.path == "/sessions":
@@ -125,7 +127,7 @@ class TimelineHandler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         path = urlparse(self.path).path
-        if path not in ("/posts", "/likes", "/accounts", "/sessions", "/bookmarks"):
+        if path not in ("/posts", "/likes", "/accounts", "/sessions", "/bookmarks", "/blocks"):
             self.send_nothing_here("POST", path)
             return
         data = self.read_json()
@@ -142,6 +144,8 @@ class TimelineHandler(BaseHTTPRequestHandler):
                 self.take_like(data)
             elif path == "/bookmarks":
                 self.take_bookmark(data)
+            elif path == "/blocks":
+                self.take_block(data)
             else:
                 self.take_post(data)
         except TooFast as problem:
@@ -157,6 +161,9 @@ class TimelineHandler(BaseHTTPRequestHandler):
             return
         if path == "/bookmarks":
             self.drop_bookmark()
+            return
+        if path == "/blocks":
+            self.end_block()
             return
         if path != "/likes":
             self.send_nothing_here("DELETE", path)
@@ -284,9 +291,15 @@ class TimelineHandler(BaseHTTPRequestHandler):
     # who-liked: anyone may read who liked a post, signed in or not.
 
     def show_likers(self, post_id):
-        """GET /likers?post_id=7: everyone who liked one post, A to Z. No cookie is read."""
+        """GET /likers?post_id=7: everyone who liked one post, A to Z.
+
+        The cookie is read only to leave out the people this viewer blocked
+        (block). Nobody logged in is fine: then nobody is left out.
+        """
+        user = self.user_or_none()
         try:
-            post_id, rows, like_count = who_liked(self.server.db_path, post_id)
+            post_id, rows, like_count = who_liked(self.server.db_path, post_id,
+                                                  user["id"] if user else None)
         except RuleBroken as problem:
             self.send_problem(400, problem)
             return
@@ -360,6 +373,43 @@ class TimelineHandler(BaseHTTPRequestHandler):
             self.send_problem(400, problem)
             return
         self.send_json(200, bookmark_to_json(post_id, False))   # 200: nothing was created
+
+    # block: blocking and unblocking need a login. Who blocks always comes
+    # from the cookie; only the person being blocked comes from the JSON.
+
+    def take_block(self, data):
+        """POST /blocks {"account_name": "ben"}: block that account."""
+        user = self.signed_in_user()
+        if user is None:
+            return
+        try:
+            blocked = add_block(self.server.db_path, user["id"], data.get("account_name"))
+        except RuleBroken as problem:
+            self.send_problem(400, problem)
+            return
+        self.send_json(201, account_to_json(blocked))
+
+    def end_block(self):
+        """DELETE /blocks {"account_name": "ben"}: unblock that account."""
+        data = self.read_json()
+        if data is None:
+            return
+        user = self.signed_in_user()
+        if user is None:
+            return
+        try:
+            unblocked = remove_block(self.server.db_path, user["id"], data.get("account_name"))
+        except RuleBroken as problem:
+            self.send_problem(400, problem)
+            return
+        self.send_json(200, account_to_json(unblocked))   # 200: nothing was created
+
+    def show_blocks(self):
+        """GET /blocks: everyone this person has blocked. 401 when nobody is logged in."""
+        user = self.signed_in_user()
+        if user is None:
+            return
+        self.send_json(200, blocks_to_json(blocks_for(self.server.db_path, user["id"])))
 
     # pictures: anyone may see a post's picture, as anyone may read the post.
 
@@ -451,8 +501,9 @@ class TimelineHandler(BaseHTTPRequestHandler):
 #  both names and a salted password hash), posts (each post points at its
 #  author by the author's id), likes (one row for each person who liked each
 #  post), sessions (one row for each window that is logged in), attempts
-#  (for the rate limits) and bookmarks (one private row for each post a
-#  person saved).
+#  (for the rate limits), bookmarks (one private row for each post a
+#  person saved), pictures, and blocks (one row for each person who blocked
+#  another).
 #  A new rule goes here, never in the controller or the view.
 # ============================================================================
 
@@ -599,6 +650,12 @@ PROBLEMS = {
     "picture_alt_empty": "Please describe the picture in a few words.",
     "picture_alt_too_long": "The description must be {limit} characters or fewer.",
     "picture_alt_hidden": "The description must not have hidden characters or line breaks.",
+    # block
+    "account_missing": "There is no account @{name}.",
+    "block_self": "You cannot block yourself.",
+    "block_already": "You have already blocked @{name}.",
+    "block_not_there": "You have not blocked @{name}.",
+    "like_blocked": "You cannot like this post.",
 }
 
 # One code for a wrong name and for a wrong password, so a stranger cannot use
@@ -670,7 +727,7 @@ def connect(db_path):
 
 # The newest version of the database: the number the last upgrade below sets.
 # Each new upgrade raises it by one, and the tests read it from here.
-LATEST_VERSION = 7
+LATEST_VERSION = 8
 
 
 def create_tables(db_path):
@@ -717,6 +774,8 @@ def create_tables(db_path):
         upgrade_to_place(connection)
     if version < 7:
         upgrade_to_pictures(connection)
+    if version < 8:
+        upgrade_to_block(connection)
     connection.close()
 
 
@@ -999,6 +1058,29 @@ def upgrade_to_pictures(connection):
         "bytes BLOB NOT NULL CHECK (typeof(bytes) = 'blob' "
         "AND length(bytes) BETWEEN 12 AND 2097152))")
     connection.execute("PRAGMA user_version = 7")
+    connection.commit()
+
+
+def upgrade_to_block(connection):
+    """Version 8: the blocks table. Every row is kept.
+
+    One row means "this person blocked that person". Unblocking deletes the
+    row; nothing is marked. A block points at a user by id, never by name.
+    """
+    connection.execute("BEGIN")
+    connection.execute("CREATE TABLE IF NOT EXISTS blocks ("
+                       # the person who pressed Block
+                       "blocker_id INTEGER NOT NULL REFERENCES users(id), "
+                       # the person they blocked
+                       "blocked_id INTEGER NOT NULL REFERENCES users(id), "
+                       # The same block cannot be saved twice, even if two
+                       # presses arrive at the same moment.
+                       "PRIMARY KEY (blocker_id, blocked_id), "
+                       # A CHECK is a rule the database tests on every row it
+                       # saves: nobody can block themselves, even if the model
+                       # is got around.
+                       "CHECK (blocker_id <> blocked_id))")
+    connection.execute("PRAGMA user_version = 8")
     connection.commit()
 
 
@@ -1462,6 +1544,11 @@ def add_like(db_path, user_id, post_id):
     if connection.execute("SELECT id FROM posts WHERE id = ?", (post_id,)).fetchone() is None:
         connection.close()
         raise RuleBroken("post_missing")
+    try:
+        check_not_blocked_by_author(connection, post_id, user_id)   # block
+    except RuleBroken:
+        connection.close()
+        raise
     already = connection.execute("SELECT 1 FROM likes WHERE post_id = ? AND user_id = ?",
                                  (post_id, user_id)).fetchone()
     if already is not None:
@@ -1544,13 +1631,16 @@ def likes_for(db_path, user_id, from_id=0):
 # count: a kept number could drift away from the rows; a count of the rows
 # cannot.
 
-def who_liked(db_path, post_id):
+def who_liked(db_path, post_id, viewer_id=None):
     """Everyone who liked this post, A to Z, at most MAX_LIKERS of them.
 
     Returns (post_id, rows, like_count). Each row has name and display_name.
     like_count is how many liked it in all, which can be more than the rows.
+    People the viewer blocked are left out of the rows, but still counted in
+    like_count (block: a count is the same number for everyone).
     Only reads. MAX_LIKERS is read when it runs, so a test can lower it.
     """
+    not_blocked, not_blocked_params = not_blocked_sql(viewer_id, "likes.user_id")
     post_id = check_post_id(post_id)
     connection = connect(db_path)
     try:
@@ -1562,9 +1652,9 @@ def who_liked(db_path, post_id):
         rows = connection.execute(
             "SELECT users.name, users.display_name "
             "FROM likes JOIN users ON users.id = likes.user_id "
-            "WHERE likes.post_id = ? "
+            "WHERE likes.post_id = ? AND " + not_blocked + " "
             "ORDER BY users.name COLLATE NOCASE "
-            "LIMIT ?", (post_id, MAX_LIKERS)).fetchall()
+            "LIMIT ?", (post_id, *not_blocked_params, MAX_LIKERS)).fetchall()
         like_count = like_count_for(connection, post_id)
     finally:
         connection.rollback()   # it only read, so there is nothing to keep
@@ -1599,9 +1689,11 @@ def like_summaries(db_path, viewer_id, post_ids):
     first, then A to Z. If the viewer liked it, "you" is true, the viewer is
     never a leader, and one name fewer is kept, so the line still has at most
     SUMMARY_NAMES names. So the model decides who is named; the page only
-    words it. Only reads.
+    words it. People the viewer blocked are never leaders, but are still in
+    like_count (block). Only reads.
     """
     post_ids = check_post_ids(post_ids)
+    not_blocked, not_blocked_params = not_blocked_sql(viewer_id, "likes.user_id")
     # The marks are made from the NUMBER of ids only. The ids themselves are
     # always passed as values, never written into the SQL.
     marks = ", ".join("?" * len(post_ids))
@@ -1627,9 +1719,10 @@ def like_summaries(db_path, viewer_id, post_ids):
             "  FROM likes JOIN users ON users.id = likes.user_id"
             f"  WHERE likes.post_id IN ({marks})"
             "    AND likes.user_id IS NOT ?"   # the viewer is "You", not a leader
+            "    AND " + not_blocked +         # block: never someone the viewer blocked
             ") WHERE place <= ? "
             "ORDER BY post_id, place",
-            (*post_ids, viewer_id, SUMMARY_NAMES)).fetchall()
+            (*post_ids, viewer_id, *not_blocked_params, SUMMARY_NAMES)).fetchall()
         counts = connection.execute(
             "SELECT post_id, COUNT(*) AS like_count FROM likes "
             f"WHERE post_id IN ({marks}) GROUP BY post_id", post_ids).fetchall()
@@ -1657,11 +1750,16 @@ def like_summaries(db_path, viewer_id, post_ids):
 def visible_to(viewer_id):
     """Which posts this viewer may see, as (sql, params): one part of a WHERE.
 
-    viewer_id is None for a window that is not logged in. Today every post is
-    visible to everyone. A feature that hides posts (block, report) adds its
-    own condition here, joined with AND, and then every list of posts obeys it.
+    viewer_id is None for a window that is not logged in. A feature that hides
+    posts (block, report) adds its own condition to this list, in one line,
+    and then every list of posts obeys it. They are joined with AND.
     """
-    return "1 = 1", []
+    conditions = [
+        not_blocked_sql(viewer_id),   # block: not by someone the viewer blocked
+    ]
+    sql = " AND ".join("(" + piece + ")" for piece, _ in conditions)
+    params = [value for _, values in conditions for value in values]
+    return sql, params
 
 
 def select_posts(connection, conditions, params, viewer_id, order, limit=None):
@@ -1905,6 +2003,113 @@ def bookmarks_for(db_path, user_id):
     return rows
 
 
+# ---- block: one person blocks another ----
+#
+# A block hides the blocked person's posts from the person who blocked them
+# (through visible_to, so every list of posts obeys it: the timeline, older
+# posts, search, bookmarks, pictures), and stops the blocked person liking
+# (and later replying to) the blocker's posts. A blocked person can still read
+# the blocker's posts: reading is open to everyone, even with no login, so
+# hiding them would only be pretend.
+
+def not_blocked_sql(viewer_id, column="posts.author_id"):
+    """A piece of a WHERE, as (sql, params): `column` is nobody the viewer blocked.
+
+    `column` names a user id column, and always comes from the code, never from
+    a request. With no viewer (nobody logged in), nobody is left out.
+    """
+    if viewer_id is None:
+        return "1 = 1", []
+    return (column + " NOT IN (SELECT blocked_id FROM blocks WHERE blocker_id = ?)",
+            [viewer_id])
+
+
+def find_account(connection, name):
+    """The user with this account name (id, name, display_name), or raise RuleBroken.
+
+    Capitals are ignored. It only reads: it never adds a user.
+    """
+    name = check_name(name)
+    user = connection.execute("SELECT id, name, display_name FROM users "
+                              "WHERE name = ? COLLATE NOCASE", (name,)).fetchone()
+    if user is None:
+        raise RuleBroken("account_missing", name=name)
+    return user
+
+
+def add_block(db_path, blocker_id, name):
+    """Save that this user blocked the account `name`. Return the blocked user.
+
+    Blocking yourself, or the same person twice, is refused: first by the rules
+    here, and in the end by the database itself (its CHECK and PRIMARY KEY).
+    """
+    connection = connect(db_path)
+    try:
+        blocked = find_account(connection, name)
+        if blocked["id"] == blocker_id:
+            raise RuleBroken("block_self")
+        try:
+            connection.execute("INSERT INTO blocks (blocker_id, blocked_id) VALUES (?, ?)",
+                               (blocker_id, blocked["id"]))
+        except sqlite3.IntegrityError:
+            raise RuleBroken("block_already", name=blocked["name"])
+        connection.commit()
+        return blocked
+    finally:
+        connection.close()
+
+
+def remove_block(db_path, blocker_id, name):
+    """Unblock the account `name`. Return that user.
+
+    Like a like taken back: the row is deleted, not marked. One statement both
+    deletes and says whether the row was there, so there is no gap between
+    looking and deleting.
+    """
+    connection = connect(db_path)
+    try:
+        blocked = find_account(connection, name)
+        cursor = connection.execute("DELETE FROM blocks WHERE blocker_id = ? AND blocked_id = ?",
+                                    (blocker_id, blocked["id"]))
+        if cursor.rowcount == 0:
+            raise RuleBroken("block_not_there", name=blocked["name"])
+        connection.commit()
+        return blocked
+    finally:
+        connection.close()
+
+
+def blocks_for(db_path, blocker_id):
+    """Everyone this user has blocked (name, display_name), A to Z. Only reads."""
+    connection = connect(db_path)
+    rows = connection.execute("SELECT users.name, users.display_name "
+                              "FROM blocks JOIN users ON users.id = blocks.blocked_id "
+                              "WHERE blocks.blocker_id = ? "
+                              "ORDER BY users.name COLLATE NOCASE", (blocker_id,)).fetchall()
+    connection.close()
+    return rows
+
+
+# What a blocked person was trying to do, and the code that refuses it.
+# replies adds one line here: "reply": "reply_blocked".
+BLOCKED_CODES = {"like": "like_blocked"}
+
+
+def check_not_blocked_by_author(connection, post_id, user_id, what="like"):
+    """Raise RuleBroken if the author of this post has blocked this user.
+
+    `what` names what they were trying to do, a key in BLOCKED_CODES. It does
+    not close the connection: the caller does.
+    """
+    BLOCKED_CODES[what]   # a name not in the table fails at once, blocked or not
+    row = connection.execute("SELECT 1 FROM blocks "
+                             "JOIN posts ON posts.author_id = blocks.blocker_id "
+                             "WHERE posts.id = ? AND blocks.blocked_id = ?",
+                             (post_id, user_id)).fetchone()
+    if row is not None:
+        raise RuleBroken(BLOCKED_CODES[what])
+
+
 # ============================================================================
 #  VIEW
 #  Turns database rows into the JSON the page reads, and the cookie it keeps.
@@ -1957,6 +2162,11 @@ def like_to_json(post_id, like_count):
 def bookmark_to_json(post_id, bookmarked):
     """The answer to a bookmark press. No count: nothing about anyone else."""
     return {"post_id": post_id, "bookmarked": bookmarked}
+
+
+def blocks_to_json(rows):
+    """Everyone this person has blocked: both names each, nothing else."""
+    return {"blocked": [account_to_json(row) for row in rows]}
 
 
 def too_fast_to_json(problem):

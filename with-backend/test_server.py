@@ -1531,9 +1531,10 @@ class ModelTests(unittest.TestCase):
         folder = tempfile.TemporaryDirectory()
         self.addCleanup(folder.cleanup)
         self.db_path = os.path.join(folder.name, "old.db")
-        # Every later upgrade is held back too (pictures), so the file stops before place.
+        # Every later upgrade is held back too (pictures, block), so the file stops before place.
         with mock.patch.object(server, "upgrade_to_place", lambda connection: None), \
-                mock.patch.object(server, "upgrade_to_pictures", lambda connection: None):
+                mock.patch.object(server, "upgrade_to_pictures", lambda connection: None), \
+                mock.patch.object(server, "upgrade_to_block", lambda connection: None):
             server.create_tables(self.db_path)
         old_version = self.rows("PRAGMA user_version")[0][0]
         self.assertLess(old_version, server.LATEST_VERSION)
@@ -1961,6 +1962,227 @@ class ModelTests(unittest.TestCase):
         self.picture_post(aiko)
         server.create_tables(self.db_path)   # twice is harmless
         self.assertEqual(self.picture_counts(), (2, 1))
+
+    # -- block --
+    #
+    # People are made with SQL (self.person), so no test hashes a password.
+
+    def authors_seen_by(self, viewer_id):
+        return [row["author"] for row in server.posts_after(self.db_path, 0, viewer_id)]
+
+    def block_rows(self):
+        return self.rows("SELECT blocker_id, blocked_id FROM blocks ORDER BY 1, 2")
+
+    def test_a_blocked_person_s_posts_are_left_out_only_for_the_blocker(self):
+        aiko, ben, carol = self.person("aiko"), self.person("ben"), self.person("carol")
+        self.post_by(aiko, "a1")
+        self.post_by(ben, "b1")
+        server.add_block(self.db_path, aiko, "ben")
+        self.assertEqual(self.authors_seen_by(aiko), ["aiko"])
+        self.assertEqual(self.authors_seen_by(carol), ["aiko", "ben"])
+        self.assertEqual(self.authors_seen_by(None), ["aiko", "ben"])
+        # Decision 1: Ben still reads Aiko's posts.
+        self.assertEqual(self.authors_seen_by(ben), ["aiko", "ben"])
+        # A post Ben writes after the block never comes to Aiko either.
+        later = self.post_by(ben, "b2")
+        self.assertEqual(server.posts_after(self.db_path, later - 1, aiko), [])
+
+    def test_the_block_is_inside_visible_to(self):
+        aiko, ben = self.person("aiko"), self.person("ben")
+        self.post_by(aiko)
+        self.post_by(ben)
+        server.add_block(self.db_path, aiko, "ben")
+        sql, params = server.visible_to(aiko)
+        self.assertEqual(self.rows("SELECT id FROM posts WHERE " + sql, params), [(1,)])
+        sql, params = server.visible_to(None)
+        self.assertEqual(self.rows("SELECT id FROM posts WHERE " + sql, params), [(1,), (2,)])
+
+    def test_nobody_can_block_themselves(self):
+        aiko = self.person("aiko")
+        with self.assertRaises(server.RuleBroken) as caught:
+            server.add_block(self.db_path, aiko, "AIKO")
+        self.assertEqual(str(caught.exception), "You cannot block yourself.")
+        # The database refuses it too, even if the model is got around.
+        connection = server.connect(self.db_path)
+        with self.assertRaises(sqlite3.IntegrityError):
+            connection.execute("INSERT INTO blocks VALUES (?, ?)", (aiko, aiko))
+        connection.close()
+        self.assertEqual(self.block_rows(), [])
+
+    def test_the_same_block_twice_is_refused(self):
+        aiko, ben = self.person("aiko"), self.person("ben")
+        server.add_block(self.db_path, aiko, "ben")
+        with self.assertRaises(server.RuleBroken) as caught:
+            server.add_block(self.db_path, aiko, "ben")
+        self.assertEqual(str(caught.exception), "You have already blocked @ben.")
+        connection = server.connect(self.db_path)
+        with self.assertRaises(sqlite3.IntegrityError):
+            connection.execute("INSERT INTO blocks VALUES (?, ?)", (aiko, ben))
+        connection.close()
+        self.assertEqual(self.block_rows(), [(aiko, ben)])
+
+    def test_blocking_an_account_that_does_not_exist_adds_no_user(self):
+        aiko = self.person("aiko")
+        before = self.users()
+        for name, words in (("nobody", "There is no account @nobody."),
+                            ("", "must not be empty"), ("two words", "only letters")):
+            with self.subTest(name=name):
+                with self.assertRaises(server.RuleBroken) as caught:
+                    server.add_block(self.db_path, aiko, name)
+                self.assertIn(words, str(caught.exception))
+        with self.assertRaises(server.RuleBroken):
+            server.remove_block(self.db_path, aiko, "nobody")
+        self.assertEqual(self.users(), before)
+        self.assertEqual(self.block_rows(), [])
+
+    def test_capitals_do_not_matter(self):
+        aiko, ben = self.person("aiko"), self.person("ben")
+        blocked = server.add_block(self.db_path, aiko, "BEN")
+        self.assertEqual(blocked["name"], "ben")
+        self.assertEqual(self.block_rows(), [(aiko, ben)])
+
+    def test_unblocking_deletes_the_row_and_brings_the_old_posts_back(self):
+        aiko, ben = self.person("aiko"), self.person("ben")
+        self.post_by(ben, "old")
+        server.add_block(self.db_path, aiko, "ben")
+        self.assertEqual(self.authors_seen_by(aiko), [])
+        server.remove_block(self.db_path, aiko, "ben")
+        self.assertEqual(self.block_rows(), [])
+        self.assertEqual(self.authors_seen_by(aiko), ["ben"])
+        with self.assertRaises(server.RuleBroken) as caught:
+            server.remove_block(self.db_path, aiko, "ben")
+        self.assertEqual(str(caught.exception), "You have not blocked @ben.")
+
+    def test_a_blocked_person_cannot_like_the_blocker_s_posts(self):
+        aiko, ben, carol = self.person("aiko"), self.person("ben"), self.person("carol")
+        first = self.post_by(aiko, "first")
+        second = self.post_by(aiko, "second")
+        carols = self.post_by(carol)
+        self.like(ben, first)                     # before the block
+        server.add_block(self.db_path, aiko, "ben")
+        with self.assertRaises(server.RuleBroken) as caught:
+            server.add_like(self.db_path, ben, second)
+        self.assertEqual(str(caught.exception), "You cannot like this post.")
+        self.assertEqual(self.rows("SELECT * FROM likes WHERE post_id = ?", (second,)), [])
+        self.like(ben, carols)                    # someone else's post is fine
+        # Decision 3: the like from before stays, and is counted for everyone.
+        self.assertEqual(server.posts_after(self.db_path, 0, carol)[0]["like_count"], 1)
+        # A blocked person may still take back a like they gave before.
+        self.assertEqual(server.remove_like(self.db_path, ben, first), (first, 0))
+        # Aiko may still like Ben's posts: the rule is only one way.
+        self.like(aiko, self.post_by(ben))
+
+    def test_check_not_blocked_by_author_names_what_was_refused(self):
+        aiko, ben = self.person("aiko"), self.person("ben")
+        post = self.post_by(aiko)
+        server.add_block(self.db_path, aiko, "ben")
+        connection = server.connect(self.db_path)
+        try:
+            server.check_not_blocked_by_author(connection, post, aiko)   # the author: fine
+            with self.assertRaises(server.RuleBroken) as caught:
+                server.check_not_blocked_by_author(connection, post, ben)
+            self.assertEqual(caught.exception.code, "like_blocked")
+            # replies adds "reply" to BLOCKED_CODES; a name not there is a mistake in the code.
+            with self.assertRaises(KeyError):
+                server.check_not_blocked_by_author(connection, post, ben, "nothing")
+        finally:
+            connection.close()
+
+    def test_blocks_for_lists_exactly_the_people_this_person_blocked(self):
+        aiko, ben, carol = self.person("aiko"), self.person("ben", "Ben Ito"), self.person("Carol")
+        server.add_block(self.db_path, aiko, "carol")
+        server.add_block(self.db_path, aiko, "ben")
+        server.add_block(self.db_path, ben, "aiko")
+        self.assertEqual([tuple(row) for row in server.blocks_for(self.db_path, aiko)],
+                         [("ben", "Ben Ito"), ("Carol", "Carol")])
+        self.assertEqual(self.names(server.blocks_for(self.db_path, carol)), [])
+        self.assertEqual(server.blocks_to_json(server.blocks_for(self.db_path, ben)),
+                         {"blocked": [{"account_name": "aiko", "display_name": "aiko"}]})
+
+    def test_a_block_on_an_old_name_holds_after_it_is_claimed(self):
+        aiko = self.person("aiko")
+        old_ben = self.person("ben")   # an old user: no password yet
+        self.post_by(old_ben, "old post")
+        server.add_block(self.db_path, aiko, "ben")
+        claimed = self.sign_up("Ben")
+        self.assertEqual(claimed, old_ben)
+        self.post_by(claimed, "new post")
+        self.assertEqual(self.authors_seen_by(aiko), [])
+
+    def test_who_liked_leaves_out_blocked_names_but_keeps_the_count(self):
+        aiko, ben, carol = self.person("aiko"), self.person("ben"), self.person("carol")
+        post = self.post_by(carol)
+        self.like(ben, post)
+        self.like(carol, post)
+        server.add_block(self.db_path, aiko, "ben")
+        post_id, rows, count = server.who_liked(self.db_path, post, aiko)
+        self.assertEqual((self.names(rows), count), (["carol"], 2))
+        post_id, rows, count = server.who_liked(self.db_path, post, carol)
+        self.assertEqual((self.names(rows), count), (["ben", "carol"], 2))
+        self.assertEqual(self.names(server.who_liked(self.db_path, post)[1]), ["ben", "carol"])
+        summary = self.summary(aiko, post)
+        self.assertEqual((self.names(summary["leaders"]), summary["like_count"]), (["carol"], 2))
+        # Carol is more popular (Ben liked her post), so she comes first.
+        self.assertEqual(self.leaders(None, post), ["carol", "ben"])
+
+    def test_the_block_upgrade_keeps_every_row(self):
+        aiko = self.sign_up("aiko")
+        ben = self.person("ben")
+        post_id = self.post_by(aiko)
+        server.add_like(self.db_path, ben, post_id)
+        # The database as it was one version before: no blocks table.
+        connection = sqlite3.connect(self.db_path)
+        connection.executescript("DROP TABLE blocks; PRAGMA user_version = %d;"
+                                 % (server.LATEST_VERSION - 1))
+        connection.close()
+        tables = ("users", "posts", "likes", "sessions", "attempts")
+        before = {table: self.rows("SELECT * FROM " + table + " ORDER BY 1, 2")
+                  for table in tables}
+        server.create_tables(self.db_path)
+        after = {table: self.rows("SELECT * FROM " + table + " ORDER BY 1, 2")
+                 for table in tables}
+        self.assertEqual(after, before)
+        self.assertEqual(self.rows("PRAGMA user_version"), [(server.LATEST_VERSION,)])
+        self.assertEqual(self.rows("PRAGMA foreign_key_check"), [])
+        self.assertEqual(self.block_rows(), [])
+        server.add_block(self.db_path, aiko, "ben")
+        self.assertEqual(self.block_rows(), [(aiko, ben)])
+
+    def test_a_blocked_person_s_posts_are_in_no_search_and_no_bookmarks(self):
+        aiko, ben = self.person("aiko"), self.person("ben")
+        aikos = self.post_by(aiko, "a cat by aiko")
+        bens = self.post_by(ben, "a cat by ben")
+        server.add_bookmark(self.db_path, aiko, aikos)
+        server.add_bookmark(self.db_path, aiko, bens)    # saved before the block
+        server.add_block(self.db_path, aiko, "ben")
+        rows, more = server.search_posts(self.db_path, "cat", aiko)
+        self.assertEqual([row["author"] for row in rows], ["aiko"])
+        rows, more = server.search_posts(self.db_path, "cat", None)
+        self.assertEqual([row["author"] for row in rows], ["ben", "aiko"])
+        self.assertEqual([row["id"] for row in server.bookmarks_for(self.db_path, aiko)],
+                         [aikos])
+        # The bookmark row is kept: after an unblock the post is in the list again.
+        self.assertEqual(len(self.rows("SELECT * FROM bookmarks")), 2)
+        self.assertEqual(server.posts_before(self.db_path, 0, aiko)[0]["author"], "aiko")
+        server.remove_block(self.db_path, aiko, "ben")
+        self.assertEqual([row["id"] for row in server.bookmarks_for(self.db_path, aiko)],
+                         [bens, aikos])
+
+    def test_every_block_refusal_has_a_code(self):
+        aiko, ben = self.person("aiko"), self.person("ben")
+        post = self.post_by(aiko)
+        server.add_block(self.db_path, aiko, "ben")
+        for code, action in (("account_missing", lambda: server.add_block(self.db_path, aiko, "x")),
+                             ("block_self", lambda: server.add_block(self.db_path, aiko, "aiko")),
+                             ("block_already", lambda: server.add_block(self.db_path, aiko, "ben")),
+                             ("block_not_there",
+                              lambda: server.remove_block(self.db_path, ben, "aiko")),
+                             ("like_blocked", lambda: server.add_like(self.db_path, ben, post))):
+            with self.subTest(code=code):
+                with self.assertRaises(server.RuleBroken) as caught:
+                    action()
+                self.assertEqual(caught.exception.code, code)
+
 
 
 class RealServerTest(unittest.TestCase):
@@ -2504,6 +2726,49 @@ class RealServerTest(unittest.TestCase):
         post = self.post_picture(biggest)
         code, headers, body = self.raw_get(post["picture"]["url"])
         self.assertEqual((code, len(body)), (200, server.MAX_PICTURE_BYTES))
+
+    # -- block --
+
+    def test_blocks_need_a_login_and_json(self):
+        stranger = urllib.request.build_opener()
+        self.assertEqual(self.refused_get(stranger, "/blocks")[0], 401)
+        self.assertEqual(self.refused("/blocks", {"account_name": "ben"})[0], 401)
+        self.assertEqual(self.refused("/blocks", {"account_name": "ben"}, "DELETE")[0], 401)
+        self.sign_up().close()
+        code, reason = self.refused("/blocks", {"account_name": "ben"},
+                                    content_type="text/plain")
+        self.assertEqual((code, reason), (400, "The request must be JSON."))
+
+    def test_posts_by_someone_you_blocked_are_left_out_only_with_your_cookie(self):
+        ben = urllib.request.build_opener(
+            urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
+        aiko = self.window
+        self.window = ben
+        self.sign_up("ben", "Ben Ito").close()
+        self.send("/posts", {"text": "from ben"}).close()
+        self.window = aiko
+        self.sign_up().close()
+        with self.send("/blocks", {"account_name": "ben"}) as answer:
+            self.assertEqual(answer.status, 201)
+            self.assertEqual(json.loads(answer.read()),
+                             {"account_name": "ben", "display_name": "Ben Ito"})
+        self.assertEqual(self.get("/posts?after=0"), [])
+        self.assertEqual(self.get("/blocks"),
+                         {"blocked": [{"account_name": "ben", "display_name": "Ben Ito"}]})
+        for name, opener in (("no cookie", urllib.request.build_opener()),
+                             ("wrong cookie", urllib.request.build_opener())):
+            with self.subTest(window=name):
+                request = urllib.request.Request(self.base + "/posts?after=0")
+                if name == "wrong cookie":
+                    request.add_header("Cookie", "session=not-a-real-token")
+                with opener.open(request) as answer:
+                    self.assertEqual([p["author"] for p in json.loads(answer.read())], ["ben"])
+        self.assertEqual(self.refused("/blocks", {"account_name": "aiko"}),
+                         (400, "You cannot block yourself."))
+        with self.send("/blocks", {"account_name": "ben"}, "DELETE") as answer:
+            self.assertEqual(answer.status, 200)
+        self.assertEqual([p["author"] for p in self.get("/posts?after=0")], ["ben"])
+        self.assertEqual(self.get("/blocks"), {"blocked": []})
 
 
 class JourneyTest(unittest.TestCase):
@@ -3116,6 +3381,85 @@ class JourneyTest(unittest.TestCase):
         self.assertEqual(self.rows("SELECT COUNT(*) FROM pictures"), [(0,)])
         self.assertEqual(self.is_refused(ben.open, url)[0], 404)
 
+    # -- block --
+
+    def page_blocks(self, window, name):
+        """pressBlock: POST /blocks, with only the account name"""
+        return self.page_sends(window, "/blocks", {"account_name": name}, "POST")
+
+    def page_unblocks(self, window, name):
+        """unblock: DELETE /blocks, with only the account name"""
+        return self.page_sends(window, "/blocks", {"account_name": name}, "DELETE")
+
+    def page_asks_who_is_blocked(self, window):
+        """loadBlocked: GET /blocks"""
+        with window.open(self.base + "/blocks") as answer:
+            return json.loads(answer.read())
+
+    def test_the_whole_journey_of_a_block(self):
+        aiko, ben, nobody = self.open_window(), self.open_window(), self.open_window()
+
+        def authors(posts):
+            return [(post["author"], post["text"]) for post in posts]
+
+        # 1. Aiko and Ben sign up and each post. Aiko sees Ben's post.
+        self.page_signs_up(aiko, "aiko", "Aiko Tanaka")
+        self.page_signs_up(ben, "ben", "Ben Ito")
+        aikos = self.page_posts(aiko, "hello from aiko")[1]["id"]
+        self.page_posts(ben, "hello from ben")
+        self.assertEqual(authors(self.page_asks_for_new_posts(aiko)),
+                         [("aiko", "hello from aiko"), ("ben", "hello from ben")])
+
+        # 2. Aiko blocks Ben: one row in blocks, with their two ids.
+        status, answer = self.page_blocks(aiko, "ben")
+        self.assertEqual((status, answer), (201, {"account_name": "ben",
+                                                  "display_name": "Ben Ito"}))
+        self.assertEqual(self.rows("SELECT blocker_id, blocked_id FROM blocks"), [(1, 2)])
+        self.assertEqual(self.page_asks_who_is_blocked(aiko)["blocked"],
+                         [{"account_name": "ben", "display_name": "Ben Ito"}])
+
+        # 3. Aiko's next poll has no post by Ben. A window with no cookie still has it,
+        #    and so does Ben's own window (decision 1).
+        self.assertEqual(authors(self.page_asks_for_new_posts(aiko)),
+                         [("aiko", "hello from aiko")])
+        self.assertEqual(len(self.page_asks_for_new_posts(nobody)), 2)
+        self.assertEqual(len(self.page_asks_for_new_posts(ben)), 2)
+        # The same in a search: Aiko's search has no post by Ben; nobody's has both.
+        status, found = self.page_searches(aiko, "hello")
+        self.assertEqual([post["author"] for post in found["posts"]], ["aiko"])
+        status, found = self.page_searches(nobody, "hello")
+        self.assertEqual([post["author"] for post in found["posts"]], ["ben", "aiko"])
+
+        # 4. Ben posts again. Aiko's poll does not bring it.
+        newest = self.page_posts(ben, "are you there?")[1]["id"]
+        self.assertEqual(self.page_asks_for_new_posts(aiko, newest - 1), [])
+        self.assertEqual(self.rows(f"SELECT author_id FROM posts WHERE id = {newest}"), [(2,)])
+
+        # 5. Ben presses the heart on Aiko's post: refused, and no row in likes.
+        code, reason = self.is_refused(self.page_presses_heart, ben, aikos, False)
+        self.assertEqual((code, reason), (400, "You cannot like this post."))
+        self.assertEqual(self.rows("SELECT * FROM likes"), [])
+
+        # 6. Aiko sends "blocker": "ben" in the JSON. It is ignored: the blocker
+        #    comes from the cookie, so this blocks nobody new and Ben blocks nobody.
+        code, reason = self.is_refused(self.page_sends, aiko, "/blocks",
+                                       {"account_name": "ben", "blocker": "ben"}, "POST")
+        self.assertEqual((code, reason), (400, "You have already blocked @ben."))
+        self.assertEqual(self.rows("SELECT blocker_id, blocked_id FROM blocks"), [(1, 2)])
+
+        # 7. Aiko unblocks Ben: the row is gone, and both of Ben's posts are back, in order.
+        status, answer = self.page_unblocks(aiko, "ben")
+        self.assertEqual(status, 200)
+        self.assertEqual(self.rows("SELECT * FROM blocks"), [])
+        self.assertEqual(authors(self.page_asks_for_new_posts(aiko)),
+                         [("aiko", "hello from aiko"), ("ben", "hello from ben"),
+                          ("ben", "are you there?")])
+        self.assertEqual(self.page_asks_who_is_blocked(aiko), {"blocked": []})
+
+        # 8. Now Ben may like Aiko's post again.
+        self.assertEqual(self.page_presses_heart(ben, aikos, False)[0], 201)
+        self.assertEqual(self.rows("SELECT post_id, user_id FROM likes"), [(aikos, 2)])
+
 
 class BookmarkJourneyTest(unittest.TestCase):
     """The journey of a private bookmark, through all three levels at once.
@@ -3265,7 +3609,8 @@ class PageAndServerAgreeTest(unittest.TestCase):
     def test_the_page_asks_only_for_routes_the_server_answers(self):
         asked = set(re.findall(r'fetch\("(/[a-z]*)', self.page_code))
         self.assertEqual(asked, {"/posts", "/likes", "/sessions", "/accounts",
-                                 "/likers", "/likesummary", "/search", "/bookmarks"})
+                                 "/likers", "/likesummary", "/search", "/bookmarks",
+                                 "/blocks"})
 
     def test_the_page_names_only_the_methods_tried_below(self):
         # A GET needs no method, so the page names only the other two.
@@ -3276,7 +3621,8 @@ class PageAndServerAgreeTest(unittest.TestCase):
         for method, path in [("GET", "/posts?after=0"), ("POST", "/posts"),
                              ("GET", "/likes"), ("POST", "/likes"), ("DELETE", "/likes"),
                              ("GET", "/sessions"), ("POST", "/sessions"),
-                             ("DELETE", "/sessions"), ("POST", "/accounts")]:
+                             ("DELETE", "/sessions"), ("POST", "/accounts"),
+                             ("GET", "/blocks"), ("POST", "/blocks"), ("DELETE", "/blocks")]:
             with self.subTest(request=method + " " + path):
                 code = self.answer_code(method, path)
                 # 400 or 401 is a fine answer here: the body is empty and nobody
@@ -3330,10 +3676,10 @@ class PageAndServerAgreeTest(unittest.TestCase):
         self.assertIn("placePost(", show_post)
 
     def test_nothing_new_shows_yet(self):
-        # The "⋯" menu starts hidden, and only addMenuItem shows it; nothing calls
-        # addMenuItem yet. The views nav starts hidden, with one view.
+        # The "⋯" menu starts hidden, and only addMenuItem shows it. (block is
+        # the first to call addMenuItem: see test_the_page_never_offers_to_block_yourself.)
+        # The views nav starts hidden, with one view.
         self.assertIn("menu.hidden = true;", self.page_code)
-        self.assertEqual(re.findall(r"(?<!function )\baddMenuItem\(", self.page_code), [])
         with open(os.path.join(HERE, "index.html"), encoding="utf-8") as page_file:
             nav = re.search(r'<nav id="views"[^>]*>', page_file.read()).group(0)
         self.assertIn('aria-label="Views"', nav)
@@ -3974,6 +4320,58 @@ class PageAndServerAgreeTest(unittest.TestCase):
     def test_the_request_limit_fits_the_biggest_picture_exactly(self):
         as_text = (server.MAX_PICTURE_BYTES + 2) // 3 * 4
         self.assertGreaterEqual(server.MAX_REQUEST_BYTES, as_text + 64 * 1024)
+
+    # -- block --
+
+    def test_the_server_answers_the_block_requests(self):
+        for method in ("GET", "POST", "DELETE"):
+            with self.subTest(method=method):
+                self.assertNotIn(self.answer_code(method, "/blocks"), (404, 501))
+        functions = functions_in(self.page_code)
+        self.assertIn('fetch("/blocks")', functions["loadBlocked"])
+        self.assertIn('method: "POST"', functions["pressBlock"])
+        self.assertIn('method: "DELETE"', functions["unblock"])
+        for name in ("pressBlock", "unblock"):
+            with self.subTest(function=name):
+                self.assertIn("account_name: name", functions[name])
+                self.assertIn("!response.ok", functions[name])
+        self.assertIn('data.get("account_name")', self.function_in_server("take_block"))
+        self.assertIn('data.get("account_name")', self.function_in_server("end_block"))
+
+    def function_in_server(self, name):
+        for function in ast.walk(ast.parse(self.server_code)):
+            if isinstance(function, ast.FunctionDef) and function.name == name:
+                return ast.get_source_segment(self.server_code, function)
+        raise AssertionError(name + " is not in server.py")
+
+    def test_the_page_never_offers_to_block_yourself(self):
+        block_part = re.search(r"addPostPart\(function blockPart\(.*?\n\}\);",
+                               self.page_code, re.DOTALL).group(0)
+        self.assertIn("account === null", block_part)
+        self.assertIn("sameAccount(post.author, account.account_name)", block_part)
+        self.assertIn('addMenuItem(slots, "block"', block_part)
+        self.assertIn("ACTIONS.block = pressBlock;", self.page_code)
+
+    def test_blocking_removes_posts_and_unblocking_draws_the_timeline_again(self):
+        functions = functions_in(self.page_code)
+        self.assertIn("hidePostsBy(", functions["pressBlock"])
+        self.assertIn("removePost(", functions["hidePostsBy"])
+        self.assertIn("reloadTimeline()", functions["unblock"])
+        self.assertIn("reloadTimeline()", functions["afterAccountChange"])
+        self.assertIn("confirm(", functions["pressBlock"])
+
+    def test_the_page_reads_the_names_the_block_answers_have(self):
+        answer = server.blocks_to_json([{"name": "ben", "display_name": "Ben Ito"}])
+        self.assertEqual(answer, {"blocked": [{"account_name": "ben",
+                                               "display_name": "Ben Ito"}]})
+        for key in ("answer.blocked", "person.account_name", "person.display_name",
+                    "answer.account_name"):
+            with self.subTest(key=key):
+                self.assertIn(key, self.page_code)
+        with open(os.path.join(HERE, "index.html"), encoding="utf-8") as page_file:
+            html = page_file.read()
+        self.assertIn('id="blocked-section"', html)
+        self.assertIn('id="blocked-list"', html)
 
 
 class ColoursTest(unittest.TestCase):
