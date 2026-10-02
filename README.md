@@ -40,7 +40,9 @@ Open `page-only/index.html` in a browser. That is all.
 make run
 ```
 
-Then open <http://localhost:8009>. Each new post prints one line in the terminal: the time, who
+Then open <http://localhost:8009>. To see every colour, size and shared piece the page is built
+from, light and dark side by side, open the style guide at <http://localhost:8009/design.html>.
+Each new post prints one line in the terminal: the time, who
 wrote it, and what it says, in quotes. The time is in UTC, exactly as it is saved, for example
 `2026-10-02T07:42:10Z  Aiko Tanaka @aiko: "the library is open late tonight"`.
 

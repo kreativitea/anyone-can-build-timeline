@@ -33,6 +33,19 @@ import server
 
 HERE = os.path.dirname(os.path.abspath(server.__file__))
 
+# design-system: the page's style, in four files, loaded in this order.
+DESIGN_FILES = ("tokens.css", "base.css", "components.css", "features.css")
+
+
+def read_design_css(folder=HERE):
+    """The four style files of one folder, joined in the order the page loads them."""
+    parts = []
+    for name in DESIGN_FILES:
+        with open(os.path.join(folder, name), encoding="utf-8") as css_file:
+            parts.append(css_file.read())
+    return "\n".join(parts)
+
+
 # A password for the tests. It is long enough, and easy to spot in a table.
 PASSWORD = "correct horse battery"
 
@@ -5380,10 +5393,15 @@ class PageAndServerAgreeTest(unittest.TestCase):
             with self.subTest(limit=name):
                 self.assertIn(f"const {name} = {getattr(server, name)};", self.page_code)
 
-    def test_the_two_style_files_are_the_same(self):
-        with open(os.path.join(HERE, "style.css"), "rb") as one:
-            with open(os.path.join(HERE, "..", "page-only", "style.css"), "rb") as other:
-                self.assertEqual(one.read(), other.read())
+    def test_the_style_files_are_the_same_in_both_versions(self):
+        # design-system: the four files in page-only/ are copies of these.
+        for name in DESIGN_FILES:
+            with self.subTest(file=name):
+                with open(os.path.join(HERE, name), "rb") as one:
+                    with open(os.path.join(HERE, "..", "page-only", name), "rb") as other:
+                        self.assertEqual(one.read(), other.read())
+        for folder in (HERE, os.path.join(HERE, "..", "page-only")):
+            self.assertFalse(os.path.exists(os.path.join(folder, "style.css")))
 
     # -- groundwork --
 
@@ -5458,8 +5476,7 @@ class PageAndServerAgreeTest(unittest.TestCase):
 
     def test_a_long_post_is_folded_by_the_css_the_page_uses(self):
         for folder in (HERE, os.path.join(HERE, "..", "page-only")):
-            with open(os.path.join(folder, "style.css"), encoding="utf-8") as css_file:
-                css = css_file.read()
+            css = read_design_css(folder)
             with self.subTest(folder=folder):
                 rule = re.search(r"\.post-text\.collapsed \{(.*?)\}", css, re.DOTALL).group(1)
                 self.assertIn("-webkit-line-clamp: 6;", rule)
@@ -5468,7 +5485,7 @@ class PageAndServerAgreeTest(unittest.TestCase):
                 self.assertIn(".show-more {", css)
         self.assertIn('classList.add("collapsed")', self.page_code)
         self.assertIn('classList.toggle("collapsed")', self.page_code)
-        self.assertIn('className = "show-more"', self.page_code)
+        self.assertIn('className = "show-more button-link"', self.page_code)
 
     def test_the_show_more_button_is_accessible(self):
         make = self.function_body("makeExpandable")
@@ -6153,7 +6170,7 @@ class PageAndServerAgreeTest(unittest.TestCase):
     def test_the_replying_to_line_is_in_the_post_form(self):
         with open(os.path.join(HERE, "index.html"), encoding="utf-8") as page_file:
             html = page_file.read()
-        form = html[html.index('<form id="post-form">'):]
+        form = html[html.index('<form id="post-form"'):]
         form = form[:form.index("</form>")]
         for part in ('id="replying-to" hidden', 'id="replying-to-words"', 'id="cancel-reply"'):
             self.assertIn(part, form)
@@ -6415,7 +6432,7 @@ class ColoursTest(unittest.TestCase):
     """The Colours switch (Auto, Light, Dark) and the colours themselves.
 
     The switch lives only in the browser: it never talks to the server. So these
-    tests read style.css, index.html and app.js as text, and check the things
+    tests read the style files, index.html and app.js as text, and check the things
     that would break quietly, without anyone seeing an error.
     """
 
@@ -6424,7 +6441,7 @@ class ColoursTest(unittest.TestCase):
             return file.read()
 
     def setUp(self):
-        self.css = self.read("style.css")
+        self.css = read_design_css()
         self.html = self.read("index.html")
         self.page_code = self.read("app.js")
         # The first :root { ... } block: the colours, in one place.
@@ -6465,9 +6482,23 @@ class ColoursTest(unittest.TestCase):
         self.assertEqual(sorted(names), sorted(self.colours))
 
     def test_every_colour_used_is_defined(self):
-        for name in set(re.findall(r"var\(--([\w-]+)\)", self.css)):
-            with self.subTest(colour=name):
-                self.assertIn(name, self.colours)
+        # design-system: a token that is not a colour (a space, a size) is
+        # allowed too, but only where no colour goes. Where a colour goes, only
+        # one of the colours above.
+        colour_places = r"(?:color|background|background-color|border-color|border-[a-z]+-color|accent-color|outline-color)"
+        found = 0
+        for value in re.findall(r"[\s{;]" + colour_places + r":\s*([^;}]*)", self.css):
+            for name in re.findall(r"var\(--([\w-]+)\)", value):
+                found += 1
+                with self.subTest(colour=name):
+                    self.assertIn(name, self.colours)
+        self.assertGreater(found, 20)
+        # A colour is only ever given by a colour token, never by a token for
+        # sizes, in a border or an outline too.
+        for value in re.findall(r"(?:border|border-[a-z]+|outline):\s*([^;}]*)", self.css):
+            names = re.findall(r"var\(--([\w-]+)\)", value)
+            with self.subTest(line=value):
+                self.assertLessEqual(len([n for n in names if n in self.colours]), 1)
 
     def test_text_is_easy_to_read_in_both_modes(self):
         pairs = [(front, back) for front in ("text", "quiet", "author", "warning")
@@ -6792,7 +6823,7 @@ class OutboxTests(unittest.TestCase):
 class ClassicStyleTest(unittest.TestCase):
     """classic-style: the classic light-blue look, and the circle with a letter.
 
-    Only the page changes, so these tests read style.css, app.js and
+    Only the page changes, so these tests read the style files, app.js and
     index.html as text. No server and no browser.
     """
 
@@ -6801,7 +6832,7 @@ class ClassicStyleTest(unittest.TestCase):
             return file.read()
 
     def setUp(self):
-        self.css = self.read("style.css")
+        self.css = read_design_css()
         self.page_code = self.read("app.js")
         self.functions = functions_in(self.page_code)
 
@@ -6836,29 +6867,157 @@ class ClassicStyleTest(unittest.TestCase):
         self.assertIn("slots.head.prepend(avatar)", part)
 
     def test_room_for_the_avatar_only_when_there_is_one(self):
-        block = self.css[self.css.index("/* classic-style */"):]
-        self.assertIn(".post.with-avatar {\n  padding-left: 100px;", block)
-        post_rule = re.search(r"\n\.post \{(.*?)\}", block, re.DOTALL).group(1)
-        self.assertNotIn("100px", post_rule)
+        # design-system: the room is the --avatar-indent token, 100px.
+        self.assertIn(".post.with-avatar {\n  padding-left: var(--avatar-indent);", self.css)
+        self.assertIn("--avatar-indent: 100px;", self.read("tokens.css"))
+        post_rule = re.search(r"\n\.post \{(.*?)\}", self.css, re.DOTALL).group(1)
+        self.assertNotIn("avatar-indent", post_rule)
         self.assertIn('item.classList.add("with-avatar")', self.avatar_part())
         # page-only/ has no circles, so its posts never get the class.
         self.assertNotIn("with-avatar", self.read("..", "page-only", "app.js"))
 
     def test_a_turned_off_button_looks_turned_off(self):
-        block = self.css[self.css.index("/* classic-style */"):]
-        rule = re.search(r"button:disabled:not\(\.like\) \{(.*?)\}", block, re.DOTALL).group(1)
+        # design-system: every button but a pill (the heart, the star), which is faded instead.
+        rule = re.search(r"button:disabled:not\(\.button-pill\) \{(.*?)\}", self.css,
+                         re.DOTALL).group(1)
         self.assertIn("background: none;", rule)
         self.assertIn("color: var(--quiet);", rule)
         self.assertIn("dashed", rule)
 
     def test_nothing_names_the_company(self):
-        files = [("with-backend", name) for name in ("index.html", "style.css", "app.js", "words.js")]
-        files += [("page-only", name) for name in ("index.html", "style.css", "app.js")]
+        files = [("with-backend", name) for name in
+                 ("index.html", "app.js", "words.js", "design.html") + DESIGN_FILES]
+        files += [("page-only", name) for name in ("index.html", "app.js") + DESIGN_FILES]
         for folder, name in files:
             with self.subTest(file=folder + "/" + name):
                 text = self.read("..", folder, name).lower()
                 for word in ("twitter", "tweet", "retweet"):
                     self.assertNotIn(word, text)
+
+
+
+# design-system: the raw values a style file should take from tokens.css instead.
+# Each is (what, pattern). A hairline (1px) and 0 are always allowed.
+RAW_COLOUR = r"#[0-9a-fA-F]{3,8}\b|\b(?:rgb|rgba|hsl|hsla)\(|:\s*(?:white|black)\b"
+RAW_PX_PROPERTIES = r"font-size|border(?:-[a-z]+)*-radius|margin(?:-[a-z]+)?|padding(?:-[a-z]+)?|gap|row-gap|column-gap"
+
+
+def raw_values_in(css, file_name="style"):
+    """Every raw colour, and every raw px in a font size, corner, margin, padding
+    or gap, as (file, line number, the declaration). Comments are left out."""
+    found = []
+    # Blank out comments, keeping their new lines, so line numbers stay right.
+    css = re.sub(r"/\*.*?\*/", lambda match: re.sub(r"[^\n]", " ", match.group(0)), css,
+                 flags=re.DOTALL)
+    for number, line in enumerate(css.split("\n"), start=1):
+        declaration = line.strip()
+        if re.search(RAW_COLOUR, declaration):
+            found.append((file_name, number, declaration))
+            continue
+        match = re.match(r"(" + RAW_PX_PROPERTIES + r")\s*:(.*)", declaration)
+        if match:
+            sizes = re.findall(r"(?<![\w.-])(\d*\.?\d+)px", match.group(2))
+            if [size for size in sizes if size not in ("0", "1")]:
+                found.append((file_name, number, declaration))
+    return found
+
+
+class DesignSystemTest(unittest.TestCase):
+    """design-system: the tokens, the components, and the rules that keep them in use.
+
+    These read the four style files, design.html and index.html as text. Raw
+    values outside tokens.css are only WARNED about (printed), never failed:
+    the owner chose a warning list. Everything else here is a real test.
+    """
+
+    def read(self, *path):
+        with open(os.path.join(HERE, *path), encoding="utf-8") as file:
+            return file.read()
+
+    def setUp(self):
+        self.tokens = self.read("tokens.css")
+        self.others = {name: self.read(name) for name in DESIGN_FILES if name != "tokens.css"}
+        self.guide = self.read("design.html")
+        # Every token defined in tokens.css: {name: value}.
+        self.defined = dict(re.findall(r"^\s*--([\w-]+):\s*([^;]+);", self.tokens, re.MULTILINE))
+
+    def test_every_token_used_is_defined(self):
+        guide_style = self.guide[self.guide.index("<style>"):self.guide.index("</style>")]
+        for name, text in list(self.others.items()) + [("tokens.css", self.tokens),
+                                                       ("design.html", guide_style)]:
+            for token in set(re.findall(r"var\(--([\w-]+)\)", text)):
+                with self.subTest(file=name, token=token):
+                    self.assertIn(token, self.defined)
+
+    def test_every_token_defined_is_used(self):
+        # A token used only by another token (--author in --focus-ring) counts.
+        used = set(re.findall(r"var\(--([\w-]+)\)", "\n".join(self.others.values())))
+        used |= set(re.findall(r"var\(--([\w-]+)\)", self.tokens))
+        for token in self.defined:
+            with self.subTest(token=token):
+                self.assertIn(token, used)
+
+    def test_only_tokens_css_defines_tokens(self):
+        for name, text in self.others.items():
+            with self.subTest(file=name):
+                self.assertEqual(re.findall(r"^\s*(--[\w-]+)\s*:", text, re.MULTILINE), [])
+        self.assertGreater(len(self.defined), 40)
+
+    def test_every_component_is_on_the_style_guide(self):
+        components = self.read("components.css")
+        without_comments = re.sub(r"/\*.*?\*/", "", components, flags=re.DOTALL)
+        classes = set(re.findall(r"\.([a-z][\w-]*)", without_comments))
+        self.assertLessEqual({"button-link", "button-quiet", "button-pill", "card", "disclosure",
+                              "menu", "tabs", "status", "avatar", "post", "count", "hint"},
+                             classes)
+        on_guide = set()
+        for attribute in re.findall(r'class="([^"]*)"', self.guide):
+            on_guide.update(attribute.split())
+        for name in sorted(classes):
+            with self.subTest(component=name):
+                self.assertIn(name, on_guide)
+
+    def test_the_pages_and_the_guide_load_exactly_the_four_files_in_order(self):
+        pages = [("with-backend", "index.html"), ("with-backend", "design.html"),
+                 ("page-only", "index.html")]
+        for folder, name in pages:
+            with self.subTest(page=folder + "/" + name):
+                text = self.read("..", folder, name)
+                links = re.findall(r'<link rel="stylesheet" href="([^"]+)">', text)
+                self.assertEqual(tuple(links), DESIGN_FILES)
+
+    def test_the_server_gives_the_style_files_and_the_guide(self):
+        for name in DESIGN_FILES + ("design.html",):
+            with self.subTest(file=name):
+                self.assertEqual(server.PAGE_FILES["/" + name][0], name)
+                self.assertTrue(os.path.exists(os.path.join(HERE, name)))
+        self.assertNotIn("/style.css", server.PAGE_FILES)
+        self.assertTrue(server.PAGE_FILES["/design.html"][1].startswith("text/html"))
+
+    def test_the_guide_builds_with_text_never_html(self):
+        script = self.guide[self.guide.index("<script>"):]
+        for unsafe in ("innerHTML", "outerHTML", "insertAdjacentHTML", "document.write"):
+            self.assertNotIn(unsafe, script)
+        # It lists the tokens by reading tokens.css itself, so the list is never out of date.
+        self.assertIn('fetch("tokens.css")', script)
+
+    def test_the_raw_value_finder_finds_raw_values(self):
+        sample = ("a {\n  padding: 12px 0;\n  margin: 0;\n  color: #fff;\n"
+                  "  border-bottom: 1px solid var(--border);\n  gap: var(--space-4);\n"
+                  "  font-size: 18px;\n  width: 240px;\n  border-radius: 1px;\n}\n"
+                  "/* padding: 99px */\n")
+        self.assertEqual([line for _, line, _ in raw_values_in(sample)], [2, 4, 7])
+
+    def test_raw_values_outside_tokens_are_listed(self):
+        # A warning list, not a failure (the owner's choice): print each one.
+        found = []
+        for name, text in self.others.items():
+            found.extend(raw_values_in(text, name))
+        if found:
+            print("\n  design-system warning: %d raw value(s) outside tokens.css "
+                  "(use a token instead):" % len(found))
+            for name, number, declaration in found:
+                print("    %s:%d  %s" % (name, number, declaration))
 
 
 if __name__ == "__main__":

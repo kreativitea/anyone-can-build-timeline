@@ -1,0 +1,36 @@
+/* Timeline's design system, part 2 of 4: the page itself.
+   The box model, the hidden rule, the page's colours and type, and the column
+   everything sits in. Only tokens from tokens.css: no raw values. */
+
+* {
+  box-sizing: border-box;
+}
+
+/* A part of the page marked hidden is never shown, even if a rule below gives it
+   a display of its own (as .account-forms does). */
+[hidden] {
+  display: none !important;
+}
+
+/* The whole page, with a band of colour across the top (classic-style). */
+body {
+  margin: 0;
+  border-top: var(--band) solid var(--button);
+  background: var(--background);
+  color: var(--text);
+  font-family: var(--font-family);
+  font-size: var(--text-body);
+  line-height: var(--line-height);
+}
+
+/* The one column everything sits in. */
+main {
+  max-width: var(--page-width);
+  margin: 0 auto;
+  padding: var(--space-11) var(--space-8);
+}
+
+h1 {
+  margin: 0 0 var(--space-8);
+  font-size: var(--text-title);
+}

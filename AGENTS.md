@@ -24,10 +24,14 @@ piece of text the browser keeps and sends back by itself), never from a name in 
 | File | Its one job |
 |---|---|
 | `page-only/index.html` | The demo screen: two name boxes, post box, Post button, timeline. No login. |
-| `page-only/style.css` | An exact copy of `with-backend/style.css`. Change that one, then copy it here. |
+| `page-only/tokens.css`, `base.css`, `components.css`, `features.css` | Exact copies of the four style files in `with-backend/`. Change those, then copy them here. |
 | `page-only/app.js` | Checks the rules and keeps the posts in this window's `sessionStorage`. There are no likes in this version. |
 | `with-backend/index.html` | The parts of the screen: Log in and Sign up forms when signed out; "Signed in as …", Log out and the post box when signed in; the timeline. A tiny script in `<head>` that sets the colours before the page is drawn, and the Colours switch. |
-| `with-backend/style.css` | How the screen looks: the classic light-blue feel, with all posts in one card and a line between them. Each colour is written once for light and dark, as `light-dark(LIGHT, DARK)`. The classic look is one `/* classic-style */` block at the end. |
+| `with-backend/tokens.css` | The design system's **tokens**: every colour (written once for light and dark, as `light-dark(LIGHT, DARK)`), type size, space, corner, line and size, by name. The only file with raw values. |
+| `with-backend/base.css` | The page itself: the box model, `[hidden]`, `body` (the band of colour at the top), `main`, `h1`. |
+| `with-backend/components.css` | The shared **components**, each one class: field, button (`.button-link`, `.button-quiet`, `.button-pill`), `.card`, `.disclosure`, `.menu`, `.tabs`, `.status`, `.avatar`, and `.post` with its slots and states. The classic light-blue look: all posts in one card, a line between them. |
+| `with-backend/features.css` | Each feature's own small block, under its name. It only arranges components, with tokens. |
+| `with-backend/design.html` | The style guide, at `/design.html`: every token and every component, light and dark side by side, with sample posts. For builders: English only, not in `words.js`. |
 | `with-backend/app.js` | Asks the server who is logged in, sends sign-ups, logins, log-outs, posts, likes and likes taken back, and asks for new posts and new like counts every second. Remembers the Colours choice in `localStorage`. It keeps a half-written post in this browser's `localStorage`, one per account, removed after posting or logging out. It shows who liked each post, and asks for the names only when a count changes. It searches posts (`GET /search`) and shows the results in their own view. It asks for the newest page of posts, older pages on scroll, and holds new posts behind a "3 new posts" button while you read lower down. It sends bookmarks and bookmarks taken back, and asks for your bookmarks (never every second). It remembers the last place typed (`timeline-place`), forgotten on log out. It edits and deletes your own posts, shows earlier versions, and asks for changes (`GET /changes`) every second, before new posts. Each post shows a coloured circle with the first letter of the display name (`avatarPart`; the colour comes from the account name, `avatarColour`). |
 | `with-backend/server.py` | The backend, in three labelled parts: **controller**, **model**, **view**. |
 | `with-backend/words.js` | Every word the page shows, by key (`WORDS`). English only for now; Japanese comes later. |
@@ -172,6 +176,30 @@ same functions as every other feature. Use them; do not go around them.
 - A request body bigger than `MAX_REQUEST_BYTES` (4 MB) gets `413` before it is read.
 - A path the server does not know gets `404` with one sentence: "There is nothing to {method} at
   {path}."
+
+## Design system
+
+The look is made of **tokens** (`tokens.css`) and **components** (`components.css`); see
+DESIGN.md, "Design system". **Look at `/design.html` first** (run the server, open
+<http://localhost:8009/design.html>).
+
+- **Use components and tokens; never a raw value.** A new button is a `<button>` (with
+  `button-link`, `button-quiet` or `button-pill` if it is not a main button); a new box is a
+  `.card`; a box that opens is a `<details class="disclosure">`. Give the class where `app.js`
+  builds the element (a class-name change only). Never make a new kind of button, card, size or
+  colour in `features.css`.
+- **A feature's style** goes at the end of `features.css`, under `/* your-feature */`: only where
+  things sit and the room between them, with tokens (`var(--space-6)`, `var(--text-small)`). Then
+  copy the four files to `page-only/`. A new token goes in `tokens.css` (a colour in the first
+  `:root` block, as `light-dark(LIGHT, DARK)`), and must be used.
+- **The warning list.** `make test` prints every raw colour, and every raw `px` in a font size,
+  corner, margin, padding or gap, outside `tokens.css` (file, line, value). It does not fail: the
+  owner chose a warning list. Keep it empty (it is empty today); `0` and a `1px` hairline are fine.
+- **Real tests** (`DesignSystemTest`): every `var(--x)` is defined and every token is used; only
+  `tokens.css` defines tokens; every component class is on `design.html`; both `index.html` files
+  and `design.html` link exactly the four files, in order.
+- **Nothing on screen may change** when you only tidy the style. Compare the page before and after
+  (light and dark, wide and phone), for example by dumping `getComputedStyle` of every element.
 
 ## Search
 
@@ -508,7 +536,7 @@ Four kinds of test live there:
   every step. A feature that spans the page, the server and the store belongs here too.
 - `PageAndServerAgreeTest` reads `app.js` and checks every request it names is one the server
   answers, that the JSON names it sends are exactly the ones the server reads, that it has the
-  model's limits and patterns, and that the two `style.css` files are the same. The page's own
+  model's limits and patterns, and that the four style files are the same in both folders. The page's own
   JavaScript is never run by the tests: that would need a browser or Node, and this project needs
   only `python3`.
 

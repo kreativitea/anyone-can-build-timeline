@@ -1,0 +1,429 @@
+/* Timeline's design system, part 3 of 4: the components.
+   A component is one shared piece of the page, like a button or a card. Each
+   one has a class (and a few modifiers), and is made only of tokens from
+   tokens.css. A feature uses these; it does not make its own buttons, cards or
+   sizes. Every component is shown at /design.html.
+
+   Components, in this order:
+     field       label, input, textarea, select, .hint, .count
+     button      button (every <button>), .button-link, .button-quiet, .button-pill
+     card        .card (a box with an edge), and .disclosure when open
+     disclosure  .disclosure (a <details> box that opens and closes)
+     menu        .menu (the "⋯" menu of a post)
+     tabs        .tabs (a row of view buttons, one current)
+     status      .status (the one-line message under the post box)
+     avatar      .avatar (the circle with a letter), .avatar-colour-1 … 6
+     post        .timeline (a list of posts), .post and its slots and states */
+
+
+/* ---- field: a label and the box under it ---- */
+
+label {
+  display: block;
+  margin-bottom: var(--space-3);
+  color: var(--quiet);
+  font-weight: var(--weight-medium);
+}
+
+input,
+textarea {
+  width: 100%;
+  padding: var(--space-6) var(--space-7);
+  border: var(--line) solid var(--border);
+  border-radius: var(--radius-field);
+  background: var(--card);
+  color: var(--text);
+  font: inherit;
+}
+
+textarea {
+  resize: vertical;
+}
+
+/* A choice from a list (the Colours switch): a smaller box of the same kind. */
+select {
+  padding: var(--space-3) var(--space-6);
+  border: var(--line) solid var(--border);
+  border-radius: var(--radius-field);
+  background: var(--card);
+  color: var(--text);
+  font: inherit;
+}
+
+/* The focus ring: where the keyboard is. The same on every box and button. */
+input:focus,
+textarea:focus,
+select:focus,
+button:focus {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-offset);
+}
+
+/* A small note under a box. */
+.hint {
+  margin: 0;
+  color: var(--quiet);
+  font-size: var(--text-small);
+}
+
+/* A number in a line: how many characters are left, how many replies.
+   .too-long: past the limit. */
+.count {
+  color: var(--quiet);
+}
+
+.count.too-long {
+  color: var(--warning);
+  font-weight: var(--weight-bold);
+}
+
+
+/* ---- button ---- */
+
+/* Every <button> is a button: a rounded rectangle in the button colour. */
+button {
+  padding: var(--space-6) var(--space-12);
+  border: none;
+  border-radius: var(--radius);
+  background: var(--button);
+  color: var(--button-text);
+  font: inherit;
+  font-weight: var(--weight-bold);
+  cursor: pointer;
+}
+
+/* .button-link: a button that looks like a link, so "Log out" sits inside a sentence. */
+.button-link {
+  padding: 0;
+  border-radius: 0;
+  background: none;
+  color: var(--author);
+  text-decoration: underline;
+}
+
+/* .button-quiet: a button that looks like quiet text (the number by the heart,
+   "Ben and 2 others liked this"). It is underlined only under the mouse or the keyboard. */
+.button-quiet {
+  padding: 0;
+  border-radius: 0;
+  background: none;
+  color: var(--quiet);
+  font-weight: var(--weight-normal);
+  text-align: left;
+}
+
+.button-quiet:hover,
+.button-quiet:focus-visible {
+  text-decoration: underline;
+}
+
+/* .button-pill: a small round button with an edge (the heart, the star). */
+.button-pill {
+  padding: var(--space-1) var(--space-9);
+  border: var(--line) solid var(--border);
+  border-radius: var(--radius-pill);
+  background: none;
+  color: var(--quiet);
+}
+
+.button-pill:hover {
+  border-color: var(--author);
+  color: var(--author);
+}
+
+/* A button that is turned off (for example Post, held for some seconds by the
+   rate limit) must not look like one that works: no colour, quiet words and a
+   dashed edge, in both modes. An outline takes no room, so nothing moves. */
+button:disabled:not(.button-pill) {
+  background: none;
+  color: var(--quiet);
+  outline: var(--line) dashed var(--border);
+  outline-offset: calc(-1 * var(--line));
+  cursor: not-allowed;
+}
+
+/* A pill that is turned off (a heart in the search results) is faded instead. */
+.button-pill:disabled {
+  opacity: var(--faded);
+  cursor: not-allowed;
+}
+
+.button-pill:disabled:hover {
+  border-color: var(--border);
+  color: var(--quiet);
+}
+
+
+/* ---- card: a box with an edge and round corners ---- */
+
+/* An empty card shows no box at all (an empty list of posts). A disclosure
+   (below) becomes a card while it is open. Each feature gives its card the
+   room inside it (padding). */
+.card:not(:empty),
+.disclosure[open] {
+  border: var(--line) solid var(--border);
+  border-radius: var(--radius-large);
+  background: var(--card);
+}
+
+
+/* ---- disclosure: a <details> box that opens and closes, with no JavaScript ---- */
+
+.disclosure[open] {
+  padding: var(--space-6) var(--space-8);
+}
+
+.disclosure summary,
+.menu summary {
+  width: fit-content;
+  color: var(--quiet);
+  cursor: pointer;
+}
+
+
+/* ---- menu: the "⋯" menu, a disclosure with no triangle and a list of buttons ---- */
+
+.menu summary {
+  list-style: none;
+}
+
+.menu summary::-webkit-details-marker {
+  display: none;
+}
+
+.menu ul {
+  margin: var(--space-3) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+
+/* ---- tabs: the buttons that switch between views ---- */
+
+.tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-6);
+  margin-bottom: var(--space-8);
+}
+
+.tabs > button[aria-current="page"] {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-offset);
+}
+
+
+/* ---- status: the one-line message under the post box (a refusal, a problem) ---- */
+
+.status {
+  min-height: calc(var(--line-height) * 1em);
+  margin: var(--space-6) 0;
+  color: var(--warning);
+  font-weight: var(--weight-bold);
+}
+
+
+/* ---- avatar: the circle with the first letter of the name ---- */
+
+/* It has no words of its own (aria-hidden). It sits in the room a post leaves
+   on its left (.with-avatar). */
+.avatar {
+  position: absolute;
+  top: var(--space-8);
+  left: var(--space-10);
+  width: var(--avatar);
+  height: var(--avatar);
+  border-radius: var(--radius-round);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--button-text);
+  font-size: var(--avatar-letter);
+  font-weight: var(--weight-bold);
+  line-height: 1;
+}
+
+.avatar-colour-1 { background: var(--avatar-1); }
+.avatar-colour-2 { background: var(--avatar-2); }
+.avatar-colour-3 { background: var(--avatar-3); }
+.avatar-colour-4 { background: var(--avatar-4); }
+.avatar-colour-5 { background: var(--avatar-5); }
+.avatar-colour-6 { background: var(--avatar-6); }
+
+
+/* ---- post: one post, and a list of them ---- */
+
+/* A list of posts (the timeline, the search results, My bookmarks). It is a
+   .card too: all posts in one card, with a line between them. */
+.timeline {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.timeline:not(:empty) {
+  overflow: hidden;
+}
+
+.post {
+  position: relative;
+  margin: 0;
+  padding: var(--space-8) var(--space-10);
+  border: none;
+  border-bottom: var(--line) solid var(--border);
+  border-radius: 0;
+  background: var(--card);
+}
+
+.timeline > li:last-child {
+  border-bottom: none;
+}
+
+/* Room on the left for the circle, only when the post has one (page-only/
+   has no circles, so its posts have no empty space on the left). */
+.post.with-avatar {
+  padding-left: var(--avatar-indent);
+}
+
+/* head: the names and the time. */
+.post-author {
+  color: var(--author);
+  font-weight: var(--weight-bold);
+}
+
+/* The @name and the time: a little smaller, and quiet, on the name's line. */
+.post-handle,
+.post-time {
+  color: var(--quiet);
+  font-size: var(--text-meta);
+}
+
+.post-handle {
+  margin-left: var(--space-4);
+}
+
+.post-time {
+  margin-left: var(--space-6);
+}
+
+/* The time at the right of the first line of a post. What comes after it in
+   the head ("· Osaka", "· edited") stays on the left, after the @name. */
+.post-head > .post-time {
+  float: right;
+}
+
+/* body: the words. */
+.post-text {
+  margin: var(--space-3) 0 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* The slots inside a post (head, body, foot). They only group the parts for
+   the code, and take no room of their own (groundwork). */
+.post-head,
+.post-body,
+.post-foot {
+  display: contents;
+}
+
+/* What is under the names starts below the time, never beside it. */
+.post-body > * {
+  clear: right;
+}
+
+/* menu: the "⋯" under the post. It is shown only when it has something in it. */
+.post-menu {
+  margin-top: var(--space-5);
+}
+
+/* State: deleted, but kept for its replies: no words, only this line (edit-delete). */
+.post-text.post-deleted {
+  color: var(--quiet);
+  font-style: italic;
+}
+
+/* State: hidden by reports. Only its author sees it: faded, circle too (report). */
+.hidden-by-reports .post-text,
+.hidden-by-reports .post-author,
+.hidden-by-reports .post-handle,
+.hidden-by-reports .post-time,
+.hidden-by-reports .avatar {
+  opacity: var(--faded);
+}
+
+/* State: a reply. The replies of a post sit just under it, in the same card:
+   a post with replies has no line under it, so its replies read as part of it.
+   They are moved in to the post's words, with a line on the left, and smaller
+   circles (replies). */
+.post:has(+ .reply-thread) {
+  padding-bottom: var(--space-4);
+  border-bottom: none;
+}
+
+.reply-thread {
+  margin: 0;
+  padding: 0 var(--space-10) var(--space-6) var(--avatar-indent);
+  border-bottom: var(--line) solid var(--border);
+}
+
+.replies {
+  margin: 0;
+  padding: 0;
+  border-left: var(--line-thick) solid var(--border);
+  list-style: none;
+}
+
+.replies > .post {
+  padding: var(--space-6) var(--space-8);
+}
+
+.replies > .post:last-child {
+  border-bottom: none;
+}
+
+.replies > .post.with-avatar {
+  padding-left: var(--avatar-indent-small);
+}
+
+.replies .avatar {
+  top: var(--space-6);
+  left: var(--space-8);
+  width: var(--avatar-small);
+  height: var(--avatar-small);
+  font-size: var(--avatar-small-letter);
+}
+
+/* A light tint under the mouse, only where there is a mouse. A phone and a
+   keyboard have no "over", so nothing is hidden until then: the heart always shows. */
+@media (hover: hover) {
+  .post:hover {
+    background: var(--hover);
+  }
+}
+
+/* On a phone: the same type, a smaller circle and less space around it. */
+@media (max-width: 600px) {
+  .post,
+  .replies > .post {
+    padding: var(--space-6);
+  }
+
+  .post.with-avatar,
+  .replies > .post.with-avatar {
+    padding-left: var(--avatar-indent-phone);
+  }
+
+  .avatar,
+  .replies .avatar {
+    top: var(--space-6);
+    left: var(--space-6);
+    width: var(--avatar-small);
+    height: var(--avatar-small);
+    font-size: var(--avatar-small-letter);
+  }
+
+  .reply-thread {
+    padding: 0 var(--space-6) var(--space-6) var(--space-11);
+  }
+}

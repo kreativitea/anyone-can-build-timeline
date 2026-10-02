@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Timeline: the style guide</title>
+  <!-- The style guide uses only the real design system files, in the same order
+       as index.html. It is a page for people building Timeline, so its words are
+       English and are not in words.js (see DESIGN.md, "Design system"). -->
+  <link rel="stylesheet" href="tokens.css">
+  <link rel="stylesheet" href="base.css">
+  <link rel="stylesheet" href="components.css">
+  <link rel="stylesheet" href="features.css">
+  <!-- Only the guide's own layout: two columns, one light and one dark. Tokens only. -->
+  <style>
+    .guide-columns {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(min(100%, 560px), 1fr));
+    }
+    .guide-column {
+      padding: var(--space-11) var(--space-8);
+      background: var(--background);
+      color: var(--text);
+    }
+    .guide-light { color-scheme: light; }
+    .guide-dark { color-scheme: dark; }
+    .guide-column h2 {
+      margin: var(--space-12) 0 var(--space-4);
+      font-size: var(--text-large);
+    }
+    .guide-column h3 {
+      margin: var(--space-11) 0 var(--space-4);
+      font-size: var(--text-body);
+    }
+    .guide-note {
+      margin: 0 0 var(--space-6);
+      color: var(--quiet);
+      font-size: var(--text-small);
+    }
+    .guide-row {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: var(--space-6);
+      margin-bottom: var(--space-6);
+    }
+    .guide-tokens {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: var(--text-small);
+    }
+    .guide-tokens td {
+      padding: var(--space-2) var(--space-4) var(--space-2) 0;
+      border-bottom: 1px solid var(--border);
+      vertical-align: middle;
+      overflow-wrap: anywhere;
+    }
+    .guide-sample {
+      display: block;
+      min-width: var(--space-11);
+      min-height: var(--space-11);
+      border: 1px solid var(--border);
+      background: var(--card);
+    }
+    .guide-row .avatar {
+      position: static;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Timeline: the style guide</h1>
+    <p>Every token and every component of the design system, drawn by the real
+      files: <code>tokens.css</code>, <code>base.css</code>, <code>components.css</code> and
+      <code>features.css</code>. Look here before you add a feature: use these pieces, and
+      add a value to <code>tokens.css</code> only when no token fits. Light on the left,
+      dark on the right (one under the other on a phone).</p>
+  </main>
+
+  <div class="guide-columns" id="columns"></div>
+
+  <!-- One copy of the guide. The script below puts it in both columns. -->
+  <template id="guide">
+    <h2>Tokens</h2>
+    <p class="guide-note">Read from tokens.css as it is now, so this list is never out of date.</p>
+    <table class="guide-tokens"><tbody data-guide="tokens"></tbody></table>
+
+    <h2>Components</h2>
+
+    <h3>field: <code>label</code>, <code>input</code>, <code>textarea</code>, <code>select</code>, <code>.hint</code>, <code>.count</code></h3>
+    <label>Place (anyone can see this)</label>
+    <input type="text" placeholder="Osaka">
+    <p class="hint">A small note under a box.</p>
+    <label>What is happening?</label>
+    <textarea rows="2">A box to write in.</textarea>
+    <div class="guide-row">
+      <span class="count">12 / 560</span>
+      <span class="count too-long">-3 / 560</span>
+      <select><option>Auto (follow this computer)</option></select>
+    </div>
+
+    <h3>button: <code>button</code>, <code>.button-link</code>, <code>.button-quiet</code>, <code>.button-pill</code></h3>
+    <div class="guide-row">
+      <button type="button">Post</button>
+      <button type="button" disabled>Turned off</button>
+      <button type="button" class="button-link">Log out</button>
+      <button type="button" class="button-quiet">Ben and 2 others liked this</button>
+    </div>
+    <div class="guide-row">
+      <button type="button" class="button-pill">♥</button>
+      <button type="button" class="like button-pill liked">♥</button>
+      <button type="button" class="button-pill" disabled>♥</button>
+      <button type="button" class="bookmark button-pill bookmarked">★</button>
+    </div>
+
+    <h3>card: <code>.card</code></h3>
+    <form class="card account-form">
+      <h2>Log in</h2>
+      <label>Account name</label>
+      <input type="text" placeholder="aiko">
+      <button type="button">Log in</button>
+    </form>
+
+    <h3>disclosure: <code>.disclosure</code> (a card while it is open)</h3>
+    <details class="disclosure" open>
+      <summary>Blocked accounts</summary>
+      <p class="hint">What is inside.</p>
+    </details>
+
+    <h3>menu: <code>.menu</code></h3>
+    <details class="menu" open>
+      <summary>⋯</summary>
+      <ul>
+        <li><button type="button" class="button-link">Edit</button></li>
+        <li><button type="button" class="button-link">Delete</button></li>
+      </ul>
+    </details>
+
+    <h3>tabs: <code>.tabs</code></h3>
+    <nav class="tabs">
+      <button type="button" aria-current="page">Timeline</button>
+      <button type="button">My bookmarks</button>
+    </nav>
+
+    <h3>status: <code>.status</code></h3>
+    <p class="status">Please wait 5 seconds before posting again.</p>
+
+    <h3>avatar: <code>.avatar</code>, <code>.avatar-colour-1</code> … <code>6</code></h3>
+    <div class="guide-row">
+      <span class="avatar avatar-colour-1" aria-hidden="true">A</span>
+      <span class="avatar avatar-colour-2" aria-hidden="true">B</span>
+      <span class="avatar avatar-colour-3" aria-hidden="true">C</span>
+      <span class="avatar avatar-colour-4" aria-hidden="true">D</span>
+      <span class="avatar avatar-colour-5" aria-hidden="true">E</span>
+      <span class="avatar avatar-colour-6" aria-hidden="true">F</span>
+    </div>
+
+    <h3>post: <code>.timeline</code> and <code>.post</code>, with its slots and states</h3>
+    <p class="guide-note">The same parts makePostItem builds in app.js: the slots
+      .post-head, .post-body, .post-foot and .post-menu. States: a post with a reply
+      (.reply-thread, .replies), deleted (.post-deleted) and hidden by reports
+      (.hidden-by-reports, only its author sees it).</p>
+    <ol class="timeline card">
+      <li class="post with-avatar">
+        <div class="post-head"><span class="avatar avatar-colour-1" aria-hidden="true">A</span><span class="post-author">Aiko Tanaka</span><span class="post-handle">@aiko</span><time class="post-time">May 1</time><span class="post-place">· Umeda</span></div>
+        <div class="post-body"><p class="post-text">Lunch at noon? See <a class="post-link" href="https://example.com/">https://example.com/</a> <a class="post-tag" href="/?q=%23lunch">#lunch</a> with <a class="post-name" href="/?q=%40ben">@ben</a></p></div>
+        <div class="post-foot"><div class="like-row"><button type="button" class="like button-pill">♥</button><button type="button" class="like-count button-quiet">2</button><button type="button" class="button-link reply-button">Reply</button><span class="reply-count count">1 reply</span><button type="button" class="bookmark button-pill">☆</button></div><button type="button" class="like-summary button-quiet">Ben and Chika liked this post</button></div>
+        <details class="post-menu menu"><summary>⋯</summary><ul><li><button type="button" class="button-link">Edit</button></li></ul></details>
+      </li>
+      <li class="reply-thread">
+        <ol class="replies">
+          <li class="post with-avatar">
+            <div class="post-head"><span class="avatar avatar-colour-4" aria-hidden="true">B</span><span class="post-author">Ben Carter</span><span class="post-handle">@ben</span><time class="post-time">May 1</time></div>
+            <div class="post-body"><p class="replying-to">Replying to @aiko</p><p class="post-text">Yes, see you there.</p></div>
+            <div class="post-foot"><div class="like-row"><button type="button" class="like button-pill">♥</button><button type="button" class="like-count button-quiet">0</button><button type="button" class="bookmark button-pill">☆</button></div></div>
+          </li>
+        </ol>
+      </li>
+      <li class="post with-avatar">
+        <div class="post-head"><span class="avatar avatar-colour-2" aria-hidden="true">D</span><span class="post-author">Dan Okafor</span><span class="post-handle">@dan</span><time class="post-time">May 1</time></div>
+        <div class="post-body"><p class="post-text post-deleted">This post was deleted</p></div>
+        <div class="post-foot"><div class="like-row"><span class="reply-count count">1 reply</span></div></div>
+      </li>
+      <li class="post hidden-by-reports with-avatar">
+        <div class="post-head"><span class="avatar avatar-colour-1" aria-hidden="true">A</span><span class="post-author">Aiko Tanaka</span><span class="post-handle">@aiko</span><time class="post-time">May 1</time></div>
+        <div class="post-body"><p class="hidden-note">Hidden from others: several people reported it.</p><p class="post-text">A post three people reported.</p></div>
+        <div class="post-foot"><div class="like-row"><button type="button" class="like button-pill">♥</button><button type="button" class="like-count button-quiet">0</button></div></div>
+      </li>
+    </ol>
+  </template>
+
+  <script>
+    // Put the guide in two columns: light, then dark. Each column sets its own
+    // color-scheme, so every light-dark() colour inside it follows.
+    const columns = document.getElementById("columns");
+    const guide = document.getElementById("guide");
+    for (const scheme of ["light", "dark"]) {
+      const column = document.createElement("section");
+      column.className = "guide-column guide-" + scheme;
+      const heading = document.createElement("h2");
+      heading.textContent = scheme === "light" ? "Light" : "Dark";
+      column.append(heading, guide.content.cloneNode(true));
+      columns.append(column);
+    }
+
+    // The token tables: read tokens.css itself, so every token is listed with
+    // its value and its note. Each row shows a sample drawn with the token.
+    function sampleFor(name) {
+      const sample = document.createElement("span");
+      sample.className = "guide-sample";
+      const value = "var(" + name + ")";
+      if (/^--(background|card|text|quiet|author|button|button-text|warning|border|hover|avatar-\d)$/.test(name)) {
+        sample.style.background = value;
+      } else if (name.startsWith("--space-") || name.startsWith("--avatar") || name === "--check-size") {
+        sample.style.width = value;
+        sample.style.minWidth = "0";
+        sample.style.background = "var(--button)";
+      } else if (name.startsWith("--radius")) {
+        sample.style.borderRadius = value;
+        sample.style.borderWidth = "var(--line)";
+      } else if (name.startsWith("--text-") || name === "--font-family" || name.startsWith("--weight")) {
+        sample.textContent = "Aa";
+        sample.style.border = "none";
+        sample.style.background = "none";
+        sample.style[name.startsWith("--weight") ? "fontWeight" : name === "--font-family" ? "fontFamily" : "fontSize"] = value;
+      } else if (name === "--line" || name === "--line-thick" || name === "--band") {
+        sample.style.borderTop = value + " solid var(--border)";
+      } else if (name === "--focus-ring") {
+        sample.style.outline = value;
+      } else if (name === "--faded") {
+        sample.style.opacity = value;
+        sample.style.background = "var(--button)";
+      } else {
+        sample.style.border = "none";
+        sample.style.background = "none";
+      }
+      return sample;
+    }
+
+    fetch("tokens.css").then(function (answer) {
+      return answer.text();
+    }).then(function (css) {
+      const rows = [];
+      for (const match of css.matchAll(/^[ \t]*(--[\w-]+):[ \t]*([^;]+);[ \t]*(?:\/\*[ \t]*(.*?)[ \t]*\*\/)?/gm)) {
+        rows.push({ name: match[1], value: match[2], note: match[3] || "" });
+      }
+      for (const body of document.querySelectorAll('[data-guide="tokens"]')) {
+        for (const row of rows) {
+          const line = document.createElement("tr");
+          const sampleCell = document.createElement("td");
+          sampleCell.append(sampleFor(row.name));
+          const nameCell = document.createElement("td");
+          const code = document.createElement("code");
+          code.textContent = row.name;
+          nameCell.append(code);
+          const valueCell = document.createElement("td");
+          valueCell.textContent = row.value + (row.note ? " — " + row.note : "");
+          line.append(sampleCell, nameCell, valueCell);
+          body.append(line);
+        }
+      }
+    });
+  </script>
+</body>
+</html>

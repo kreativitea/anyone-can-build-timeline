@@ -265,7 +265,7 @@ function makePostItem(post) {
   item.dataset.postId = post.id;
 
   // The slots only group the parts. They take no room of their own (see
-  // style.css), so the post looks the same as when the parts sat in it directly.
+  // components.css), so the post looks the same as when the parts sat in it directly.
   const slots = {};
   for (const name of POST_SLOTS) {
     slots[name] = document.createElement("div");
@@ -288,7 +288,7 @@ function makePostItem(post) {
 // menu shows no "⋯" at all.
 function makePostMenu() {
   const menu = document.createElement("details");
-  menu.className = "post-menu";
+  menu.className = "post-menu menu";
   menu.hidden = true;
   const summary = document.createElement("summary");
   summary.dataset.wordsAriaLabel = "post_menu_label";
@@ -304,7 +304,7 @@ function makePostMenu() {
 function addMenuItem(slots, action, key) {
   const button = document.createElement("button");
   button.type = "button";
-  button.className = "link-button";
+  button.className = "button-link";
   button.dataset.action = action;
   button.dataset.postId = slots.menu.closest(".post").dataset.postId;
   button.dataset.words = key;
@@ -635,7 +635,7 @@ addPostPart(function heartPart(post, slots) {
 
   const likeButton = document.createElement("button");
   likeButton.type = "button";
-  likeButton.className = "like";
+  likeButton.className = "like button-pill";
   likeButton.dataset.action = "like";
   likeButton.dataset.postId = post.id;
   likeButton.setAttribute("aria-pressed", "false");
@@ -644,7 +644,7 @@ addPostPart(function heartPart(post, slots) {
   // The count is a button too: it opens the list of who liked the post (who-liked).
   const likeCount = document.createElement("button");
   likeCount.type = "button";
-  likeCount.className = "like-count";
+  likeCount.className = "like-count button-quiet";
   likeCount.dataset.action = "likers";
   likeCount.dataset.postId = post.id;
   likeCount.setAttribute("aria-expanded", "false");
@@ -701,7 +701,7 @@ const MAX_SUMMARY_POSTS = 100;
 addPostPart(function whoLikedPart(post, slots) {
   const summary = document.createElement("button");
   summary.type = "button";
-  summary.className = "like-summary";
+  summary.className = "like-summary button-quiet";
   summary.dataset.action = "likers";
   summary.dataset.postId = post.id;
   summary.setAttribute("aria-expanded", "false");
@@ -1197,7 +1197,7 @@ function makeExpandable(textElement, postId) {
 
   const button = document.createElement("button");
   button.type = "button";
-  button.className = "show-more";
+  button.className = "show-more button-link";
   button.dataset.action = "expand";
   button.dataset.postId = postId;
   button.setAttribute("aria-controls", textElement.id);
@@ -1310,7 +1310,7 @@ addPostPart(function replyPart(post, slots) {
   }
   const button = document.createElement("button");
   button.type = "button";
-  button.className = "link-button reply-button";
+  button.className = "button-link reply-button";
   button.dataset.action = "reply";
   button.dataset.postId = post.id;
   button.dataset.author = post.author;
@@ -1319,7 +1319,7 @@ addPostPart(function replyPart(post, slots) {
   button.setAttribute("aria-label", say("reply_button_label", { name: post.author }));
 
   const count = document.createElement("span");
-  count.className = "reply-count";
+  count.className = "reply-count count";
   writeReplyCount(count, post.reply_count || 0);
 
   // Beside the heart, if there is one.
@@ -2419,7 +2419,7 @@ let bookmarksViewButton = null;
 addPostPart(function bookmarkPart(post, slots) {
   const button = document.createElement("button");
   button.type = "button";
-  button.className = "bookmark";
+  button.className = "bookmark button-pill";
   button.dataset.action = "bookmark";
   button.dataset.postId = post.id;
   drawBookmarkButton(button, bookmarked.has(post.id));
@@ -2570,7 +2570,7 @@ function setUpBookmarks() {
   const section = addView("bookmarks", "bookmarks_view");
   bookmarkList = document.createElement("ol");
   bookmarkList.id = "bookmark-list";
-  bookmarkList.className = "timeline";
+  bookmarkList.className = "timeline card";
   bookmarkList.dataset.wordsAriaLabel = "bookmarks_list";
   bookmarkList.setAttribute("aria-label", say("bookmarks_list"));
   bookmarksEmpty = document.createElement("p");
@@ -2734,7 +2734,7 @@ function showBlocked(blocked) {
     handle.textContent = "@" + person.account_name;
     const button = document.createElement("button");
     button.type = "button";
-    button.className = "link-button unblock";
+    button.className = "button-link unblock";
     button.dataset.unblock = person.account_name;
     button.dataset.words = "unblock_button";
     button.textContent = say("unblock_button");
@@ -2881,7 +2881,7 @@ addPostPart(function editedPart(post, slots, item) {
   if (post.edited) {
     const mark = document.createElement("button");
     mark.type = "button";
-    mark.className = "link-button edited";
+    mark.className = "button-link edited";
     mark.dataset.action = "versions";
     mark.dataset.postId = post.id;
     mark.setAttribute("aria-expanded", "false");
@@ -3165,7 +3165,7 @@ function startEdit(postId, button) {
 
   const cancel = document.createElement("button");
   cancel.type = "button";
-  cancel.className = "link-button";
+  cancel.className = "button-link";
   cancel.dataset.action = "cancelEdit";
   cancel.dataset.postId = postId;
   cancel.dataset.words = "edit_cancel";
@@ -3561,7 +3561,7 @@ async function confirmEmailFromLink() {
 // There are no pictures of people, so each post shows a circle with the first
 // letter of the display name. The circle is only a picture: it has no words
 // of its own (so nothing for words.js), and a screen reader skips it, because
-// the name is read just after it. style.css places it and gives it its colour.
+// the name is read just after it. components.css places it and gives it its colour.
 
 // Which of the six circle colours (1 to 6) this account has. It adds up the
 // character codes of the account name, so the same name always gets the same
@@ -3576,7 +3576,7 @@ function avatarColour(accountName) {
 }
 
 // The circle, first in the head slot. The post gets the class "with-avatar",
-// so style.css makes room for the circle only on a post that has one.
+// so components.css makes room for the circle only on a post that has one.
 addPostPart(function avatarPart(post, slots, item) {
   const avatar = document.createElement("span");
   avatar.className = "avatar avatar-colour-" + avatarColour(post.author);

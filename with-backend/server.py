@@ -38,7 +38,13 @@ DB_PATH = os.path.join(HERE, "timeline.db")
 PAGE_FILES = {
     "/": ("index.html", "text/html; charset=utf-8"),
     "/index.html": ("index.html", "text/html; charset=utf-8"),
-    "/style.css": ("style.css", "text/css; charset=utf-8"),
+    # The design system: four style files, loaded in this order (see DESIGN.md).
+    "/tokens.css": ("tokens.css", "text/css; charset=utf-8"),
+    "/base.css": ("base.css", "text/css; charset=utf-8"),
+    "/components.css": ("components.css", "text/css; charset=utf-8"),
+    "/features.css": ("features.css", "text/css; charset=utf-8"),
+    # The style guide: every token and every component, for people building the page.
+    "/design.html": ("design.html", "text/html; charset=utf-8"),
     "/app.js": ("app.js", "text/javascript; charset=utf-8"),
     "/words.js": ("words.js", "text/javascript; charset=utf-8"),
 }

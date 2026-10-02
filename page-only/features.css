@@ -1,0 +1,462 @@
+/* Timeline's design system, part 4 of 4: each feature's own small block.
+   A feature only ARRANGES components (from components.css) and uses tokens
+   (from tokens.css): where things sit, the room between them, and which token
+   colour a line of words has. It never makes its own button, card, size or
+   colour. A new feature adds its block at the end, under a comment with its
+   name, and looks at /design.html first. */
+
+/* page-only: the two name boxes, side by side on a wide screen, one above the
+   other on a phone. */
+.name-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: var(--space-8);
+  margin-bottom: var(--space-10);
+}
+
+/* The @ in front of the account name box, so nobody has to type it. */
+.at-box {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  color: var(--quiet);
+  font-weight: var(--weight-bold);
+}
+
+/* accounts: the Log in and Sign up forms (each a .card), side by side on a
+   wide screen, one above the other on a phone. */
+.account-forms {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: var(--space-8);
+  margin-bottom: var(--space-10);
+}
+
+.account-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-7) var(--space-9);
+}
+
+.account-form h2 {
+  margin: 0 0 var(--space-2);
+  font-size: var(--text-large);
+}
+
+.account-form label {
+  margin: var(--space-4) 0 0;
+}
+
+.account-form button {
+  align-self: flex-start;
+  margin-top: var(--space-6);
+}
+
+/* "Signed in as Aiko Tanaka @aiko · Log out" */
+.who {
+  margin: 0 0 var(--space-8);
+}
+
+.who .post-handle {
+  margin-left: var(--space-2);
+}
+
+/* The post box (a .card), like the box at the top of the classic list. */
+#post-form {
+  margin-bottom: var(--space-2);
+  padding: var(--space-8) var(--space-10);
+}
+
+/* The count and the Post button, under the post box. */
+.post-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: var(--space-5);
+}
+
+/* likes: the row under a post (heart, Reply, "3 replies", ☆). It may go onto
+   a second line when the column beside the circle is narrow, as on a phone. */
+.like-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-6);
+  margin-top: var(--space-5);
+}
+
+/* The heart (a .button-pill) of a post you liked. */
+.like.liked {
+  border-color: var(--warning);
+  color: var(--warning);
+}
+
+/* dark-mode: the Colours switch under the title. */
+.theme-row {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-6);
+  margin: calc(-1 * var(--space-4)) 0 var(--space-8);
+}
+
+.theme-row label {
+  margin: 0;
+}
+
+/* long-posts: a post taller than 6 lines shows only its first 6, with a
+   Show more button under it. Line clamp cuts between two lines, never through
+   one, and ends with "…". It needs display: -webkit-box and
+   -webkit-box-orient: vertical. The text is only clipped, never hidden, so a
+   screen reader still reads all of it. */
+.post-text.collapsed {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 6;
+  line-clamp: 6;
+  overflow: hidden;
+}
+
+/* Show more: a .button-link under the post, the same weight as the text. */
+.show-more {
+  display: block;
+  margin-top: var(--space-3);
+  font-weight: var(--weight-normal);
+}
+
+/* who-liked: the line under a post ("You, Anika, and 10 others liked this
+   post", a .button-quiet) and the list of everyone who liked it. */
+.like-summary {
+  display: block;
+  margin-top: var(--space-3);
+  font-size: var(--text-small);
+  overflow-wrap: anywhere;
+}
+
+.likers {
+  margin: var(--space-3) 0 0;
+  padding: 0 0 0 var(--space-9);
+  font-size: var(--text-small);
+  list-style: none;
+  overflow-wrap: anywhere;
+}
+
+.likers li {
+  margin-top: var(--space-1);
+}
+
+.likers .post-handle {
+  margin-left: var(--space-4);
+}
+
+.likers-more {
+  color: var(--quiet);
+}
+
+/* timestamps */
+/* A post from before Timeline kept dates: its old clock time, in italics. */
+.post-time-unknown {
+  font-style: italic;
+}
+
+/* Hold the mouse over a time to see the full date. */
+time.post-time {
+  cursor: help;
+}
+
+/* search: the search box under the title, and the results view. */
+#search-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-6);
+  margin-bottom: var(--space-8);
+}
+
+#search-form label {
+  flex-basis: 100%;
+  margin: 0;
+}
+
+#search-form input {
+  flex: 1 1 240px;
+  width: auto;
+}
+
+/* "3 posts with “cat”" and "Back to the timeline", on one line if they fit. */
+.results-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-6);
+  margin: 0 0 var(--space-6);
+  overflow-wrap: anywhere;
+}
+
+/* timeline-flow */
+/* "3 new posts": sticky, so it stays at the top of the screen while you read
+   further down. */
+.new-posts {
+  position: sticky;
+  top: 0.5rem;
+  z-index: var(--layer-sticky);
+  display: block;
+  margin: 0 auto var(--space-6);
+  padding: var(--space-4) var(--space-11);
+}
+
+/* "Show older posts", "Loading…" or "No older posts." under the list. */
+.older-posts {
+  margin: var(--space-8) 0 var(--space-11);
+  color: var(--quiet);
+  text-align: center;
+}
+
+/* bookmarks: the ☆ (a .button-pill) at the right of the heart row. A ★
+   (class "bookmarked") means this post is saved. */
+.bookmark {
+  margin-left: auto;
+  padding: var(--space-1) var(--space-7);
+}
+
+.bookmark.bookmarked {
+  border-color: var(--author);
+  color: var(--author);
+}
+
+/* The line shown when My bookmarks is empty: quiet, because it is not a problem. */
+.bookmarks-empty {
+  color: var(--quiet);
+}
+
+/* place */
+/* "· Osaka" after the time, as quiet as the time. */
+.post-place {
+  margin-left: var(--space-4);
+  color: var(--quiet);
+  overflow-wrap: anywhere;
+}
+
+/* The optional place box, under the post box. */
+.place-label {
+  margin-top: var(--space-5);
+}
+
+#place {
+  margin-bottom: var(--space-2);
+}
+
+/* pictures: the picture under a post's words, and the two boxes to add one.
+   A picture is never wider than the post, nor taller than about half a
+   screen; object-fit: contain shrinks it without cutting or stretching it. */
+.post-picture {
+  display: block;
+  max-width: 100%;
+  max-height: var(--picture-height);
+  margin-top: var(--space-5);
+  border-radius: var(--radius);
+  object-fit: contain;
+}
+
+.picture-boxes {
+  margin-top: var(--space-5);
+}
+
+.picture-boxes input {
+  margin-bottom: var(--space-4);
+}
+
+/* block */
+/* "Blocked accounts" under "Signed in as": a .disclosure. */
+.blocked-section {
+  margin: 0 0 var(--space-8);
+}
+
+.blocked-list {
+  margin: var(--space-3) 0 0;
+  padding: 0 0 0 var(--space-9);
+  list-style: none;
+  overflow-wrap: anywhere;
+}
+
+.blocked-list li {
+  margin-top: var(--space-3);
+}
+
+.blocked-list .post-handle {
+  margin-left: var(--space-4);
+}
+
+.blocked-list .unblock {
+  margin-left: var(--space-6);
+}
+
+/* replies */
+/* The Reply button and "2 replies" (a .count), beside the heart. */
+.reply-button {
+  margin-left: var(--space-6);
+}
+
+.reply-count {
+  white-space: nowrap;
+}
+
+/* "Replying to @aiko", above the text of a reply. */
+.replying-to {
+  margin: var(--space-2) 0 0;
+  color: var(--quiet);
+  font-size: var(--text-small);
+}
+
+/* "Replying to @aiko · Cancel", above the post box. */
+#replying-to {
+  margin: 0 0 var(--space-3);
+  color: var(--quiet);
+  overflow-wrap: anywhere;
+}
+
+/* edit-delete */
+/* "· edited" after the time: a button that looks like quiet text. */
+.post-head .edited {
+  margin-left: var(--space-4);
+  color: var(--quiet);
+}
+
+/* The box for new words, with its count, Cancel and Save under it. */
+.edit-box {
+  margin-top: var(--space-3);
+}
+
+.edit-row {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-9);
+  margin-top: var(--space-5);
+}
+
+.edit-row .count {
+  margin-right: auto;
+}
+
+/* The earlier versions of a post, oldest first. */
+.versions {
+  margin: var(--space-4) 0 0;
+  padding: 0 0 0 var(--space-9);
+  border-left: var(--line-thick) solid var(--border);
+  font-size: var(--text-small);
+  list-style: none;
+}
+
+.versions li {
+  margin-top: var(--space-3);
+}
+
+.version-text {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.versions .post-time {
+  margin-left: 0;
+}
+
+/* report */
+/* The note above the text of your own post that several people reported. */
+.hidden-note {
+  margin: var(--space-3) 0 0;
+  color: var(--warning);
+  font-size: var(--text-small);
+}
+
+/* links-and-tags: a web link, a #tag and an @name in a post's text. They use
+   the --author colour, which both themes already have. A web link is also
+   underlined, so it never depends on colour alone. */
+.post-link,
+.post-tag,
+.post-name {
+  color: var(--author);
+}
+
+.post-link {
+  text-decoration: underline;
+}
+
+.post-tag,
+.post-name {
+  text-decoration: none;
+  font-weight: var(--weight-medium);
+}
+
+.post-tag:hover,
+.post-name:hover {
+  text-decoration: underline;
+}
+
+.post-link:focus-visible,
+.post-tag:focus-visible,
+.post-name:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-offset);
+  border-radius: var(--radius-small);
+}
+
+/* reply-email */
+/* "Email" under the post box: a .disclosure, like "Blocked accounts". */
+.email-settings {
+  margin: var(--space-8) 0 0;
+}
+
+/* The address box and Save, on one line when they fit. */
+.email-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-4);
+  margin: var(--space-5) 0 0;
+}
+
+.email-form label {
+  flex-basis: 100%;
+}
+
+.email-form input {
+  flex: 1 1 240px;
+  width: auto;
+}
+
+/* "Confirmed: aiko@example.com · Remove". An address can be long: it may break anywhere. */
+.email-state-row {
+  margin: var(--space-4) 0 0;
+  color: var(--quiet);
+  overflow-wrap: anywhere;
+}
+
+#email-remove {
+  margin-left: var(--space-6);
+}
+
+/* The "Email me when someone replies" switch and its words, side by side.
+   The switch is large enough to see and press, in the button blue. */
+.reply-emails-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  margin: var(--space-4) 0 0;
+}
+
+.reply-emails-row input {
+  width: var(--check-size);
+  height: var(--check-size);
+  accent-color: var(--button);
+}
+
+/* On a phone: less room inside the post box. */
+@media (max-width: 600px) {
+  #post-form {
+    padding: var(--space-6);
+  }
+}

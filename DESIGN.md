@@ -63,14 +63,14 @@ Large type and high contrast, so that it can be read from across a room.
 
 ```
 the browser                          the server                   the store
-index.html · style.css · app.js  ──  server.py  ──────────────────  timeline.db
+index.html · *.css · app.js  ────  server.py  ──────────────────  timeline.db
       a new post, a like, "anything new?" ▶    save this, give me the newest ▶
       ◀ saved, the newest posts, the counts      ◀ the rows
 ```
 
 | Part | `page-only/` | `with-backend/` |
 |---|---|---|
-| **Frontend** (runs on the user's device) | `index.html` · `style.css` · `app.js` | the same three files; `app.js` talks to the server instead of the browser |
+| **Frontend** (runs on the user's device) | `index.html` · the four style files (`tokens.css`, `base.css`, `components.css`, `features.css`) · `app.js` | the same files; `app.js` talks to the server instead of the browser |
 | **Backend** (runs on the server) | none: the rules run in `app.js` | `server.py`, Python 3 standard library (`http.server`), written in three labelled parts: **controller · model · view** |
 | **Data** (runs on the server) | the browser's `sessionStorage` | `timeline.db`, one SQLite file with four tables, `users`, `posts`, `likes` and `sessions`, created by the server when it starts |
 
@@ -104,7 +104,7 @@ never read. Every request with a body must say `Content-Type: application/json`.
 | `POST /likes` | `{"post_id": 7}` | `{"post_id": 7, "like_count": 3}` · or `400` with the rule it broke · or `401` |
 | `DELETE /likes` | `{"post_id": 7}` | the same answer, with the count one lower · or `400` if there was no such like · or `401` |
 | `GET /likes` | the cookie, if there is one | `{"counts": {"7": 3}, "mine": [7]}`: how many likes each post has, and which posts this person has liked (`mine` is empty when nobody is logged in) |
-| `GET /` and the page files | nothing | the page (`index.html`, `style.css`, `words.js`, `app.js`) |
+| `GET /` and the page files | nothing | the page (`index.html`, the four style files, `words.js`, `app.js`), and the style guide `design.html` |
 | any refusal (`4xx`) | — | `{"error": "The post must be 280 characters or fewer.", "code": "text_too_long", "values": {"limit": 280}}`: the English, the rule's code, and the values that fill in its words |
 
 Pressing a heart is one idea to a person, but two requests: the **method** says which, so `POST`
@@ -387,7 +387,7 @@ A post can be up to 560 characters (140, then 280, then 560: each step doubles).
   when a hidden view is shown.
 - **For a screen reader**, the text is only clipped, never hidden, so the whole post is read. The
   button is a real `<button>` with `aria-expanded` and `aria-controls`.
-- `page-only/` keeps its own limit of 280. Its `style.css` has the new rules only to stay a copy.
+- `page-only/` keeps its own limit of 280. Its style files have the new rules only to stay copies.
 
 ## Who liked a post
 
@@ -771,6 +771,39 @@ server prints each email in its terminal. Really sending is a later plan.
   post's log line. `EmailMessage` refuses a line break in a header, so a name cannot add a header
   such as a second `To:`, and an address may not hold `,`, so it cannot become two addresses.
 
+## Design system
+
+The look is built from a small, named set of parts, so every feature uses the same sizes, spaces,
+corners and buttons, and the whole look can be changed in one place. Nothing on screen changed when
+it was made: the page was compared before and after, element by element, in light and dark, wide
+and phone width, signed in and out.
+
+- **Four files, loaded in this order** by `index.html` (both versions) and `design.html`. No build
+  step. `page-only/` has exact copies (a test checks it).
+
+  | File | What it holds |
+  |---|---|
+  | `tokens.css` | every **token**: a named value. The colours first (`light-dark(LIGHT, DARK)`, as before), then type (`--text-small`, `--text-body`, `--text-large`, `--text-title`, `--text-meta`, `--line-height`, `--weight-…`), space (`--space-1` 2px … `--space-12` 32px), corners (`--radius-small`, `--radius`, `--radius-field`, `--radius-large`, `--radius-pill`, `--radius-round`), lines (`--line`, `--line-thick`, `--band`, `--focus-ring`, `--focus-offset`), sizes (`--page-width`, `--avatar…`, `--check-size`, `--picture-height`), `--layer-sticky` and `--faded`. |
+  | `base.css` | the page itself: the box model, `[hidden]`, `body` (with the band of colour), `main`, `h1`. |
+  | `components.css` | the shared pieces, each one class: **field** (`label`, `input`, `textarea`, `select`, `.hint`, `.count`), **button** (every `<button>`, and `.button-link`, `.button-quiet`, `.button-pill`, with the turned-off look once), **card** (`.card`), **disclosure** (`.disclosure`, a card while open), **menu** (`.menu`, the "⋯"), **tabs** (`.tabs`), **status** (`.status`), **avatar** (`.avatar`, `.avatar-colour-1` … `6`), and **post** (`.timeline`, `.post`, its slots `head`, `body`, `foot`, `menu`, and its states: deleted, hidden by reports, a reply, under the mouse, on a phone). |
+  | `features.css` | each feature's own small block, under its name. A block only **arranges** components and uses tokens: where things sit and the room between them. |
+
+- **The style guide**, `/design.html`, shows every token (it reads `tokens.css` itself, so the list
+  is never out of date) and every component, light and dark side by side, with sample posts made of
+  the same parts `makePostItem` builds. It uses only the real files. It is a page for builders, so
+  its words are English and are not in `words.js`; the words tests do not read it.
+- **How to add a feature's style:** look at `/design.html` first. Use a component, and add its
+  class where `app.js` builds the element (a class-name change only). Put the arranging rules at the
+  end of `features.css` under `/* your-feature */`, with tokens only, then copy the four files to
+  `page-only/`. Add a token to `tokens.css` only when no token fits, and use it at least once.
+- **Rules, checked by `make test`** (`DesignSystemTest`): every `var(--x)` is defined in
+  `tokens.css`, and every token is used; only `tokens.css` defines tokens; every component class
+  is on the style guide; both pages and the guide load exactly the four files, in order; the
+  server gives all five. A raw colour, or a raw `px` in a font size, a corner, a margin, a padding
+  or a gap outside `tokens.css` (`0` and a `1px` hairline are allowed) is a **warning**, printed by
+  `make test` with its file and line, not a failure: the owner chose a warning list. Today the list
+  is empty.
+
 ## 8. Build or borrow
 
 - **Built:** the page, the server and the data model.
@@ -787,9 +820,12 @@ DESIGN.md            this document
 Makefile             make run · make test · make reset
 .claude/launch.json  starts the backend version from the Claude Code desktop app
 page-only/           open index.html; nothing to start
-  index.html  style.css  app.js
+  index.html  app.js
+  tokens.css  base.css  components.css  features.css   copies of with-backend's
 with-backend/        make run, then http://localhost:8009
-  index.html  style.css  app.js
+  index.html  app.js  words.js
+  tokens.css  base.css  components.css  features.css   the design system
+  design.html        the style guide: every token and component, at /design.html
   server.py          controller · model · view, labelled
   outbox.py          carries emails out on its own thread (prints them; sends nothing)
   email_words.py     the words of every email, English and Japanese

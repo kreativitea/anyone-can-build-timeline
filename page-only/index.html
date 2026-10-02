@@ -4,7 +4,12 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Timeline</title>
-  <link rel="stylesheet" href="style.css">
+  <!-- The design system, in this order: tokens, the page, components, features.
+       The four files are copies of the ones in with-backend/. -->
+  <link rel="stylesheet" href="tokens.css">
+  <link rel="stylesheet" href="base.css">
+  <link rel="stylesheet" href="components.css">
+  <link rel="stylesheet" href="features.css">
 </head>
 <body>
   <main>
@@ -24,7 +29,7 @@
       </div>
     </div>
 
-    <form id="post-form">
+    <form id="post-form" class="card">
       <label for="text">What is happening?</label>
       <textarea id="text" rows="3" placeholder="What is happening?"></textarea>
       <div class="post-row">
@@ -35,7 +40,7 @@
 
     <p id="status" class="status" role="status"></p>
 
-    <ol id="timeline" class="timeline" aria-label="Posts, newest first"></ol>
+    <ol id="timeline" class="timeline card" aria-label="Posts, newest first"></ol>
   </main>
 
   <script src="app.js"></script>

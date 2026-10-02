@@ -16,7 +16,11 @@
       // Storage can be blocked (some private windows). Then follow the computer.
     }
   </script>
-  <link rel="stylesheet" href="style.css">
+  <!-- The design system, in this order: tokens, the page, components, features. See /design.html. -->
+  <link rel="stylesheet" href="tokens.css">
+  <link rel="stylesheet" href="base.css">
+  <link rel="stylesheet" href="components.css">
+  <link rel="stylesheet" href="features.css">
 </head>
 <body>
   <main>
@@ -47,18 +51,18 @@
         <option value="light" data-words="theme_light">Light</option>
         <option value="dark" data-words="theme_dark">Dark</option>
       </select>
-      <button type="button" id="language" class="link-button" lang="ja"
+      <button type="button" id="language" class="button-link" lang="ja"
               data-words="switch_language" hidden>日本語</button>
     </div>
 
     <!-- The buttons that switch between views. Hidden while there is only one
          view: app.js shows it when a second view is added (addView). -->
-    <nav id="views" aria-label="Views" data-words-aria-label="views_label" hidden></nav>
+    <nav id="views" class="tabs" aria-label="Views" data-words-aria-label="views_label" hidden></nav>
 
     <!-- Shown when nobody is logged in in this window. Both start hidden: the
          page asks the server who is logged in, then shows one of the two. -->
     <section id="signed-out" class="account-forms" hidden>
-      <form id="login-form" class="account-form">
+      <form id="login-form" class="account-form card">
         <h2 data-words="log_in_heading">Log in</h2>
         <label for="login-name" data-words="account_name_label">Account name</label>
         <div class="at-box">
@@ -70,7 +74,7 @@
         <button type="submit" data-words="log_in_button">Log in</button>
       </form>
 
-      <form id="signup-form" class="account-form">
+      <form id="signup-form" class="account-form card">
         <h2 data-words="sign_up_heading">Sign up</h2>
         <label for="signup-name" data-words="account_name_label">Account name</label>
         <div class="at-box">
@@ -92,22 +96,22 @@
         <span data-words="signed_in_as">Signed in as</span>
         <span id="who-display-name" class="post-author"></span>
         <span id="who-account-name" class="post-handle"></span> ·
-        <button type="button" id="logout" class="link-button" data-words="log_out">Log out</button>
+        <button type="button" id="logout" class="button-link" data-words="log_out">Log out</button>
       </p>
 
       <!-- block: the accounts you blocked, each with an Unblock button. A
            <details> opens and closes by itself, with no JavaScript. app.js
            hides it while the list is empty. -->
-      <details id="blocked-section" class="blocked-section" hidden>
+      <details id="blocked-section" class="blocked-section disclosure" hidden>
         <summary data-words="blocked_accounts">Blocked accounts</summary>
         <ul id="blocked-list" class="blocked-list"></ul>
       </details>
 
-      <form id="post-form">
+      <form id="post-form" class="card">
         <!-- replies: shown while writing a reply. app.js writes "Replying to @aiko". -->
         <p id="replying-to" hidden>
           <span id="replying-to-words"></span> ·
-          <button type="button" id="cancel-reply" class="link-button"
+          <button type="button" id="cancel-reply" class="button-link"
                   data-words="reply_cancel">Cancel</button>
         </p>
         <label for="text" data-words="post_prompt">What is happening?</label>
@@ -135,7 +139,7 @@
            <details> opens and closes by itself. Nothing is really sent: the
            server prints each email in its terminal. novalidate: the page checks
            the address itself, with the words from words.js. -->
-      <details id="email-settings" class="email-settings">
+      <details id="email-settings" class="email-settings disclosure">
         <summary data-words="email_heading">Email</summary>
         <form id="email-form" class="email-form" novalidate>
           <label for="email" data-words="email_label">Your email address</label>
@@ -144,7 +148,7 @@
         </form>
         <p class="email-state-row">
           <span id="email-state"></span>
-          <button type="button" id="email-remove" class="link-button"
+          <button type="button" id="email-remove" class="button-link"
                   data-words="email_remove" hidden>Remove</button>
         </p>
         <!-- Shown only once the address is confirmed. -->
@@ -161,20 +165,20 @@
     <section data-view="timeline">
       <!-- timeline-flow: new posts wait behind this button while you read lower down. -->
       <button type="button" id="new-posts" class="new-posts" hidden></button>
-      <ol id="timeline" class="timeline" aria-label="Posts, newest first" tabindex="-1"
+      <ol id="timeline" class="timeline card" aria-label="Posts, newest first" tabindex="-1"
           data-words-aria-label="timeline_label"></ol>
       <!-- timeline-flow: older posts load when this comes near the screen, or when pressed. -->
-      <p id="older-posts" class="older-posts"><button type="button" id="load-older" class="link-button" data-words="show_older">Show older posts</button></p>
+      <p id="older-posts" class="older-posts"><button type="button" id="load-older" class="button-link" data-words="show_older">Show older posts</button></p>
     </section>
 
     <!-- The search results view. app.js adds its button with addView("search", ...). -->
     <section data-view="search" hidden>
       <p class="results-row">
         <span id="results-title" role="status"></span>
-        <button type="button" id="back-to-timeline" class="link-button"
+        <button type="button" id="back-to-timeline" class="button-link"
                 data-words="results_back">Back to the timeline</button>
       </p>
-      <ol id="results-list" class="timeline" aria-label="Search results, newest first"
+      <ol id="results-list" class="timeline card" aria-label="Search results, newest first"
           data-words-aria-label="results_label"></ol>
     </section>
   </main>
