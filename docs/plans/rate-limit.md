@@ -1,4 +1,4 @@
-Status: built on branch rate-limit, awaiting merge
+Status: merged
 
 # Rate limit
 

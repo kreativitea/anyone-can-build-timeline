@@ -1,4 +1,4 @@
-Status: built on branch links-and-tags, awaiting merge
+Status: merged
 
 # Links, tags and names
 

@@ -1,4 +1,4 @@
-Status: built on branch report, awaiting merge
+Status: merged
 
 # Report
 

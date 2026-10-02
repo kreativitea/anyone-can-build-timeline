@@ -1,4 +1,4 @@
-Status: Part A built on branch japanese-words, awaiting merge
+Status: Part A merged · Part B (the Japanese words) waiting for a native-speaker reviewer
 
 # Japanese
 

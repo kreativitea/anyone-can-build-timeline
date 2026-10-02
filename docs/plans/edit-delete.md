@@ -1,4 +1,4 @@
-Status: built on branch edit-delete, awaiting merge
+Status: merged
 
 # Edit and delete
 

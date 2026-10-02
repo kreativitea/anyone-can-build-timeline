@@ -1,4 +1,4 @@
-Status: built on branch classic-style, awaiting merge
+Status: merged
 
 # Classic style
 

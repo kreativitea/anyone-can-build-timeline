@@ -1,4 +1,4 @@
-Status: built on branch reply-email, awaiting merge
+Status: merged
 
 # Reply email
 

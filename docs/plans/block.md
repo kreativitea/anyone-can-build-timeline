@@ -1,4 +1,4 @@
-Status: built on branch block, awaiting merge
+Status: merged
 
 # Block
 

@@ -1,4 +1,4 @@
-Status: built on branch long-posts, awaiting merge
+Status: merged
 
 # Long posts
 

@@ -1,4 +1,4 @@
-Status: built on branch place, awaiting merge
+Status: merged
 
 # Place
 

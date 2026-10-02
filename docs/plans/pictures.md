@@ -1,4 +1,4 @@
-Status: built on branch pictures, awaiting merge
+Status: merged
 
 # Pictures
 

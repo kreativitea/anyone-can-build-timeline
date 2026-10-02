@@ -1,4 +1,4 @@
-Status: built on branch who-liked, awaiting merge
+Status: merged
 
 # Who liked
 

@@ -1,4 +1,4 @@
-Status: built on branch search, awaiting merge
+Status: merged
 
 # Search
 

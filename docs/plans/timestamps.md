@@ -1,4 +1,4 @@
-Status: built on branch timestamps, awaiting merge
+Status: merged
 
 # Timestamps
 

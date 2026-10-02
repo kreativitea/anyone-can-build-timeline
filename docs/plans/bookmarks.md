@@ -1,4 +1,4 @@
-Status: built on branch bookmarks, awaiting merge
+Status: merged
 
 # Bookmarks
 
