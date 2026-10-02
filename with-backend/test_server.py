@@ -5477,8 +5477,12 @@ class PageAndServerAgreeTest(unittest.TestCase):
         self.assertIn('"aria-controls"', make)
         self.assertIn('"aria-expanded"', self.function_body("toggleExpanded"))
         # The text is only clipped by the CSS, never hidden from a screen reader.
+        # (classic-style's circle is aria-hidden on purpose: it is only a picture.
+        # So this looks at the Show more code only.)
         self.assertNotIn("textElement.hidden", self.page_code)
-        self.assertNotIn("aria-hidden", self.page_code)
+        expandable = self.page_code.split("function expandablePart")[1].split("\n});")[0]
+        for code in (make, self.function_body("toggleExpanded"), expandable):
+            self.assertNotIn("aria-hidden", code)
 
     def test_show_more_goes_through_the_shared_pieces(self):
         # A part, not a change to showPost; an entry in ACTIONS, not a change to clickOnTimeline.
@@ -6504,6 +6508,19 @@ class ColoursTest(unittest.TestCase):
         self.assertNotIn("data-theme", page_only)
         self.assertNotIn("localStorage", page_only)
         self.assertIn("color-scheme: light dark;", self.root_block)
+
+    # classic-style: a post under the mouse gets the --hover tint, so every
+    # colour on a post must still be easy to read on it.
+    def test_text_is_easy_to_read_on_a_hovered_post(self):
+        self.check_contrast([(front, "hover")
+                             for front in ("text", "quiet", "author", "warning")], 4.5)
+        self.check_contrast([("border", "hover")], 3)
+
+    # classic-style: the white letter in each of the six circles.
+    def test_the_letter_in_each_circle_is_easy_to_read(self):
+        self.check_contrast([("button-text", "avatar-%d" % number)
+                             for number in range(1, 7)], 4.5)
+
 def functions_in(code):
     """Cut app.js into its top-level functions. Gives a map: name -> body.
 
@@ -6770,6 +6787,78 @@ class OutboxTests(unittest.TestCase):
         for name in ("server.py", "outbox.py", "email_words.py"):
             with open(os.path.join(HERE, name), encoding="utf-8") as file:
                 self.assertNotIn("smtplib", file.read())
+
+
+class ClassicStyleTest(unittest.TestCase):
+    """classic-style: the classic light-blue look, and the circle with a letter.
+
+    Only the page changes, so these tests read style.css, app.js and
+    index.html as text. No server and no browser.
+    """
+
+    def read(self, *path):
+        with open(os.path.join(HERE, *path), encoding="utf-8") as file:
+            return file.read()
+
+    def setUp(self):
+        self.css = self.read("style.css")
+        self.page_code = self.read("app.js")
+        self.functions = functions_in(self.page_code)
+
+    def avatar_part(self):
+        start = self.page_code.index("addPostPart(function avatarPart")
+        return self.page_code[start:self.page_code.index("\n});", start)]
+
+    def test_there_is_one_colour_rule_for_each_avatar_colour(self):
+        for number in range(1, 7):
+            with self.subTest(colour=number):
+                self.assertIn(".avatar-colour-%d { background: var(--avatar-%d); }"
+                              % (number, number), self.css)
+        self.assertNotIn(".avatar-colour-7", self.css)
+        colour = self.functions["avatarColour"]
+        self.assertIn("% 6) + 1", colour)
+        self.assertIn("toLowerCase()", colour)
+
+    def test_the_avatar_is_added_as_a_part(self):
+        self.assertIn("addPostPart(function avatarPart(post, slots, item)", self.page_code)
+        self.assertIn('avatar-colour-" + avatarColour(post.author)', self.avatar_part())
+        # makePostItem still only builds the slots and runs the parts.
+        make = self.functions["makePostItem"]
+        self.assertIn("for (const part of POST_PARTS)", make)
+        self.assertNotIn("avatar", make)
+
+    def test_the_avatar_is_hidden_from_screen_readers_and_written_as_text(self):
+        part = self.avatar_part()
+        self.assertIn('setAttribute("aria-hidden", "true")', part)
+        self.assertIn("textContent", part)
+        self.assertNotIn("innerHTML", part)
+        self.assertIn("Array.from(", part)
+        self.assertIn("slots.head.prepend(avatar)", part)
+
+    def test_room_for_the_avatar_only_when_there_is_one(self):
+        block = self.css[self.css.index("/* classic-style */"):]
+        self.assertIn(".post.with-avatar {\n  padding-left: 100px;", block)
+        post_rule = re.search(r"\n\.post \{(.*?)\}", block, re.DOTALL).group(1)
+        self.assertNotIn("100px", post_rule)
+        self.assertIn('item.classList.add("with-avatar")', self.avatar_part())
+        # page-only/ has no circles, so its posts never get the class.
+        self.assertNotIn("with-avatar", self.read("..", "page-only", "app.js"))
+
+    def test_a_turned_off_button_looks_turned_off(self):
+        block = self.css[self.css.index("/* classic-style */"):]
+        rule = re.search(r"button:disabled:not\(\.like\) \{(.*?)\}", block, re.DOTALL).group(1)
+        self.assertIn("background: none;", rule)
+        self.assertIn("color: var(--quiet);", rule)
+        self.assertIn("dashed", rule)
+
+    def test_nothing_names_the_company(self):
+        files = [("with-backend", name) for name in ("index.html", "style.css", "app.js", "words.js")]
+        files += [("page-only", name) for name in ("index.html", "style.css", "app.js")]
+        for folder, name in files:
+            with self.subTest(file=folder + "/" + name):
+                text = self.read("..", folder, name).lower()
+                for word in ("twitter", "tweet", "retweet"):
+                    self.assertNotIn(word, text)
 
 
 if __name__ == "__main__":

@@ -3556,6 +3556,38 @@ async function confirmEmailFromLink() {
   }
 }
 
+// ---- classic-style: a coloured circle with a letter on the left of each post ----
+//
+// There are no pictures of people, so each post shows a circle with the first
+// letter of the display name. The circle is only a picture: it has no words
+// of its own (so nothing for words.js), and a screen reader skips it, because
+// the name is read just after it. style.css places it and gives it its colour.
+
+// Which of the six circle colours (1 to 6) this account has. It adds up the
+// character codes of the account name, so the same name always gets the same
+// colour, in every window and every browser. Capitals are ignored, because
+// @Aiko and @aiko are the same account.
+function avatarColour(accountName) {
+  let total = 0;
+  for (const character of accountName.toLowerCase()) {
+    total = total + character.codePointAt(0);
+  }
+  return (total % 6) + 1;
+}
+
+// The circle, first in the head slot. The post gets the class "with-avatar",
+// so style.css makes room for the circle only on a post that has one.
+addPostPart(function avatarPart(post, slots, item) {
+  const avatar = document.createElement("span");
+  avatar.className = "avatar avatar-colour-" + avatarColour(post.author);
+  avatar.setAttribute("aria-hidden", "true");
+  // Array.from keeps an emoji or a rare character in one piece.
+  const letter = Array.from(post.display_name || post.author)[0] || "";
+  avatar.textContent = letter.toUpperCase();   // a letter of a name: never a key
+  slots.head.prepend(avatar);
+  item.classList.add("with-avatar");
+});
+
 textBox.addEventListener("input", updateCount);
 textBox.addEventListener("input", saveDraft);
 timeline.addEventListener("click", clickOnTimeline);

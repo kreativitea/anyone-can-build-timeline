@@ -10,17 +10,27 @@
    A new colour must be written the same way; a test in test_server.py checks it. */
 :root {
   color-scheme: light dark;
-  --background: light-dark(#fdf6e3, #002b36);
-  --card: light-dark(#ffffff, #073642);
-  --text: light-dark(#002b36, #eee8d5);
-  --quiet: light-dark(#4f5f63, #a7b5b5);
-  --author: light-dark(#7a5a00, #e6b422);
+  --background: light-dark(#c6e2ef, #0e1a23);
+  --card: light-dark(#ffffff, #16283a);
+  --text: light-dark(#262c31, #e7eef3);
+  --quiet: light-dark(#4d5961, #a3b6c4);
+  --author: light-dark(#0a6694, #6ec3ef);
   --button: light-dark(#1d6fa8, #1d6fa8);
   --button-text: light-dark(#ffffff, #ffffff);
   --warning: light-dark(#b3261e, #ff8a7a);
   /* The edge of a box or a button: at least 3 to 1 against the background and
      the cards, so the edge can be seen. */
-  --border: light-dark(#748384, #748a90);
+  --border: light-dark(#5f7d8c, #62819a);
+  /* classic-style: the light tint under the mouse, and the six colours of the
+     circles with a letter. A white letter reads on each circle in both modes,
+     so each circle colour is the same in light and dark, like --button. */
+  --hover: light-dark(#eef6fa, #1d3448);
+  --avatar-1: light-dark(#1d6fa8, #1d6fa8);
+  --avatar-2: light-dark(#8a4fb0, #8a4fb0);
+  --avatar-3: light-dark(#b0413e, #b0413e);
+  --avatar-4: light-dark(#2e7d4f, #2e7d4f);
+  --avatar-5: light-dark(#9a5800, #9a5800);
+  --avatar-6: light-dark(#2f6f7a, #2f6f7a);
 }
 
 /* Light or Dark chosen by hand with the Colours switch (with-backend/ only).
@@ -782,4 +792,234 @@ time.post-time {
 
 .reply-emails-row input {
   width: auto;
+}
+
+/* classic-style */
+/* The feel of the classic light-blue microblog look of about 2009-2014, in our
+   own colours: a sky-blue page, all posts in one white card with a line
+   between posts, and a coloured circle with a letter on the left of each post.
+   Every rule here comes after the rules it changes, so it wins without
+   editing them. The type stays 24px. */
+
+/* A band of colour across the top of the page. */
+body {
+  border-top: 10px solid var(--button);
+}
+
+/* Buttons: rounded rectangles, not pills, with flat colour. */
+button {
+  border-radius: 8px;
+}
+
+/* The heart and the star keep their round shape. */
+.like,
+.bookmark {
+  border-radius: 999px;
+}
+
+.new-posts {
+  border-radius: 8px;
+}
+
+/* A button that is turned off (for example Post, held for some seconds by the
+   rate limit) must not look like one that works: no colour, quiet words and a
+   dashed edge, in both modes. An outline takes no room, so nothing moves. The
+   heart has its own turned-off look (search). */
+button:disabled:not(.like) {
+  background: none;
+  color: var(--quiet);
+  outline: 2px dashed var(--border);
+  outline-offset: -2px;
+  cursor: not-allowed;
+}
+
+/* The post box sits in a card, like the box at the top of the classic list. */
+#post-form {
+  margin-bottom: 4px;
+  padding: 16px 20px;
+  border: 2px solid var(--border);
+  border-radius: 12px;
+  background: var(--card);
+}
+
+/* All posts in one card (the timeline, the search results and My bookmarks),
+   with a line between them. An empty list shows no card. */
+.timeline:not(:empty) {
+  border: 2px solid var(--border);
+  border-radius: 12px;
+  background: var(--card);
+  overflow: hidden;
+}
+
+.post {
+  position: relative;
+  margin: 0;
+  padding: 16px 20px;
+  border: none;
+  border-bottom: 2px solid var(--border);
+  border-radius: 0;
+}
+
+.timeline > li:last-child {
+  border-bottom: none;
+}
+
+/* Room on the left for the circle, only when the post has one (page-only/
+   has no circles, so its posts have no empty space on the left). */
+.post.with-avatar {
+  padding-left: 100px;
+}
+
+/* The circle with the first letter of the name. It has no words of its own. */
+.avatar {
+  position: absolute;
+  top: 16px;
+  left: 20px;
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--button-text);
+  font-size: 32px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.avatar-colour-1 { background: var(--avatar-1); }
+.avatar-colour-2 { background: var(--avatar-2); }
+.avatar-colour-3 { background: var(--avatar-3); }
+.avatar-colour-4 { background: var(--avatar-4); }
+.avatar-colour-5 { background: var(--avatar-5); }
+.avatar-colour-6 { background: var(--avatar-6); }
+
+/* The @name and the time: a little smaller, and quiet, on the name's line. */
+.post-handle,
+.post-time {
+  font-size: 0.85em;
+}
+
+.post-handle {
+  margin-left: 8px;
+}
+
+/* The time at the right of the first line of a post. What comes after it in
+   the head ("· Osaka", "· edited") stays on the left, after the @name. */
+.post-head > .post-time {
+  float: right;
+}
+
+/* What is under the names starts below the time, never beside it. */
+.post-body > * {
+  clear: right;
+}
+
+/* The row under a post (heart, Reply, "3 replies", ☆) may go onto a second
+   line when the column beside the circle is narrow, as on a phone. */
+.like-row {
+  flex-wrap: wrap;
+}
+
+.reply-count {
+  white-space: nowrap;
+}
+
+/* A post hidden by reports (only its author sees it) is faded, circle too. */
+.hidden-by-reports .avatar {
+  opacity: 0.6;
+}
+
+/* Replies, inside the same card: a post with replies has no line under it, so
+   its replies read as part of it. They are moved in to the post's words, with
+   a line on the left, and smaller circles. */
+.post:has(+ .reply-thread) {
+  padding-bottom: 8px;
+  border-bottom: none;
+}
+
+.reply-thread {
+  margin: 0;
+  padding: 0 20px 12px 100px;
+  border-bottom: 2px solid var(--border);
+}
+
+.replies {
+  padding: 0;
+}
+
+.replies > .post {
+  padding: 12px 16px;
+}
+
+.replies > .post:last-child {
+  border-bottom: none;
+}
+
+.replies > .post.with-avatar {
+  padding-left: 68px;
+}
+
+.replies .avatar {
+  top: 12px;
+  left: 16px;
+  width: 40px;
+  height: 40px;
+  font-size: 20px;
+}
+
+/* "Blocked accounts" and "Email": when one is open, its insides sit in a card,
+   like the post box, so they read as one group. */
+.blocked-section[open],
+.email-settings[open] {
+  padding: 12px 16px;
+  border: 2px solid var(--border);
+  border-radius: 12px;
+  background: var(--card);
+}
+
+/* The "Email me when someone replies" switch: large enough to see and press,
+   in the button blue. */
+.reply-emails-row input {
+  width: 24px;
+  height: 24px;
+  accent-color: var(--button);
+}
+
+/* A light tint under the mouse, only where there is a mouse. A phone and a
+   keyboard have no "over", so nothing is hidden until then: the heart always shows. */
+@media (hover: hover) {
+  .post:hover {
+    background: var(--hover);
+  }
+}
+
+/* On a phone: the same 24px type, a smaller circle and less space around it. */
+@media (max-width: 600px) {
+  #post-form {
+    padding: 12px;
+  }
+
+  .post,
+  .replies > .post {
+    padding: 12px;
+  }
+
+  .post.with-avatar,
+  .replies > .post.with-avatar {
+    padding-left: 64px;
+  }
+
+  .avatar,
+  .replies .avatar {
+    top: 12px;
+    left: 12px;
+    width: 40px;
+    height: 40px;
+    font-size: 20px;
+  }
+
+  .reply-thread {
+    padding: 0 12px 12px 24px;
+  }
 }
