@@ -559,6 +559,7 @@ function showSignedIn(who) {
   signedOutSection.hidden = true;
   signedInSection.hidden = false;
   showDraft(who);
+  loadBookmarks();
 }
 
 // Not logged in: show the Log in and Sign up forms, and why, if there is a reason.
@@ -569,6 +570,7 @@ function showSignedOut(reason) {
   signedInSection.hidden = true;
   signedOutSection.hidden = false;
   hideDraft();
+  clearBookmarks();
   showStatus(reason);
 }
 
@@ -1518,6 +1520,205 @@ function searchBoxKey(event) {
   }
 }
 
+// ---- bookmarks: save a post only you can see ----
+//
+// A ☆ under every post saves it for you; a ★ means it is saved, and pressing it
+// takes the bookmark back. "My bookmarks" shows only the posts you saved. A
+// bookmark is private: the server shows it only to the person who made it, and
+// there is no count. The page never says who you are: the server knows from
+// the cookie. Bookmarks are not asked for every second: they change only when
+// you press a ☆, and the answer to that press says what is now true.
+
+// The words of this feature, each sentence whole. (These move to words.js
+// with the Japanese words table.)
+const BOOKMARK_WORDS = {
+  bookmark_add: "Bookmark this post",
+  bookmark_remove: "Remove bookmark",
+  bookmark_log_in: "Please log in to bookmark a post.",
+  bookmarks_view: "My bookmarks",
+  bookmarks_list: "Your bookmarks, newest post first",
+  bookmarks_empty: "You have no bookmarks yet. Press ☆ on a post to save it.",
+};
+
+// The ids of the posts this person has bookmarked. Empty when signed out.
+const bookmarked = new Set();
+// The posts whose ☆ is being sent now: one press at a time for each post.
+const bookmarksBusy = new Set();
+// The list of bookmarked posts and its "none yet" line, made by setUpBookmarks.
+let bookmarkList = null;
+let bookmarksEmpty = null;
+let bookmarksViewButton = null;
+
+// The ☆ in the foot of every post. It starts as the set says, so a post that
+// arrives later already shows the right star.
+addPostPart(function bookmarkPart(post, slots) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "bookmark";
+  button.dataset.action = "bookmark";
+  button.dataset.postId = post.id;
+  drawBookmarkButton(button, bookmarked.has(post.id));
+  // Next to the heart, on the same row, if the heart is there.
+  const likeRow = slots.foot.querySelector(".like-row");
+  (likeRow || slots.foot).append(button);
+});
+
+// One ☆ or ★, with what pressing it would do, for a screen reader.
+function drawBookmarkButton(button, on) {
+  button.textContent = on ? "★" : "☆";
+  button.classList.toggle("bookmarked", on);
+  button.setAttribute("aria-pressed", on ? "true" : "false");
+  button.setAttribute("aria-label", on ? BOOKMARK_WORDS.bookmark_remove
+    : BOOKMARK_WORDS.bookmark_add);
+}
+
+// This post is now bookmarked (on) or not. Every ☆ of this post changes: the
+// one on the timeline, and the one in My bookmarks.
+function showBookmark(postId, on) {
+  if (on) {
+    bookmarked.add(postId);
+  } else {
+    bookmarked.delete(postId);
+  }
+  for (const button of document.querySelectorAll('.bookmark[data-post-id="' + postId + '"]')) {
+    drawBookmarkButton(button, on);
+  }
+}
+
+// Ask the server which posts this person bookmarked, and show them. Asked
+// when someone logs in, when My bookmarks opens, and after a refused press.
+async function loadBookmarks() {
+  try {
+    const response = await fetch("/bookmarks");
+    const answer = await response.json();
+    if (response.status === 401) {
+      clearBookmarks();
+      return;
+    }
+    if (!response.ok) {
+      showStatus(answer.error);
+      return;
+    }
+    bookmarked.clear();
+    for (const post of answer) {
+      bookmarked.add(post.id);
+    }
+    for (const button of document.querySelectorAll(".bookmark")) {
+      drawBookmarkButton(button, bookmarked.has(Number(button.dataset.postId)));
+    }
+    showBookmarkList(answer);
+  } catch (error) {
+    showStatus(CANNOT_REACH);
+  }
+}
+
+// Logged out: forget every bookmark and empty the list, so nothing private
+// stays on a shared computer's screen. The timeline is shown again.
+function clearBookmarks() {
+  bookmarked.clear();
+  for (const button of document.querySelectorAll(".bookmark")) {
+    drawBookmarkButton(button, false);
+  }
+  if (bookmarkList !== null) {
+    bookmarkList.replaceChildren();
+    bookmarksEmpty.hidden = true;
+    bookmarksViewButton.hidden = true;
+    if (!bookmarkList.closest("[data-view]").hidden) {
+      showView("timeline");
+    }
+    showViewsNavIfNeeded();
+  }
+}
+
+// Draw My bookmarks: each post built the same way as on the timeline.
+function showBookmarkList(posts) {
+  bookmarkList.replaceChildren();
+  for (const post of posts) {
+    bookmarkList.append(makePostItem(post).item);
+  }
+  bookmarksEmpty.hidden = posts.length > 0;
+  bookmarksViewButton.hidden = false;
+  showViewsNavIfNeeded();
+}
+
+// The views nav is shown only when two or more of its buttons can be used.
+function showViewsNavIfNeeded() {
+  const shown = Array.from(viewsNav.querySelectorAll("button")).filter(function (button) {
+    return !button.hidden;
+  });
+  viewsNav.hidden = shown.length < 2;
+}
+
+// Press the ☆: bookmark the post, or take the bookmark back if it is a ★.
+// The method says which: POST adds, DELETE removes. Only the post id is sent.
+async function pressBookmark(postId) {
+  // Only a person who is logged in can bookmark. The server checks this again.
+  if (account === null) {
+    showStatus(BOOKMARK_WORDS.bookmark_log_in);
+    return;
+  }
+  if (bookmarksBusy.has(postId)) {
+    return;
+  }
+  bookmarksBusy.add(postId);
+  const on = bookmarked.has(postId);
+  try {
+    const response = await fetch("/bookmarks", {
+      method: on ? "DELETE" : "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ post_id: postId }),
+    });
+    const answer = await response.json();
+    if (response.status === 401) {
+      showSignedOut(answer.error);
+      return;
+    }
+    if (!response.ok) {
+      // This window had the star wrong (perhaps another tab changed it), so
+      // ask the server what is true instead of guessing.
+      showStatus(answer.error);
+      await loadBookmarks();
+      return;
+    }
+    showStatus("");
+    showBookmark(postId, answer.bookmarked);
+    // A post taken out of My bookmarks leaves the list at once.
+    if (!answer.bookmarked) {
+      for (const item of bookmarkList.querySelectorAll('.post[data-post-id="' + postId + '"]')) {
+        item.remove();
+      }
+      bookmarksEmpty.hidden = bookmarkList.children.length > 0;
+    }
+  } catch (error) {
+    showStatus(CANNOT_REACH);
+  } finally {
+    bookmarksBusy.delete(postId);
+  }
+}
+
+ACTIONS.bookmark = pressBookmark;
+
+// Add the My bookmarks view: its list, its "none yet" line, and its button,
+// which stays hidden until someone is logged in. Opening it asks the server again.
+function setUpBookmarks() {
+  const section = addView("bookmarks", BOOKMARK_WORDS.bookmarks_view);
+  bookmarkList = document.createElement("ol");
+  bookmarkList.id = "bookmark-list";
+  bookmarkList.className = "timeline";
+  bookmarkList.setAttribute("aria-label", BOOKMARK_WORDS.bookmarks_list);
+  bookmarksEmpty = document.createElement("p");
+  bookmarksEmpty.id = "bookmarks-empty";
+  bookmarksEmpty.className = "bookmarks-empty";
+  bookmarksEmpty.textContent = BOOKMARK_WORDS.bookmarks_empty;
+  bookmarksEmpty.hidden = true;
+  section.append(bookmarkList, bookmarksEmpty);
+  bookmarkList.addEventListener("click", clickOnTimeline);
+  bookmarksViewButton = viewsNav.querySelector('[data-show-view="bookmarks"]');
+  bookmarksViewButton.hidden = true;
+  bookmarksViewButton.addEventListener("click", loadBookmarks);
+  showViewsNavIfNeeded();
+}
+
 textBox.addEventListener("input", updateCount);
 textBox.addEventListener("input", saveDraft);
 timeline.addEventListener("click", clickOnTimeline);
@@ -1528,6 +1729,7 @@ logoutButton.addEventListener("click", logOut);
 themeSwitch.value = savedTheme();
 themeSwitch.addEventListener("change", chooseTheme);
 addView("timeline", "Timeline");
+setUpBookmarks();
 showView("timeline");
 // search: its own view, and its own listeners. The results list uses the
 // same click handler as the timeline, so who-liked and Show more work there.

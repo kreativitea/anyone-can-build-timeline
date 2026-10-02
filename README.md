@@ -86,10 +86,11 @@ Stop the server with **Ctrl+C**, and both windows say *Cannot reach the server*.
 The backend keeps everything in one file, `with-backend/timeline.db`, in four tables: `users`,
 with each person once, `posts`, where each post points at its author by number, `likes`, with
 one line for each person who liked each post, and `sessions`, with one line for each logged-in
-window. To see what is inside:
+window. `attempts` and `bookmarks` (one private line for each post a person saved) came later.
+To see what is inside:
 
 ```
-sqlite3 with-backend/timeline.db 'select * from users; select * from posts; select * from likes; select * from sessions'
+sqlite3 with-backend/timeline.db 'select * from users; select * from posts; select * from likes; select * from sessions; select * from bookmarks'
 ```
 
 A user line is `id|name|display_name|password_salt|password_hash|password_rounds`, for example
@@ -142,6 +143,8 @@ signing up, posting, liking and unliking, with the database file opened and read
    Search for `100%`, or a Japanese word such as `東京`. Press the browser's Back button.
 7. **Scroll down in one window, post in another.** The first window does not jump: a
    **"1 new post"** button waits at the top. Scroll to the bottom to load older posts.
+8. **Try a bookmark.** Press ☆ on a post, then open **My bookmarks**. Log in as someone else in
+   another browser: they cannot see it, and no post shows a bookmark count.
 
 Each feature changes a different set of parts.
 

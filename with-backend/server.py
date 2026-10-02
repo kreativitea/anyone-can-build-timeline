@@ -2,8 +2,8 @@
 
 This file has three parts:
   CONTROLLER  reads each request and decides what to do
-  MODEL       the rules, and the database (five tables: users, posts, likes, sessions
-              and attempts)
+  MODEL       the rules, and the database (six tables: users, posts, likes, sessions,
+              attempts and bookmarks)
   VIEW        turns database rows into the JSON answer
 It uses only the Python standard library, so there is nothing to install.
 """
@@ -90,6 +90,8 @@ class TimelineHandler(BaseHTTPRequestHandler):
             self.show_likers(parse_qs(url.query).get("post_id", [None])[0])
         elif url.path == "/likesummary":
             self.show_like_summaries(parse_qs(url.query).get("post_ids", [""])[0])
+        elif url.path == "/bookmarks":
+            self.show_bookmarks()
         elif url.path == "/sessions":
             # "Who am I?" The page asks this when it opens.
             user = self.signed_in_user()
@@ -117,7 +119,7 @@ class TimelineHandler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         path = urlparse(self.path).path
-        if path not in ("/posts", "/likes", "/accounts", "/sessions"):
+        if path not in ("/posts", "/likes", "/accounts", "/sessions", "/bookmarks"):
             self.send_nothing_here("POST", path)
             return
         data = self.read_json()
@@ -132,6 +134,8 @@ class TimelineHandler(BaseHTTPRequestHandler):
                 self.log_in(data)
             elif path == "/likes":
                 self.take_like(data)
+            elif path == "/bookmarks":
+                self.take_bookmark(data)
             else:
                 self.take_post(data)
         except TooFast as problem:
@@ -144,6 +148,9 @@ class TimelineHandler(BaseHTTPRequestHandler):
         if path == "/sessions":
             log_out(self.server.db_path, self.session_token())
             self.send_json(200, {}, cookie=session_cookie(""))
+            return
+        if path == "/bookmarks":
+            self.drop_bookmark()
             return
         if path != "/likes":
             self.send_nothing_here("DELETE", path)
@@ -304,6 +311,46 @@ class TimelineHandler(BaseHTTPRequestHandler):
             return
         self.send_json(200, search_to_json(rows, more))
 
+    # bookmarks: private. Only the person who made a bookmark can ever see it.
+    # Who is asking comes only from the cookie: a name, a user id or a query
+    # string in the request is never read. Nothing is printed in the terminal
+    # for a bookmark, because what someone saves is their own business.
+
+    def show_bookmarks(self):
+        """GET /bookmarks: your bookmarked posts, newest first. 401 when nobody is logged in."""
+        user = self.signed_in_user()
+        if user is None:
+            return
+        rows = bookmarks_for(self.server.db_path, user["id"])
+        self.send_json(200, posts_to_json(rows))
+
+    def take_bookmark(self, data):
+        """POST /bookmarks with {post_id}: save a post for yourself."""
+        user = self.signed_in_user()
+        if user is None:
+            return
+        try:
+            post_id = add_bookmark(self.server.db_path, user["id"], data.get("post_id"))
+        except RuleBroken as problem:
+            self.send_json(400, {"error": str(problem)})
+            return
+        self.send_json(201, bookmark_to_json(post_id, True))
+
+    def drop_bookmark(self):
+        """DELETE /bookmarks with {post_id}: take your bookmark back."""
+        data = self.read_json()
+        if data is None:
+            return
+        user = self.signed_in_user()
+        if user is None:
+            return
+        try:
+            post_id = remove_bookmark(self.server.db_path, user["id"], data.get("post_id"))
+        except RuleBroken as problem:
+            self.send_json(400, {"error": str(problem)})
+            return
+        self.send_json(200, bookmark_to_json(post_id, False))   # 200: nothing was created
+
     def send_nothing_here(self, method, path):
         """404, in one sentence for every method, so it stays true when routes are added."""
         self.send_json(404, {"error": f"There is nothing to {method} at {path}."})
@@ -345,10 +392,12 @@ class TimelineHandler(BaseHTTPRequestHandler):
 
 # ============================================================================
 #  MODEL
-#  The rules, and the database. Four tables: users (each person once, with
+#  The rules, and the database. Six tables: users (each person once, with
 #  both names and a salted password hash), posts (each post points at its
 #  author by the author's id), likes (one row for each person who liked each
-#  post) and sessions (one row for each window that is logged in).
+#  post), sessions (one row for each window that is logged in), attempts
+#  (for the rate limits) and bookmarks (one private row for each post a
+#  person saved).
 #  A new rule goes here, never in the controller or the view.
 # ============================================================================
 
@@ -445,7 +494,7 @@ def connect(db_path):
 
 # The newest version of the database: the number the last upgrade below sets.
 # Each new upgrade raises it by one, and the tests read it from here.
-LATEST_VERSION = 4
+LATEST_VERSION = 5
 
 
 def create_tables(db_path):
@@ -486,6 +535,8 @@ def create_tables(db_path):
         upgrade_to_timestamps(connection)
     if version < 4:
         upgrade_to_rate_limit(connection)
+    if version < 5:
+        upgrade_to_bookmarks(connection)
     connection.close()
 
 
@@ -695,6 +746,29 @@ def upgrade_to_rate_limit(connection):
     connection.execute("CREATE INDEX IF NOT EXISTS attempts_by_key "
                        "ON attempts (action, key, at)")
     connection.execute("PRAGMA user_version = 4")
+    connection.commit()
+
+
+def upgrade_to_bookmarks(connection):
+    """Version 5: the bookmarks table. Every row is kept; this only adds a table.
+
+    (5 is for now: the orchestrator gives the final numbers at merge.)
+
+    One row is one post one person saved for themselves. It is private: no
+    count is kept or shown, and only that person can ever read their rows.
+    PRIMARY KEY (user_id, post_id) means the database itself refuses a second
+    bookmark of the same post by the same person. user_id comes first because
+    bookmarks are always read for one person, so that lookup needs no other
+    index. ON DELETE CASCADE: if a post or a user is ever deleted, the database
+    deletes their bookmarks too ("cascade": the delete flows on to the rows
+    that point at it). It works because connect turns foreign keys on.
+    """
+    connection.execute("BEGIN")
+    connection.execute("CREATE TABLE IF NOT EXISTS bookmarks ("
+                       "user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, "
+                       "post_id INTEGER NOT NULL REFERENCES posts(id) ON DELETE CASCADE, "
+                       "PRIMARY KEY (user_id, post_id))")
+    connection.execute("PRAGMA user_version = 5")
     connection.commit()
 
 
@@ -1412,6 +1486,82 @@ def posts_before(db_path, before, viewer_id=None):
     return rows
 
 
+# ---- bookmarks: a post saved by one person, for that person only ----
+#
+# Like a like, a bookmark is one row, and taking it back deletes the row. Unlike
+# a like, it is private: there is no count anywhere, and nothing here ever reads
+# another person's bookmarks. Every function takes the user id the controller
+# got from the session cookie. None of them takes a name, and none adds a user.
+
+def check_bookmark_post_id(post_id):
+    """Return the post id as a number, or raise RuleBroken."""
+    try:
+        return int(post_id)
+    except (TypeError, ValueError):
+        raise RuleBroken("The bookmark must say which post it is for.")
+
+
+def add_bookmark(db_path, user_id, post_id):
+    """Save one bookmark by this user, and return the post's id.
+
+    The same post twice is refused: first by the rule here, and in the end by
+    the database itself (PRIMARY KEY (user_id, post_id)).
+    """
+    post_id = check_bookmark_post_id(post_id)
+    connection = connect(db_path)
+    try:
+        if connection.execute("SELECT id FROM posts WHERE id = ?",
+                              (post_id,)).fetchone() is None:
+            raise RuleBroken("That post does not exist.")
+        if connection.execute("SELECT 1 FROM bookmarks WHERE user_id = ? AND post_id = ?",
+                              (user_id, post_id)).fetchone() is not None:
+            raise RuleBroken("You have already bookmarked that post.")
+        try:
+            connection.execute("INSERT INTO bookmarks (user_id, post_id) VALUES (?, ?)",
+                               (user_id, post_id))
+        except sqlite3.IntegrityError:
+            # Two presses at the same moment: the check above saw nothing both
+            # times. The database kept the first row and refused this one.
+            raise RuleBroken("You have already bookmarked that post.")
+        connection.commit()
+    finally:
+        connection.close()
+    return post_id
+
+
+def remove_bookmark(db_path, user_id, post_id):
+    """Take this user's bookmark away, and return the post's id.
+
+    The row is deleted, not marked. user_id is in the WHERE, so this can only
+    ever delete the asking person's own row.
+    """
+    post_id = check_bookmark_post_id(post_id)
+    connection = connect(db_path)
+    try:
+        cursor = connection.execute("DELETE FROM bookmarks WHERE user_id = ? AND post_id = ?",
+                                    (user_id, post_id))
+        if cursor.rowcount == 0:
+            raise RuleBroken("You have not bookmarked that post.")
+        connection.commit()
+    finally:
+        connection.close()
+    return post_id
+
+
+def bookmarks_for(db_path, user_id):
+    """This user's bookmarked posts, newest post first, as GET /posts shows them.
+
+    Read through select_posts, so a post this user may not see (block, report)
+    is left out here too.
+    """
+    connection = connect(db_path)
+    rows = select_posts(connection,
+                        ["posts.id IN (SELECT post_id FROM bookmarks WHERE user_id = ?)"],
+                        [user_id], user_id, "posts.id DESC")
+    connection.close()
+    return rows
+
+
 # ============================================================================
 #  VIEW
 #  Turns database rows into the JSON the page reads, and the cookie it keeps.
@@ -1439,6 +1589,11 @@ def account_to_json(user):
 
 def like_to_json(post_id, like_count):
     return {"post_id": post_id, "like_count": like_count}
+
+
+def bookmark_to_json(post_id, bookmarked):
+    """The answer to a bookmark press. No count: nothing about anyone else."""
+    return {"post_id": post_id, "bookmarked": bookmarked}
 
 
 def too_fast_to_json(problem):

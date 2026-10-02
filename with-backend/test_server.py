@@ -1389,6 +1389,152 @@ class ModelTests(unittest.TestCase):
         self.assertEqual(str(caught.exception), "'from' must be a whole number, 0 or more.")
 
 
+    # -- bookmarks: a post saved by one person, for that person only --
+
+    def bookmark_people(self):
+        """Aiko and Ben, and three posts: two by Aiko, one by Ben. Returns the ids."""
+        aiko = self.sign_up("aiko", "Aiko Tanaka")
+        ben = self.sign_up("ben", "Ben Ito")
+        first = server.save_post(self.db_path, aiko, "first", now=SOME_MOMENT)["id"]
+        second = server.save_post(self.db_path, aiko, "second", now=SOME_MOMENT)["id"]
+        bens = server.save_post(self.db_path, ben, "Ben's", now=SOME_MOMENT)["id"]
+        return aiko, ben, first, second, bens
+
+    def test_a_bookmark_is_one_row_with_the_two_ids_and_nothing_else(self):
+        aiko, ben, first, second, bens = self.bookmark_people()
+        self.assertEqual(server.add_bookmark(self.db_path, aiko, bens), bens)
+        self.assertEqual(self.rows("SELECT * FROM bookmarks"), [(aiko, bens)])
+        columns = [row[1] for row in self.rows("PRAGMA table_info(bookmarks)")]
+        self.assertEqual(columns, ["user_id", "post_id"])
+
+    def test_bookmarking_the_same_post_twice_is_refused(self):
+        aiko, ben, first, second, bens = self.bookmark_people()
+        server.add_bookmark(self.db_path, aiko, bens)
+        with self.assertRaisesRegex(server.RuleBroken, "already bookmarked"):
+            server.add_bookmark(self.db_path, aiko, str(bens))
+        self.assertEqual(self.rows("SELECT * FROM bookmarks"), [(aiko, bens)])
+
+    def test_the_database_itself_refuses_a_second_bookmark(self):
+        aiko, ben, first, second, bens = self.bookmark_people()
+        server.add_bookmark(self.db_path, aiko, bens)
+        connection = server.connect(self.db_path)
+        with self.assertRaises(sqlite3.IntegrityError):
+            connection.execute("INSERT INTO bookmarks (user_id, post_id) VALUES (?, ?)",
+                               (aiko, bens))
+        connection.close()
+
+    def test_a_bookmark_for_a_missing_post_or_with_no_post_id_is_refused(self):
+        aiko, ben, first, second, bens = self.bookmark_people()
+        with self.assertRaisesRegex(server.RuleBroken, "That post does not exist."):
+            server.add_bookmark(self.db_path, aiko, 999)
+        for nothing in (None, "", "seven", [1]):
+            with self.subTest(post_id=nothing):
+                with self.assertRaisesRegex(server.RuleBroken,
+                                            "The bookmark must say which post it is for."):
+                    server.add_bookmark(self.db_path, aiko, nothing)
+        self.assertEqual(self.rows("SELECT * FROM bookmarks"), [])
+
+    def test_taking_a_bookmark_back_deletes_the_row(self):
+        aiko, ben, first, second, bens = self.bookmark_people()
+        server.add_bookmark(self.db_path, aiko, bens)
+        self.assertEqual(server.remove_bookmark(self.db_path, aiko, bens), bens)
+        self.assertEqual(self.rows("SELECT * FROM bookmarks"), [])
+        with self.assertRaisesRegex(server.RuleBroken, "You have not bookmarked that post."):
+            server.remove_bookmark(self.db_path, aiko, bens)
+        with self.assertRaisesRegex(server.RuleBroken, "You have not bookmarked that post."):
+            server.remove_bookmark(self.db_path, aiko, first)   # never bookmarked
+
+    def test_your_bookmarks_are_yours_alone(self):
+        aiko, ben, first, second, bens = self.bookmark_people()
+        server.add_bookmark(self.db_path, aiko, bens)
+        server.add_bookmark(self.db_path, ben, first)
+        self.assertEqual([r["id"] for r in server.bookmarks_for(self.db_path, aiko)], [bens])
+        self.assertEqual([r["id"] for r in server.bookmarks_for(self.db_path, ben)], [first])
+        # Ben cannot take back Aiko's bookmark: only his own row can be deleted.
+        with self.assertRaises(server.RuleBroken):
+            server.remove_bookmark(self.db_path, ben, bens)
+        self.assertIn((aiko, bens), self.rows("SELECT * FROM bookmarks"))
+
+    def test_a_bookmark_changes_nothing_anyone_else_can_read(self):
+        aiko, ben, first, second, bens = self.bookmark_people()
+        server.add_like(self.db_path, ben, first)
+        def public():
+            counts, mine = server.likes_for(self.db_path, None)
+            return ([tuple(r) for r in server.posts_after(self.db_path, 0)],
+                    [tuple(r) for r in counts], [tuple(r) for r in mine],
+                    server.posts_to_json(server.posts_after(self.db_path, 0, ben)))
+        before = public()
+        server.add_bookmark(self.db_path, aiko, first)
+        self.assertEqual(public(), before)
+        for row in server.posts_after(self.db_path, 0):
+            self.assertNotIn("bookmark", " ".join(row.keys()))
+
+    def test_bookmarks_come_newest_post_first_with_names_and_likes(self):
+        aiko, ben, first, second, bens = self.bookmark_people()
+        server.add_like(self.db_path, ben, first)
+        for post_id in (first, bens, second):
+            server.add_bookmark(self.db_path, aiko, post_id)
+        rows = server.bookmarks_for(self.db_path, aiko)
+        self.assertEqual([r["id"] for r in rows], [bens, second, first])
+        self.assertEqual((rows[0]["author"], rows[0]["display_name"]), ("ben", "Ben Ito"))
+        self.assertEqual(rows[2]["like_count"], 1)
+        self.assertEqual(server.bookmarks_for(self.db_path, ben), [])
+
+    def test_bookmarks_are_read_through_select_posts(self):
+        # So a post this viewer may not see (block, report) is left out too.
+        aiko, ben, first, second, bens = self.bookmark_people()
+        server.add_bookmark(self.db_path, aiko, bens)
+        with mock.patch.object(server, "visible_to",
+                               lambda viewer: ("posts.author_id != ?", [ben])):
+            self.assertEqual(server.bookmarks_for(self.db_path, aiko), [])
+
+    def test_deleting_a_post_deletes_its_bookmarks(self):
+        aiko, ben, first, second, bens = self.bookmark_people()
+        server.add_like(self.db_path, aiko, bens)
+        server.add_bookmark(self.db_path, aiko, bens)
+        server.add_bookmark(self.db_path, aiko, first)
+        connection = server.connect(self.db_path)
+        connection.execute("DELETE FROM likes WHERE post_id = ?", (bens,))   # likes do not cascade
+        connection.execute("DELETE FROM posts WHERE id = ?", (bens,))
+        connection.commit()
+        connection.close()
+        self.assertEqual(self.rows("SELECT * FROM bookmarks"), [(aiko, first)])
+
+    def test_bookmarking_adds_no_user_and_changes_no_like(self):
+        aiko, ben, first, second, bens = self.bookmark_people()
+        server.add_like(self.db_path, aiko, bens)
+        users, likes = self.users(), self.rows("SELECT * FROM likes")
+        server.add_bookmark(self.db_path, aiko, bens)
+        server.remove_bookmark(self.db_path, aiko, bens)
+        server.add_bookmark(self.db_path, ben, bens)
+        self.assertEqual(self.users(), users)
+        self.assertEqual(self.rows("SELECT * FROM likes"), likes)
+
+    def test_the_bookmarks_upgrade_keeps_every_row(self):
+        aiko, ben, first, second, bens = self.bookmark_people()
+        server.add_like(self.db_path, ben, first)
+        connection = sqlite3.connect(self.db_path)
+        connection.executescript("DROP TABLE bookmarks; PRAGMA user_version = 4;")
+        tables = ("users", "posts", "likes", "sessions", "attempts")
+        before = {table: self.rows("SELECT * FROM " + table + " ORDER BY 1, 2")
+                  for table in tables}
+        server.upgrade_to_bookmarks(connection)
+        connection.close()
+        after = {table: self.rows("SELECT * FROM " + table + " ORDER BY 1, 2")
+                 for table in tables}
+        self.assertEqual(after, before)
+        self.assertEqual(self.rows("SELECT * FROM bookmarks"), [])
+        self.assertEqual(self.rows("PRAGMA foreign_key_check"), [])
+        server.create_tables(self.db_path)   # twice is harmless
+        self.assertEqual(self.rows("PRAGMA user_version"), [(server.LATEST_VERSION,)])
+        server.add_bookmark(self.db_path, aiko, bens)
+        self.assertEqual(self.rows("SELECT * FROM bookmarks"), [(aiko, bens)])
+
+    def test_the_bookmarks_table_cascades_and_has_its_key(self):
+        sql = self.rows("SELECT sql FROM sqlite_master WHERE name = 'bookmarks'")[0][0]
+        self.assertIn("PRIMARY KEY (user_id, post_id)", sql)
+        self.assertEqual(sql.count("ON DELETE CASCADE"), 2)
+
 
 class RealServerTest(unittest.TestCase):
 
@@ -1716,6 +1862,42 @@ class RealServerTest(unittest.TestCase):
                          (400, "'from' must be a whole number, 0 or more."))
         self.assertEqual(self.get("/likes?from=5"), self.get("/likes"))
 
+
+    # -- bookmarks --
+
+    def test_bookmarks_need_a_login(self):
+        self.assertEqual(self.refused_get(self.window, "/bookmarks")[0], 401)
+        self.sign_up().close()
+        post_id = json.loads(self.send("/posts", {"text": "hello"}).read())["id"]
+        self.window = urllib.request.build_opener()   # a window with no cookie
+        self.assertEqual(self.refused("/bookmarks", {"post_id": post_id})[0], 401)
+        self.assertEqual(self.refused("/bookmarks", {"post_id": post_id}, "DELETE")[0], 401)
+        connection = server.connect(self.server.db_path)
+        self.assertEqual(connection.execute("SELECT * FROM bookmarks").fetchall(), [])
+        connection.close()
+
+    def test_bookmark_list_and_take_back(self):
+        self.sign_up().close()
+        post_id = json.loads(self.send("/posts", {"text": "hello"}).read())["id"]
+        with self.send("/bookmarks", {"post_id": post_id}) as answer:
+            self.assertEqual(answer.status, 201)
+            self.assertEqual(json.loads(answer.read()), {"post_id": post_id, "bookmarked": True})
+        listed = self.get("/bookmarks")
+        self.assertEqual(listed, self.get("/posts?after=0"))   # the same shape as /posts
+        code, reason = self.refused("/bookmarks", {"post_id": post_id})
+        self.assertEqual((code, reason), (400, "You have already bookmarked that post."))
+        with self.send("/bookmarks", {"post_id": post_id}, "DELETE") as answer:
+            self.assertEqual(answer.status, 200)
+            self.assertEqual(json.loads(answer.read()), {"post_id": post_id, "bookmarked": False})
+        self.assertEqual(self.get("/bookmarks"), [])
+
+    def test_a_bookmark_that_is_not_json_is_refused(self):
+        self.sign_up().close()
+        post_id = json.loads(self.send("/posts", {"text": "hello"}).read())["id"]
+        code, reason = self.refused("/bookmarks", {"post_id": post_id},
+                                    content_type="text/plain")
+        self.assertEqual((code, reason), (400, "The request must be JSON."))
+        self.assertEqual(self.get("/bookmarks"), [])
 
 
 class JourneyTest(unittest.TestCase):
@@ -2246,6 +2428,110 @@ class JourneyTest(unittest.TestCase):
 
 
 
+class BookmarkJourneyTest(unittest.TestCase):
+    """The journey of a private bookmark, through all three levels at once.
+
+    It borrows JourneyTest's server, windows and helpers (not its tests, so
+    those do not run twice). Every request below is one the page makes: see
+    `loadBookmarks` and `pressBookmark` in `app.js`.
+    """
+
+    setUp = JourneyTest.setUp
+    tearDown = JourneyTest.tearDown
+    open_window = JourneyTest.open_window
+    page_sends = JourneyTest.page_sends
+    page_signs_up = JourneyTest.page_signs_up
+    page_logs_out = JourneyTest.page_logs_out
+    page_posts = JourneyTest.page_posts
+    page_presses_heart = JourneyTest.page_presses_heart
+    is_refused = JourneyTest.is_refused
+    rows = JourneyTest.rows
+
+    def page_asks_for_bookmarks(self, window, query=""):
+        """loadBookmarks: GET /bookmarks. Who is asking comes from the cookie."""
+        with window.open(self.base + "/bookmarks" + query) as answer:
+            return json.loads(answer.read())
+
+    def page_presses_star(self, window, post_id, already_saved):
+        """pressBookmark: POST /bookmarks to save, DELETE /bookmarks to take it back"""
+        return self.page_sends(window, "/bookmarks", {"post_id": post_id},
+                               "DELETE" if already_saved else "POST")
+
+    def public_bytes(self, window):
+        """The exact bytes of the two answers every window reads every second."""
+        answers = []
+        for path in ("/posts?after=0", "/likes"):
+            with window.open(self.base + path) as answer:
+                answers.append(answer.read())
+        return answers
+
+    def test_the_whole_journey_of_a_private_bookmark(self):
+        aiko = self.open_window()
+        ben = self.open_window()
+        nobody = self.open_window()
+
+        # 1. Aiko and Ben sign up. Aiko posts twice; Ben posts once.
+        self.page_signs_up(aiko, "aiko", "Aiko Tanaka")
+        self.page_signs_up(ben, "ben", "Ben Ito")
+        aiko_id = self.rows("SELECT id FROM users WHERE name = 'aiko'")[0][0]
+        ben_id = self.rows("SELECT id FROM users WHERE name = 'ben'")[0][0]
+        self.page_posts(aiko, "Aiko one")
+        self.page_posts(aiko, "Aiko two")
+        status, bens_post = self.page_posts(ben, "Ben's post")
+        self.page_presses_heart(ben, bens_post["id"], False)
+
+        # 2. What Ben and a window with no login read, byte for byte.
+        ben_before, nobody_before = self.public_bytes(ben), self.public_bytes(nobody)
+
+        # 3. Aiko bookmarks Ben's post: one row, her id and that post's id.
+        status, answer = self.page_presses_star(aiko, bens_post["id"], False)
+        self.assertEqual((status, answer), (201, {"post_id": bens_post["id"],
+                                                  "bookmarked": True}))
+        self.assertEqual(self.rows("SELECT * FROM bookmarks"), [(aiko_id, bens_post["id"])])
+
+        # 4. Privacy: nobody else can tell. The public answers are the same bytes.
+        self.assertEqual(self.public_bytes(ben), ben_before)
+        self.assertEqual(self.public_bytes(nobody), nobody_before)
+        self.assertEqual(self.page_asks_for_bookmarks(ben), [])
+        self.assertEqual(self.page_asks_for_bookmarks(ben, "?user=aiko"), [])
+        self.assertEqual(self.page_asks_for_bookmarks(ben, "?author=aiko&user_id=1"), [])
+        code, reason = self.is_refused(self.page_asks_for_bookmarks, nobody)
+        self.assertEqual(code, 401)
+
+        # 5. Ben names Aiko in the JSON: it is ignored, and the row is his.
+        status, answer = self.page_sends(ben, "/bookmarks", {"post_id": bens_post["id"],
+                                                             "user_id": aiko_id,
+                                                             "author": "aiko"}, "POST")
+        self.assertEqual(status, 201)
+        self.assertEqual(self.rows("SELECT * FROM bookmarks ORDER BY user_id"),
+                         [(aiko_id, bens_post["id"]), (ben_id, bens_post["id"])])
+
+        # 6. Ben takes his back, then tries again: refused, and Aiko's row stays.
+        self.page_presses_star(ben, bens_post["id"], True)
+        code, reason = self.is_refused(self.page_presses_star, ben, bens_post["id"], True)
+        self.assertEqual((code, reason), (400, "You have not bookmarked that post."))
+        self.assertEqual(self.rows("SELECT * FROM bookmarks"), [(aiko_id, bens_post["id"])])
+
+        # 7. Aiko's list is exactly her one post. She takes it back: the row is gone.
+        mine = self.page_asks_for_bookmarks(aiko)
+        self.assertEqual([post["id"] for post in mine], [bens_post["id"]])
+        self.assertEqual(mine[0]["like_count"], 1)
+        status, answer = self.page_presses_star(aiko, bens_post["id"], True)
+        self.assertEqual((status, answer), (200, {"post_id": bens_post["id"],
+                                                  "bookmarked": False}))
+        self.assertEqual(self.rows("SELECT * FROM bookmarks"), [])
+
+        # 8. Aiko logs out: her old cookie no longer reads any bookmarks.
+        self.page_presses_star(aiko, bens_post["id"], False)
+        self.page_logs_out(aiko)
+        code, reason = self.is_refused(self.page_asks_for_bookmarks, aiko)
+        self.assertEqual(code, 401)
+        # Nothing about bookmarks changed the users or the likes.
+        self.assertEqual(len(self.rows("SELECT * FROM users")), 2)
+        self.assertEqual(self.rows("SELECT post_id, user_id FROM likes"),
+                         [(bens_post["id"], ben_id)])
+
+
 class PageAndServerAgreeTest(unittest.TestCase):
     """AGENTS.md: "the page and the server must agree".
 
@@ -2290,7 +2576,7 @@ class PageAndServerAgreeTest(unittest.TestCase):
     def test_the_page_asks_only_for_routes_the_server_answers(self):
         asked = set(re.findall(r'fetch\("(/[a-z]*)', self.page_code))
         self.assertEqual(asked, {"/posts", "/likes", "/sessions", "/accounts",
-                                 "/likers", "/likesummary", "/search"})
+                                 "/likers", "/likesummary", "/search", "/bookmarks"})
 
     def test_the_page_names_only_the_methods_tried_below(self):
         # A GET needs no method, so the page names only the other two.
@@ -2361,8 +2647,9 @@ class PageAndServerAgreeTest(unittest.TestCase):
         self.assertEqual(re.findall(r"(?<!function )\baddMenuItem\(", self.page_code), [])
         with open(os.path.join(HERE, "index.html"), encoding="utf-8") as page_file:
             self.assertIn('<nav id="views" aria-label="Views" hidden>', page_file.read())
-        # The timeline is the first view; search adds the second.
-        self.assertEqual(re.findall(r'\baddView\("(\w+)"', self.page_code), ["timeline", "search"])
+        # The timeline, and the views features add: search and bookmarks.
+        views = re.findall(r'\baddView\("(\w+)"', self.page_code)
+        self.assertEqual(sorted(views), ["bookmarks", "search", "timeline"])
 
     def test_posts_with_authors_is_used_only_in_select_posts_and_post_by_id(self):
         # Read server.py as Python, and count each use of POSTS_WITH_AUTHORS by
@@ -2583,6 +2870,47 @@ class PageAndServerAgreeTest(unittest.TestCase):
         search = re.search(r"\ndef search_posts\(.*?\n(?=\n\n)", self.server_code,
                            re.DOTALL).group(0)
         self.assertIn("select_posts(", search)
+    # -- bookmarks --
+
+    def test_the_server_answers_every_bookmark_request(self):
+        for method in ("GET", "POST", "DELETE"):
+            with self.subTest(method=method):
+                self.assertEqual(self.answer_code(method, "/bookmarks"), 401)
+
+    def test_a_bookmark_sends_only_the_post_id(self):
+        press = functions_in(self.page_code)["pressBookmark"]
+        self.assertIn('fetch("/bookmarks"', press)
+        self.assertIn("JSON.stringify({ post_id: postId })", press)
+        for name in ("author", "user", "user_id", "account"):
+            self.assertNotRegex(press, r"\b" + name + r":")
+
+    def test_bookmarks_are_not_asked_for_every_second(self):
+        functions = functions_in(self.page_code)
+        for name in ("checkForNewPosts", "keepChecking"):
+            self.assertNotIn("/bookmarks", functions[name])
+            self.assertNotIn("loadBookmarks", functions[name])
+
+    def test_the_star_goes_through_the_shared_pieces(self):
+        self.assertIn("addPostPart(function bookmarkPart", self.page_code)
+        self.assertIn("ACTIONS.bookmark = pressBookmark;", self.page_code)
+        self.assertIn('addView("bookmarks"', self.page_code)
+        list_code = functions_in(self.page_code)["showBookmarkList"]
+        self.assertIn("makePostItem(post)", list_code)
+        self.assertNotIn("postParts", list_code)   # only the live timeline is kept there
+
+    def test_logging_out_clears_the_bookmarks_from_the_screen(self):
+        functions = functions_in(self.page_code)
+        self.assertIn("clearBookmarks();", functions["showSignedOut"])
+        self.assertIn("loadBookmarks();", functions["showSignedIn"])
+
+    def test_the_public_answers_have_no_bookmark(self):
+        for function in (server.post_to_json, server.likes_to_json, server.like_to_json):
+            self.assertNotIn("bookmark", ast.get_source_segment(
+                self.server_code, next(node for node in ast.walk(ast.parse(self.server_code))
+                                       if isinstance(node, ast.FunctionDef)
+                                       and node.name == function.__name__)))
+        self.assertNotIn("bookmark", server.POSTS_WITH_AUTHORS)
+
 
 class ColoursTest(unittest.TestCase):
     """The Colours switch (Auto, Light, Dark) and the colours themselves.

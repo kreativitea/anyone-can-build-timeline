@@ -486,3 +486,34 @@ time.post-time {
   color: var(--quiet);
   text-align: center;
 }
+
+/* bookmarks: the ☆ at the right of the heart row. A ★ (class "bookmarked")
+   means this post is saved. Only with-backend/ has bookmarks, but both copies
+   of this file stay the same. */
+.bookmark {
+  margin-left: auto;
+  padding: 2px 14px;
+  border: 2px solid var(--border);
+  background: none;
+  color: var(--quiet);
+}
+
+.bookmark:hover {
+  border-color: var(--author);
+  color: var(--author);
+}
+
+.bookmark.bookmarked {
+  border-color: var(--author);
+  color: var(--author);
+}
+
+.bookmark:focus-visible {
+  outline: 3px solid var(--author);
+  outline-offset: 2px;
+}
+
+/* The line shown when My bookmarks is empty: quiet, because it is not a problem. */
+.bookmarks-empty {
+  color: var(--quiet);
+}

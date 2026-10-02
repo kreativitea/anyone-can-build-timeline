@@ -464,6 +464,34 @@ when it opens, and 20 older ones each time the bottom comes near, until it says
   bottom of A: older posts load, and at the end it says "No older posts." Scroll back to the top
   while a post waits: it appears within a second. Tab to "Show older posts" and press Enter.
 
+## Bookmarks
+
+A signed-in person presses ☆ on a post to save it (★), and presses again to take it back.
+"My bookmarks" shows only the posts they saved, newest post first.
+
+| | Likes | Bookmarks |
+|---|---|---|
+| One row per person per post; the database refuses a second | yes | yes |
+| `POST` adds, `DELETE` removes; a removed row is deleted, never marked | yes | yes |
+| Who is asking comes from the cookie, never from the JSON | yes | yes |
+| A public count | yes | **no count anywhere** |
+| Who can read it | anyone | **only you**: `GET /bookmarks` is 401 when signed out |
+| Asked for every second | yes | **no** |
+| Primary key | `(post_id, user_id)` | `(user_id, post_id)`: always read for one person |
+| Answer to a press | `{post_id, like_count}` | `{post_id, bookmarked}` |
+
+- **Private.** `post_to_json`, `POSTS_WITH_AUTHORS` and `likes_to_json` never mention bookmarks, so
+  the public answers have nowhere to carry one. A test checks that `GET /posts` and `GET /likes`
+  give the same bytes before and after a bookmark. `GET /bookmarks` reads no query string:
+  `?user=aiko` is ignored. No terminal line is printed for a bookmark.
+- **Not polled.** Bookmarks change only when you press a ☆, and the answer says what is now true.
+  The page asks `GET /bookmarks` when someone logs in, when "My bookmarks" opens, and after a
+  refused press (a second tab may have changed it).
+- **The list goes through `select_posts`**, so a post hidden from you (block, report) is left out.
+- **A deleted post leaves the list.** Both ids are `ON DELETE CASCADE`: if a post or a user row is
+  deleted, the database deletes its bookmarks too.
+- In the data model: `bookmarks (user_id, post_id)`, both pointing at their rows, nothing else.
+
 ## 8. Build or borrow
 
 - **Built:** the page, the server and the data model.
