@@ -1,4 +1,4 @@
-Status: built on branch drafts, awaiting merge
+Status: merged
 
 # Drafts
 

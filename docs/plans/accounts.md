@@ -1,4 +1,4 @@
-# Accounts
+Status: merged
 
 Status: built on branch accounts, awaiting merge
 

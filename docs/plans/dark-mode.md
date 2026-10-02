@@ -1,4 +1,4 @@
-Status: built on branch dark-mode, awaiting merge
+Status: merged
 
 # Dark mode
 
