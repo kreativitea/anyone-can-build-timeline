@@ -21,10 +21,6 @@ const MAX_PASSWORD = 200;
 const ACCOUNT_NAME = /^[A-Za-z0-9_]+$/;
 // The characters a display name may not hold, the same as HIDDEN_CHARACTERS in server.py.
 const HIDDEN_CHARACTERS = /[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u2028-\u202e\u2066-\u2069]/;
-const CANNOT_REACH = "Cannot reach the server. Trying again every second.";
-// The words on the button under a long post (long-posts).
-const SHOW_MORE = "Show more";
-const SHOW_LESS = "Show less";
 
 const signedOutSection = document.getElementById("signed-out");
 const signedInSection = document.getElementById("signed-in");
@@ -48,6 +44,139 @@ const postForm = document.getElementById("post-form");
 // script in index.html, which uses it before the page is drawn.
 const THEME_KEY = "timeline-theme";
 const themeSwitch = document.getElementById("theme");
+const languageButton = document.getElementById("language");
+
+// ---- Words and languages ----
+//
+// Every word the page shows is in words.js (WORDS), by key, in each language.
+// The page never writes a sentence of its own: it asks say("key"). The server
+// never translates either: a refusal comes with a code, and the page shows the
+// words for that code (showProblem). People's own words (posts, names) are
+// never keys: they are shown exactly as they were written.
+
+// The language now shown: "en" or "ja".
+let language = "en";
+
+// The key for the language choice in localStorage.
+const LANGUAGE_KEY = "language";
+
+// Values that words in index.html need. The sign-up form says
+// "Password (8 characters or more)": the 8 is {min}.
+const PAGE_VALUES = { min: MIN_PASSWORD };
+
+// What the status line says now, so it can be written again in another language.
+let statusNow = { key: "", values: {}, fallback: "" };
+
+// Does words.js have this language yet? (Japanese comes in japanese Part B.)
+function hasWordsIn(lang) {
+  return WORDS.app_name[lang] !== undefined;
+}
+
+// The language to start with: the one chosen on this browser before, if any.
+// Otherwise the browser's own first language: Japanese if it starts with "ja",
+// English for everything else.
+function chooseLanguage() {
+  try {
+    const saved = localStorage.getItem(LANGUAGE_KEY);
+    if ((saved === "en" || saved === "ja") && hasWordsIn(saved)) {
+      return saved;
+    }
+  } catch (error) {
+    // Storage is blocked: nothing was saved. Use the browser's language.
+  }
+  const first = (navigator.languages && navigator.languages[0]) || navigator.language || "";
+  if (first.toLowerCase().startsWith("ja") && hasWordsIn("ja")) {
+    return "ja";
+  }
+  return "en";
+}
+
+// Put each value into its {name} in the template. It only replaces: a value
+// is never read as a template, so a value cannot add words of its own.
+function fill(template, values) {
+  return template.replace(/\{(\w+)\}/g, function (whole, name) {
+    if (values && values[name] !== undefined) {
+      return String(values[name]);
+    }
+    return whole;
+  });
+}
+
+// The words for this key, in the language now shown, with the values filled
+// in. If there are no words in this language yet, the English.
+function say(key, values) {
+  const entry = WORDS[key];
+  if (entry === undefined) {
+    return key;   // a mistake in the code: test_server.py checks every key
+  }
+  const template = entry[language] !== undefined ? entry[language] : entry.en;
+  return fill(template, values);
+}
+
+// Words with a number, such as "1 new post" and "3 new posts": two keys,
+// key_one and key_other. The browser's own Intl.PluralRules picks one.
+// Japanese has no plural, so it always picks key_other. The number is the
+// value {count}. `values` (optional) are more values for the same sentence,
+// for example names: "{first} and {count} others liked this".
+function sayCount(key, n, values) {
+  const form = new Intl.PluralRules(language).select(n) === "one" ? "_one" : "_other";
+  return say(key + form, Object.assign({}, values, { count: n }));
+}
+
+// Write every word on the page in the language now shown: each element with
+// data-words (its text), data-words-placeholder or data-words-aria-label (that
+// attribute), then the status line.
+function showWords() {
+  for (const element of document.querySelectorAll("[data-words]")) {
+    element.textContent = say(element.dataset.words, PAGE_VALUES);
+  }
+  for (const element of document.querySelectorAll("[data-words-placeholder]")) {
+    element.placeholder = say(element.dataset.wordsPlaceholder, PAGE_VALUES);
+  }
+  for (const element of document.querySelectorAll("[data-words-aria-label]")) {
+    element.setAttribute("aria-label", say(element.dataset.wordsAriaLabel, PAGE_VALUES));
+  }
+  for (const element of document.querySelectorAll("[data-words-title]")) {
+    element.setAttribute("title", say(element.dataset.wordsTitle, PAGE_VALUES));
+  }
+  // A screen reader picks its voice by lang, and the browser picks the shape
+  // of each kanji by it. The language button is always in the other language.
+  document.documentElement.lang = language;
+  languageButton.lang = language === "ja" ? "en" : "ja";
+  showStatus(statusNow.key, statusNow.values, statusNow.fallback);
+  // Words with values of their own (a time, a count, names) are written
+  // again by the feature that made them.
+  for (const redraw of WORDS_REDRAWN) {
+    redraw();
+  }
+}
+
+// Functions that write their own words again after a language change, for
+// words that data-words cannot hold (they have values, such as a time or a
+// count). A feature adds one with whenLanguageChanges(itsFunction).
+const WORDS_REDRAWN = [];
+
+function whenLanguageChanges(redraw) {
+  WORDS_REDRAWN.push(redraw);
+}
+
+// Show the page in this language, and remember the choice in this browser.
+function setLanguage(newLanguage) {
+  try {
+    localStorage.setItem(LANGUAGE_KEY, newLanguage);
+  } catch (error) {
+    // Storage is blocked: the words still change in this tab, but are not remembered.
+  }
+  language = newLanguage;
+  showWords();
+}
+
+// Show the server's refusal. Its code names the rule, so the words come from
+// words.js, in the reader's language. A code this page does not know (an older
+// page, a newer server) shows the server's English instead, which is still true.
+function showProblem(answer) {
+  showStatus(answer.code, answer.values, answer.error);
+}
 
 // The id of the newest post this window has received, shown or still waiting
 // behind the "new posts" button (timeline-flow). It must count the waiting ones
@@ -119,21 +248,24 @@ function makePostMenu() {
   menu.className = "post-menu";
   menu.hidden = true;
   const summary = document.createElement("summary");
-  summary.setAttribute("aria-label", "More actions for this post");
+  summary.dataset.wordsAriaLabel = "post_menu_label";
+  summary.setAttribute("aria-label", say("post_menu_label"));
   summary.textContent = "\u22ef";
   const list = document.createElement("ul");
   menu.append(summary, list);
   return menu;
 }
 
-// Add one button to a post's "⋯" menu. `action` is a name in ACTIONS.
-function addMenuItem(slots, action, words) {
+// Add one button to a post's "⋯" menu. `action` is a name in ACTIONS, and
+// `key` names its words in words.js.
+function addMenuItem(slots, action, key) {
   const button = document.createElement("button");
   button.type = "button";
   button.className = "link-button";
   button.dataset.action = action;
   button.dataset.postId = slots.menu.closest(".post").dataset.postId;
-  button.textContent = words;
+  button.dataset.words = key;
+  button.textContent = say(key);
   const row = document.createElement("li");
   row.append(button);
   slots.menu.querySelector("ul").append(row);
@@ -211,9 +343,9 @@ addPostPart(function timePart(post, slots) {
 
 // ---- timestamps: "5 minutes ago", and the full date on hover ----
 // The server sends each time in UTC, like 2026-10-02T07:42:10Z. The page shows
-// it in the reader's own time zone and language ("undefined" as the locale
-// means "the browser's language"). The order of the timeline never uses the
-// time, only the post id.
+// it in the reader's own time zone, in the language the page is shown in
+// (`language`), with the browser's own Intl: never with words of its own.
+// The order of the timeline never uses the time, only the post id.
 
 // How long ago `moment` was, seen from `now`. Both are Date values.
 function timeAgo(moment, now) {
@@ -221,9 +353,9 @@ function timeAgo(moment, now) {
   // Under a minute, or in the future: the reader's clock may be a little
   // ahead of or behind the server's, and a new post must never say "in 3 seconds".
   if (seconds < 60) {
-    return "just now";
+    return say("time_just_now");
   }
-  const words = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
+  const words = new Intl.RelativeTimeFormat(language, { numeric: "auto" });
   if (seconds < 60 * 60) {
     return words.format(-Math.floor(seconds / 60), "minute");
   }
@@ -238,12 +370,12 @@ function timeAgo(moment, now) {
   if (moment.getFullYear() !== now.getFullYear()) {
     how.year = "numeric";
   }
-  return moment.toLocaleDateString(undefined, how);
+  return moment.toLocaleDateString(language, how);
 }
 
 // The full date and time, in the reader's time zone, for the tooltip.
 function fullLocalTime(moment) {
-  return moment.toLocaleString(undefined, { dateStyle: "full", timeStyle: "medium" });
+  return moment.toLocaleString(language, { dateStyle: "full", timeStyle: "medium" });
 }
 
 // One time on the page. Other features reuse this: with a full time it makes
@@ -254,8 +386,10 @@ function timeElement(postedAt, oldClockTime) {
   if (!postedAt) {
     const unknown = document.createElement("span");
     unknown.className = "post-time post-time-unknown";
-    unknown.setAttribute("title", "Posted before Timeline kept dates");
-    unknown.textContent = oldClockTime + " \u00b7 date unknown";
+    unknown.dataset.wordsTitle = "time_before_dates";
+    unknown.setAttribute("title", say("time_before_dates"));
+    unknown.dataset.clockTime = oldClockTime;
+    unknown.textContent = say("time_date_unknown", { time: oldClockTime });
     return unknown;
   }
   const moment = new Date(postedAt);
@@ -275,6 +409,18 @@ function refreshTimes() {
     time.textContent = timeAgo(new Date(time.getAttribute("datetime")), now);
   }
 }
+
+// After a language change: every time again, with its tooltip, and every
+// "date unknown".
+whenLanguageChanges(function redrawTimes() {
+  refreshTimes();
+  for (const time of document.querySelectorAll("time[data-relative]")) {
+    time.setAttribute("title", fullLocalTime(new Date(time.getAttribute("datetime"))));
+  }
+  for (const unknown of document.querySelectorAll(".post-time-unknown")) {
+    unknown.textContent = say("time_date_unknown", { time: unknown.dataset.clockTime });
+  }
+});
 
 // What it says.
 addPostPart(function textPart(post, slots) {
@@ -307,7 +453,8 @@ addPostPart(function heartPart(post, slots) {
   likeCount.dataset.postId = post.id;
   likeCount.setAttribute("aria-expanded", "false");
   likeCount.setAttribute("aria-controls", "likers-" + post.id);
-  likeCount.setAttribute("aria-label", whoLikedSay("likers_show"));
+  likeCount.dataset.wordsAriaLabel = "likers_show";
+  likeCount.setAttribute("aria-label", say("likers_show"));
   likeCount.textContent = post.like_count;
 
   likeRow.append(likeButton, likeCount);
@@ -326,7 +473,9 @@ function showLike(postId, count, liked) {
   parts.likeButton.classList.toggle("liked", liked);
   parts.likeButton.setAttribute("aria-pressed", liked ? "true" : "false");
   // What the button would do if it were pressed now, for a screen reader.
-  parts.likeButton.setAttribute("aria-label", liked ? "Unlike this post" : "Like this post");
+  // data-words-aria-label lets showWords write it again in another language.
+  parts.likeButton.dataset.wordsAriaLabel = liked ? "unlike_label" : "like_label";
+  parts.likeButton.setAttribute("aria-label", say(parts.likeButton.dataset.wordsAriaLabel));
   // who-liked: the line under the post is out of date when either one changed.
   if (parts.summaryFor !== count + ":" + liked) {
     parts.summaryFor = count + ":" + liked;
@@ -347,39 +496,10 @@ function showLike(postId, count, liked) {
 // The same limit as MAX_SUMMARY_POSTS in server.py.
 const MAX_SUMMARY_POSTS = 100;
 
-// The words of this feature. One sentence is one template, never joined from
-// pieces, because another language may put the names in another order. Names
-// go in as {first} and {second}. (These move to words.js with the Japanese
-// words table.)
-const WHO_LIKED_WORDS = {
-  liked_you: "You",
-  liked_by_one: "{first} liked this post",
-  liked_by_two: "{first} and {second} liked this post",
-  liked_by_two_and_others_one: "{first}, {second}, and {count} other liked this post",
-  liked_by_two_and_others_other: "{first}, {second}, and {count} others liked this post",
-  liked_by_one_and_others_one: "{first} and {count} other liked this post",
-  liked_by_one_and_others_other: "{first} and {count} others liked this post",
-  liked_by_others_one: "{count} person liked this post",
-  liked_by_others_other: "{count} people liked this post",
-  likers_none: "No likes yet.",
-  likers_more_one: "and {count} more",
-  likers_more_other: "and {count} more",
-  likers_show: "Show who liked this post",
-};
-
-// The words for this key, with each {name} replaced by values[name]. It only
-// replaces, in one pass: a display name like "{count}" stays as it is typed.
-function whoLikedSay(key, values) {
-  return WHO_LIKED_WORDS[key].replace(/\{(\w+)\}/g, function (all, name) {
-    return String(values[name]);
-  });
-}
-
-// For words with a number: key_one for 1, key_other for every other number.
-function whoLikedSayCount(key, count, values) {
-  const form = new Intl.PluralRules("en").select(count) === "one" ? "_one" : "_other";
-  return whoLikedSay(key + form, Object.assign({ count: count }, values));
-}
+// The words of this feature are in words.js (liked_..., likers_...). One
+// sentence is one key, never joined from pieces, because another language may
+// put the names in another order. Names go in as {first} and {second}; say()
+// fills them in one pass, so a display name like "{count}" stays as it is typed.
 
 // The line and the list, under the heart. Both start hidden.
 addPostPart(function whoLikedPart(post, slots) {
@@ -428,7 +548,7 @@ async function askForSummaries() {
       const response = await fetch("/likesummary?post_ids=" + ids.join(","));
       const answer = await response.json();
       if (!response.ok) {
-        throw new Error(answer.error);
+        throw new Error(answer.code);
       }
       for (const id of ids) {
         const parts = postParts[id];
@@ -456,9 +576,10 @@ async function askForSummaries() {
 // Write the line: "You, Anika, and 10 others liked this post". The server has
 // already chosen the names; here they are only put into one sentence.
 function showSummary(parts, summary) {
+  parts.lastSummary = summary;   // kept, to write it again after a language change
   const names = [];
   if (summary.you) {
-    names.push(whoLikedSay("liked_you"));
+    names.push(say("liked_you"));
   }
   for (const leader of summary.leaders) {
     names.push(leader.display_name);
@@ -472,13 +593,13 @@ function showSummary(parts, summary) {
   const values = { first: names[0], second: names[1] };
   let words;
   if (names.length === 0) {
-    words = whoLikedSayCount("liked_by_others", others, values);
+    words = sayCount("liked_by_others", others, values);
   } else if (names.length === 1) {
-    words = others === 0 ? whoLikedSay("liked_by_one", values)
-      : whoLikedSayCount("liked_by_one_and_others", others, values);
+    words = others === 0 ? say("liked_by_one", values)
+      : sayCount("liked_by_one_and_others", others, values);
   } else {
-    words = others === 0 ? whoLikedSay("liked_by_two", values)
-      : whoLikedSayCount("liked_by_two_and_others", others, values);
+    words = others === 0 ? say("liked_by_two", values)
+      : sayCount("liked_by_two_and_others", others, values);
   }
   // textContent, never innerHTML: a display name is text a stranger typed.
   parts.summary.textContent = words;
@@ -506,13 +627,13 @@ async function showLikers(list, postId) {
     const response = await fetch("/likers?post_id=" + postId);
     const answer = await response.json();
     if (!response.ok) {
-      // The server refused, and says why (for example, the post is gone).
-      showStatus(answer.error);
+      // The server refused, and its code says why (for example, the post is gone).
+      showProblem(answer);
       return;
     }
     buildLikers(list, answer);
   } catch (error) {
-    showStatus(CANNOT_REACH);
+    showStatus("cannot_reach");
   }
 }
 
@@ -522,7 +643,8 @@ function buildLikers(list, answer) {
   list.replaceChildren();
   if (answer.likers.length === 0) {
     const row = document.createElement("li");
-    row.textContent = whoLikedSay("likers_none");
+    row.dataset.words = "likers_none";
+    row.textContent = say("likers_none");
     list.append(row);
     return;
   }
@@ -540,15 +662,36 @@ function buildLikers(list, answer) {
   if (answer.like_count > answer.likers.length) {
     const row = document.createElement("li");
     row.className = "likers-more";
-    row.textContent = whoLikedSayCount("likers_more", answer.like_count - answer.likers.length);
+    row.textContent = sayCount("likers_more", answer.like_count - answer.likers.length);
     list.append(row);
   }
 }
 
 ACTIONS.likers = toggleLikers;
 
-function showStatus(words) {
-  statusLine.textContent = words;
+// After a language change: every line again, and every open list.
+whenLanguageChanges(function redrawWhoLiked() {
+  for (const postId in postParts) {
+    const parts = postParts[postId];
+    if (parts.lastSummary !== undefined) {
+      showSummary(parts, parts.lastSummary);
+    }
+    if (!parts.likersList.hidden) {
+      showLikers(parts.likersList, Number(postId));
+    }
+  }
+});
+
+// Write one message in the status line: the words for `key`, with `values`
+// filled in. `fallback` is used only if words.js has no such key (the server's
+// own English, from showProblem). showStatus("") empties the line.
+function showStatus(key, values, fallback) {
+  statusNow = { key: key, values: values || {}, fallback: fallback || "" };
+  if (WORDS[key] !== undefined) {
+    statusLine.textContent = say(key, values);
+  } else {
+    statusLine.textContent = fallback || "";
+  }
 }
 
 // Logged in: show who, and the post form. Hide the two account forms.
@@ -562,7 +705,8 @@ function showSignedIn(who) {
   loadBookmarks();
 }
 
-// Not logged in: show the Log in and Sign up forms, and why, if there is a reason.
+// Not logged in: show the Log in and Sign up forms, and why, if there is a
+// reason (a key in words.js, or "" for none).
 // The post box is emptied too, so the next person to log in on this computer
 // does not see the last person's unsent words.
 function showSignedOut(reason) {
@@ -575,42 +719,44 @@ function showSignedOut(reason) {
 }
 
 // The rules for a new account, the same as check_name, check_display_name and
-// check_password in server.py. Returns the broken rule, or "" if none.
+// check_password in server.py, with the same codes as the server.
+// Returns the broken rule as { key, values }, or null if none.
 function accountProblem(name, displayName, password) {
   if (name === "") {
-    return "The name must not be empty.";
+    return { key: "name_empty", values: {} };
   }
   if (name.length > MAX_AUTHOR) {
-    return "The name must be " + MAX_AUTHOR + " characters or fewer.";
+    return { key: "name_too_long", values: { limit: MAX_AUTHOR } };
   }
   if (!ACCOUNT_NAME.test(name)) {
-    return "The account name may use only letters, numbers and _.";
+    return { key: "name_characters", values: {} };
   }
   if (displayName.length > MAX_DISPLAY_NAME) {
-    return "The display name must be " + MAX_DISPLAY_NAME + " characters or fewer.";
+    return { key: "display_name_too_long", values: { limit: MAX_DISPLAY_NAME } };
   }
   if (HIDDEN_CHARACTERS.test(displayName)) {
-    return "The display name must not have hidden characters or line breaks.";
+    return { key: "display_name_hidden", values: {} };
   }
   // A password is never trimmed: a space is part of it.
   if (password.length < MIN_PASSWORD) {
-    return "The password must be at least " + MIN_PASSWORD + " characters.";
+    return { key: "password_too_short", values: { limit: MIN_PASSWORD } };
   }
   if (password.length > MAX_PASSWORD) {
-    return "The password must be " + MAX_PASSWORD + " characters or fewer.";
+    return { key: "password_too_long", values: { limit: MAX_PASSWORD } };
   }
-  return "";
+  return null;
 }
 
-// The rules for a post, the same as check_text in server.py.
+// The rules for a post, the same as check_text in server.py, with the same codes.
+// Returns the broken rule as { key, values }, or null if none.
 function textProblem(text) {
   if (text === "") {
-    return "The post must not be empty.";
+    return { key: "text_empty", values: {} };
   }
   if (characterCount(text) > MAX_TEXT) {
-    return "The post must be " + MAX_TEXT + " characters or fewer.";
+    return { key: "text_too_long", values: { limit: MAX_TEXT } };
   }
-  return "";
+  return null;
 }
 
 // How many characters, counted the way the server counts them.
@@ -694,7 +840,7 @@ function showDraft(who) {
   textBox.value = draft;
   updateCount();
   if (draft !== "") {
-    showStatus("Your unsent post is back.");
+    showStatus("draft_back");
   }
 }
 
@@ -742,7 +888,8 @@ function makeExpandable(textElement, postId) {
   button.dataset.postId = postId;
   button.setAttribute("aria-controls", textElement.id);
   button.setAttribute("aria-expanded", "false");
-  button.textContent = SHOW_MORE;
+  button.dataset.words = "show_more";
+  button.textContent = say("show_more");
   button.hidden = true;
   textElement.after(button);
 
@@ -771,7 +918,8 @@ function toggleExpanded(postId, button) {
   }
   const folded = textElement.classList.toggle("collapsed");
   button.setAttribute("aria-expanded", folded ? "false" : "true");
-  button.textContent = folded ? SHOW_MORE : SHOW_LESS;
+  button.dataset.words = folded ? "show_more" : "show_less";
+  button.textContent = say(button.dataset.words);
 }
 
 // The part, added after the text part, so the text is already filled in.
@@ -984,7 +1132,7 @@ async function askWhoIAm() {
       showSignedOut("");
     }
   } catch (error) {
-    showSignedOut(CANNOT_REACH);
+    showSignedOut("cannot_reach");
   }
 }
 
@@ -1013,11 +1161,11 @@ async function checkForNewPosts() {
     for (const postId in postParts) {
       showLike(postId, likes.counts[postId] || 0, likes.mine.includes(Number(postId)));
     }
-    if (statusLine.textContent === CANNOT_REACH) {
+    if (statusNow.key === "cannot_reach") {
       showStatus("");
     }
   } catch (error) {
-    showStatus(CANNOT_REACH);
+    showStatus("cannot_reach");
   }
 }
 
@@ -1041,7 +1189,7 @@ async function logIn(event) {
   const name = loginNameBox.value.trim();
   const password = loginPasswordBox.value;
   if (name === "" || password === "") {
-    showStatus("Please type your account name and your password.");
+    showStatus("login_fields_empty");
     return;
   }
   try {
@@ -1052,8 +1200,9 @@ async function logIn(event) {
     });
     const answer = await response.json();
     if (!response.ok) {
-      // The same words for a wrong name and a wrong password: see WRONG_LOGIN in server.py.
-      showSignedOut(answer.error);
+      // The same code for a wrong name and a wrong password: see WRONG_LOGIN in server.py.
+      showSignedOut("");
+      showProblem(answer);
       if (response.status === 429) holdForm(loginForm, answer.retry_after);
       return;
     }
@@ -1061,7 +1210,7 @@ async function logIn(event) {
     showSignedIn(answer);
     await afterAccountChange();
   } catch (error) {
-    showStatus(CANNOT_REACH);
+    showStatus("cannot_reach");
   }
 }
 
@@ -1076,8 +1225,8 @@ async function signUp(event) {
   // The server checks the same rules again. Never trust only the screen:
   // anyone can send a request without using this page at all.
   const problem = accountProblem(name, displayName, password);
-  if (problem !== "") {
-    showStatus(problem);
+  if (problem !== null) {
+    showStatus(problem.key, problem.values);
     return;
   }
   try {
@@ -1088,8 +1237,8 @@ async function signUp(event) {
     });
     const answer = await response.json();
     if (!response.ok) {
-      // The server refused it. It says which rule was broken.
-      showStatus(answer.error);
+      // The server refused it. Its code says which rule was broken.
+      showProblem(answer);
       if (response.status === 429) holdForm(signupForm, answer.retry_after);
       return;
     }
@@ -1097,7 +1246,7 @@ async function signUp(event) {
     showSignedIn(answer);
     await afterAccountChange();
   } catch (error) {
-    showStatus(CANNOT_REACH);
+    showStatus("cannot_reach");
   }
 }
 
@@ -1110,7 +1259,7 @@ async function logOut() {
     showSignedOut("");
     await afterAccountChange();
   } catch (error) {
-    showStatus(CANNOT_REACH);
+    showStatus("cannot_reach");
   }
 }
 
@@ -1123,8 +1272,8 @@ async function sendPost(event) {
   // A quick check on the page, so the person does not wait for an answer.
   // The server checks the same rules again.
   const problem = textProblem(text.trim());
-  if (problem !== "") {
-    showStatus(problem);
+  if (problem !== null) {
+    showStatus(problem.key, problem.values);
     return;
   }
 
@@ -1137,12 +1286,13 @@ async function sendPost(event) {
     const answer = await response.json();
     if (response.status === 401) {
       // The login has ended. Show the Log in form, and the server's reason.
-      showSignedOut(answer.error);
+      showSignedOut("");
+      showProblem(answer);
       return;
     }
     if (!response.ok) {
-      // The server refused the post. It says which rule was broken.
-      showStatus(answer.error);
+      // The server refused the post. Its code says which rule was broken.
+      showProblem(answer);
       if (response.status === 429) holdForm(postForm, answer.retry_after);
       return;
     }
@@ -1156,7 +1306,7 @@ async function sendPost(event) {
     // timeline-flow: you expect to see your own post, so show every waiting one.
     showWaitingPosts();
   } catch (error) {
-    showStatus(CANNOT_REACH);
+    showStatus("cannot_reach");
   }
 }
 
@@ -1170,7 +1320,7 @@ async function pressHeart(postId) {
 
   // Only a person who is logged in can like. The server checks this again.
   if (account === null) {
-    showStatus("Please log in to like a post.");
+    showStatus("login_to_like");
     return;
   }
 
@@ -1191,14 +1341,15 @@ async function pressHeart(postId) {
     const answer = await response.json();
     if (response.status === 401) {
       // The login has ended. Show the Log in form, and the server's reason.
-      showSignedOut(answer.error);
+      showSignedOut("");
+      showProblem(answer);
       await checkForNewPosts();
       return;
     }
     if (!response.ok) {
       // The server refused it, and says which rule was broken. This window had
       // the heart wrong, so ask the server what is true instead of guessing.
-      showStatus(answer.error);
+      showProblem(answer);
       await checkForNewPosts();
       return;
     }
@@ -1206,7 +1357,7 @@ async function pressHeart(postId) {
     showStatus("");
     showLike(postId, answer.like_count, !liked);
   } catch (error) {
-    showStatus(CANNOT_REACH);
+    showStatus("cannot_reach");
   } finally {
     parts.busy = false;
   }
@@ -1289,8 +1440,9 @@ function showView(name) {
 }
 
 // Add a view: its button, and its section (made here, unless the page
-// already has one). Returns the section, for the feature to fill.
-function addView(name, words) {
+// already has one). `key` names the button's words in words.js. Returns the
+// section, for the feature to fill.
+function addView(name, key) {
   let section = document.querySelector('[data-view="' + name + '"]');
   if (section === null) {
     const views = document.querySelectorAll("[data-view]");
@@ -1302,7 +1454,8 @@ function addView(name, words) {
   const button = document.createElement("button");
   button.type = "button";
   button.dataset.showView = name;
-  button.textContent = words;
+  button.dataset.words = key;
+  button.textContent = say(key);
   button.addEventListener("click", function () {
     showView(name);
   });
@@ -1728,7 +1881,11 @@ signupForm.addEventListener("submit", signUp);
 logoutButton.addEventListener("click", logOut);
 themeSwitch.value = savedTheme();
 themeSwitch.addEventListener("change", chooseTheme);
-addView("timeline", "Timeline");
+languageButton.addEventListener("click", function () {
+  setLanguage(language === "ja" ? "en" : "ja");
+});
+language = chooseLanguage();
+addView("timeline", "view_timeline");
 setUpBookmarks();
 showView("timeline");
 // search: its own view, and its own listeners. The results list uses the
@@ -1745,6 +1902,7 @@ viewsNav.addEventListener("click", viewChosen);
 window.addEventListener("popstate", searchFromAddress);
 searchFromAddress();
 updateCount();
+showWords();
 askWhoIAm();
 newPostsButton.addEventListener("click", pressNewPosts);
 loadOlderButton.addEventListener("click", loadOlderPosts);

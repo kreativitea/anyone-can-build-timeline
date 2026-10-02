@@ -5,6 +5,8 @@ This file has three parts:
   MODEL       the rules, and the database (six tables: users, posts, likes, sessions,
               attempts and bookmarks)
   VIEW        turns database rows into the JSON answer
+The server never translates: a refusal names its rule by a code (see PROBLEMS),
+and the page shows the words for that code in the reader's language (words.js).
 It uses only the Python standard library, so there is nothing to install.
 """
 
@@ -32,6 +34,7 @@ PAGE_FILES = {
     "/index.html": ("index.html", "text/html; charset=utf-8"),
     "/style.css": ("style.css", "text/css; charset=utf-8"),
     "/app.js": ("app.js", "text/javascript; charset=utf-8"),
+    "/words.js": ("words.js", "text/javascript; charset=utf-8"),
 }
 
 # The name of the cookie that carries the session token.
@@ -64,7 +67,7 @@ class TimelineHandler(BaseHTTPRequestHandler):
             try:
                 after = int(query.get("after", ["0"])[0])
             except ValueError:
-                self.send_json(400, {"error": "'after' must be a whole number."})
+                self.send_problem(400, Problem("after_not_number"))
                 return
             # Who is asking decides which posts they may see (see visible_to).
             # Anyone may read, so nobody logged in is fine: the viewer is None.
@@ -103,7 +106,7 @@ class TimelineHandler(BaseHTTPRequestHandler):
                 with open(os.path.join(HERE, file_name), "rb") as page_file:
                     self.send_answer(200, content_type, page_file.read())
             except OSError:
-                self.send_json(404, {"error": "The file " + file_name + " is missing."})
+                self.send_problem(404, Problem("file_missing", file=file_name))
         else:
             self.send_nothing_here("GET", url.path)
 
@@ -165,7 +168,7 @@ class TimelineHandler(BaseHTTPRequestHandler):
             post_id, like_count = remove_like(self.server.db_path, user["id"],
                                               data.get("post_id"))
         except RuleBroken as problem:
-            self.send_json(400, {"error": str(problem)})
+            self.send_problem(400, problem)
             return
         except TooFast as problem:
             self.send_too_fast(problem)
@@ -179,7 +182,7 @@ class TimelineHandler(BaseHTTPRequestHandler):
         # server agreeing first, and this server never agrees. So another site
         # cannot use a logged-in person's cookie to post as them.
         if self.headers.get_content_type() != "application/json":
-            self.send_json(400, {"error": "The request must be JSON."})
+            self.send_problem(400, Problem("not_json"))
             return None
         try:
             length = int(self.headers.get("Content-Length") or 0)
@@ -188,17 +191,17 @@ class TimelineHandler(BaseHTTPRequestHandler):
         # Too big: refused before it is read, so a huge request cannot fill the
         # server's memory. The size comes from the Content-Length header.
         if length is not None and length > MAX_REQUEST_BYTES:
-            self.send_json(413, {"error": "The request is too big."})
+            self.send_problem(413, Problem("request_too_big"))
             return None
         try:
             if length is None:
                 raise ValueError("Content-Length is not a number")
             data = json.loads(self.rfile.read(length))
         except ValueError:
-            self.send_json(400, {"error": "The request must be JSON."})
+            self.send_problem(400, Problem("not_json"))
             return None
         if not isinstance(data, dict):
-            self.send_json(400, {"error": "The request must be a JSON object."})
+            self.send_problem(400, Problem("not_json_object"))
             return None
         return data
 
@@ -217,7 +220,7 @@ class TimelineHandler(BaseHTTPRequestHandler):
         try:
             return user_for_session(self.server.db_path, self.session_token())
         except NotSignedIn as problem:
-            self.send_json(401, {"error": str(problem)})
+            self.send_problem(401, problem)
             return None
 
     def user_or_none(self):
@@ -235,7 +238,7 @@ class TimelineHandler(BaseHTTPRequestHandler):
                                          # from a header: a header can say anything.
                                          address=self.client_address[0])
         except RuleBroken as problem:
-            self.send_json(400, {"error": str(problem)})
+            self.send_problem(400, problem)
             return
         self.send_json(201, account_to_json(user), cookie=session_cookie(token))
 
@@ -244,7 +247,7 @@ class TimelineHandler(BaseHTTPRequestHandler):
             token, user = log_in(self.server.db_path, data.get("account_name"),
                                  data.get("password"))
         except NotSignedIn as problem:
-            self.send_json(401, {"error": str(problem)})
+            self.send_problem(401, problem)
             return
         self.send_json(201, account_to_json(user), cookie=session_cookie(token))
 
@@ -255,7 +258,7 @@ class TimelineHandler(BaseHTTPRequestHandler):
         try:
             row = save_post(self.server.db_path, user["id"], data.get("text"))
         except RuleBroken as problem:
-            self.send_json(400, {"error": str(problem)})
+            self.send_problem(400, problem)
             return
         self.send_json(201, post_to_json(row))
         print(post_to_log_line(row), flush=True)   # one line in the terminal for each new post
@@ -267,7 +270,7 @@ class TimelineHandler(BaseHTTPRequestHandler):
         try:
             post_id, like_count = add_like(self.server.db_path, user["id"], data.get("post_id"))
         except RuleBroken as problem:
-            self.send_json(400, {"error": str(problem)})
+            self.send_problem(400, problem)
             return
         self.send_json(201, like_to_json(post_id, like_count))
 
@@ -278,7 +281,7 @@ class TimelineHandler(BaseHTTPRequestHandler):
         try:
             post_id, rows, like_count = who_liked(self.server.db_path, post_id)
         except RuleBroken as problem:
-            self.send_json(400, {"error": str(problem)})
+            self.send_problem(400, problem)
             return
         self.send_json(200, likers_to_json(post_id, rows, like_count))
 
@@ -292,7 +295,7 @@ class TimelineHandler(BaseHTTPRequestHandler):
             summaries = like_summaries(self.server.db_path, user["id"] if user else None,
                                        post_ids)
         except RuleBroken as problem:
-            self.send_json(400, {"error": str(problem)})
+            self.send_problem(400, problem)
             return
         self.send_json(200, summaries_to_json(summaries))
 
@@ -353,7 +356,11 @@ class TimelineHandler(BaseHTTPRequestHandler):
 
     def send_nothing_here(self, method, path):
         """404, in one sentence for every method, so it stays true when routes are added."""
-        self.send_json(404, {"error": f"There is nothing to {method} at {path}."})
+        self.send_problem(404, Problem("nothing_here", method=method, path=path))
+
+    def send_problem(self, status, problem):
+        """Refuse the request. The answer names the rule by its code (see PROBLEMS)."""
+        self.send_json(status, problem_to_json(problem))
 
     def send_too_fast(self, problem):
         """429 Too Many Requests. Retry-After is the standard header for the wait, in seconds."""
@@ -451,17 +458,80 @@ ACCOUNT_NAME = re.compile(r"[A-Za-z0-9_]+")
 HIDDEN_CHARACTERS = re.compile(
     r"[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u2028-\u202e\u2066-\u2069]")
 
-# One message for a wrong name and for a wrong password, so a stranger
-# cannot use the login form to find out which account names exist.
-WRONG_LOGIN = "The account name or password is wrong."
+# Every way a request can be refused, by code, with its English sentence.
+#
+# The server never translates. It sends the code, and the values that fill in
+# the sentence ({limit} below is a value), and the page chooses the words in
+# the reader's language from words.js. The English here is for the terminal,
+# the tests, and anyone reading the answer with curl. words.js has every code
+# too, with exactly the same English: a test checks it.
+#
+# A new rule adds its code at the end, under a comment with its feature's
+# name. A code is lower case with _: first the thing (text_, like_), then
+# what is wrong (_empty, _too_long). Never write Japanese here.
+PROBLEMS = {
+    # accounts
+    "name_empty": "The name must not be empty.",
+    "name_too_long": "The name must be {limit} characters or fewer.",
+    "name_characters": "The account name may use only letters, numbers and _.",
+    "name_taken": "That account name is taken.",
+    "display_name_too_long": "The display name must be {limit} characters or fewer.",
+    "display_name_hidden": "The display name must not have hidden characters or line breaks.",
+    "password_too_short": "The password must be at least {limit} characters.",
+    "password_too_long": "The password must be {limit} characters or fewer.",
+    "text_empty": "The post must not be empty.",
+    "text_too_long": "The post must be {limit} characters or fewer.",
+    "like_post_id_missing": "The like must say which post it is for.",
+    "post_missing": "That post does not exist.",
+    "like_already": "You have already liked that post.",
+    "like_not_there": "You have not liked that post.",
+    "login_wrong": "The account name or password is wrong.",
+    "login_needed": "Please log in first.",
+    "login_ended": "Your login has ended. Please log in again.",
+    # the controller's own refusals
+    "after_not_number": "'after' must be a whole number.",
+    "not_json": "The request must be JSON.",
+    "not_json_object": "The request must be a JSON object.",
+    "file_missing": "The file {file} is missing.",
+    # groundwork
+    "nothing_here": "There is nothing to {method} at {path}.",
+    "request_too_big": "The request is too big.",
+    # who-liked
+    "post_ids_missing": "The request must say which posts it is about.",
+    "post_ids_too_many": "One request may ask about at most {limit} posts.",
+    # rate-limit
+    "post_too_fast": "Too many posts. Please try again in {seconds} seconds.",
+    "like_too_fast": "Too many likes. Please try again in {seconds} seconds.",
+    "login_too_fast": "Too many wrong passwords for this account. "
+                      "Please try again in {seconds} seconds.",
+    "signup_too_fast": "Too many new accounts. Please try again in {seconds} seconds.",
+}
+
+# One code for a wrong name and for a wrong password, so a stranger cannot use
+# the login form to find out which account names exist.
+WRONG_LOGIN = "login_wrong"
 
 
-class RuleBroken(Exception):
-    """A request broke one of the rules. The message says which rule."""
+class Problem(Exception):
+    """Something the request cannot do. `code` names the rule; `values` fill in its sentence.
+
+    str(problem) is the English sentence from PROBLEMS, so the terminal and the
+    tests read it as before. A code that is not in PROBLEMS raises KeyError at
+    once, so a forgotten entry fails the first test that reaches it.
+    """
+
+    def __init__(self, code, **values):
+        Exception.__init__(self, PROBLEMS[code].format(**values))
+        self.code = code
+        self.values = values
 
 
-class NotSignedIn(Exception):
-    """Nobody is logged in, or the login was wrong. The message says which."""
+class RuleBroken(Problem):
+    """A request broke one of the rules (400). The code says which rule."""
+
+
+class NotSignedIn(Problem):
+    """Nobody is logged in, or the login was wrong (401). The code says which."""
 
 
 # Rate limits: at most this many times, in this many seconds. One place for
@@ -470,19 +540,22 @@ class NotSignedIn(Exception):
 # 30 an hour because today every request comes from 127.0.0.1, so everyone
 # using the server shares that one count.
 LIMITS = {"post": (5, 60), "like": (30, 60), "login": (5, 600), "signup": (30, 3600)}
-WHAT = {"post": "posts", "like": "likes", "login": "wrong passwords for this account",
-        "signup": "new accounts"}
+# The code (in PROBLEMS) for "too many, too quickly", for each limit.
+TOO_FAST = {"post": "post_too_fast", "like": "like_too_fast", "login": "login_too_fast",
+            "signup": "signup_too_fast"}
 
 
-class TooFast(Exception):
-    """Too many attempts too quickly. retry_after says how many seconds to wait.
+class TooFast(Problem):
+    """Too many attempts too quickly (429). retry_after says how many seconds to wait.
 
-    Not a kind of RuleBroken, so it can never be sent as a 400 by mistake.
+    A Problem with a code, like every refusal, but not a kind of RuleBroken,
+    so it can never be sent as a 400 by mistake. The wait is also its value
+    {seconds}, so the page can say it in the reader's language.
     """
 
-    def __init__(self, message, retry_after):
-        Exception.__init__(self, message)
-        self.retry_after = retry_after
+    def __init__(self, code, seconds):
+        Problem.__init__(self, code, seconds=seconds)
+        self.retry_after = seconds
 
 
 def connect(db_path):
@@ -785,11 +858,11 @@ def check_name(name):
     """Return the account name without extra spaces, or raise RuleBroken."""
     name = name.strip() if isinstance(name, str) else ""
     if name == "":
-        raise RuleBroken("The name must not be empty.")
+        raise RuleBroken("name_empty")
     if len(name) > MAX_AUTHOR:
-        raise RuleBroken(f"The name must be {MAX_AUTHOR} characters or fewer.")
+        raise RuleBroken("name_too_long", limit=MAX_AUTHOR)
     if not ACCOUNT_NAME.fullmatch(name):
-        raise RuleBroken("The account name may use only letters, numbers and _.")
+        raise RuleBroken("name_characters")
     return name
 
 
@@ -797,9 +870,9 @@ def check_display_name(display_name):
     """Return the display name without extra spaces ("" if none), or raise RuleBroken."""
     display_name = display_name.strip() if isinstance(display_name, str) else ""
     if len(display_name) > MAX_DISPLAY_NAME:
-        raise RuleBroken(f"The display name must be {MAX_DISPLAY_NAME} characters or fewer.")
+        raise RuleBroken("display_name_too_long", limit=MAX_DISPLAY_NAME)
     if HIDDEN_CHARACTERS.search(display_name):
-        raise RuleBroken("The display name must not have hidden characters or line breaks.")
+        raise RuleBroken("display_name_hidden")
     return display_name
 
 
@@ -810,9 +883,9 @@ def check_password(password):
     """
     password = password if isinstance(password, str) else ""
     if len(password) < MIN_PASSWORD:
-        raise RuleBroken(f"The password must be at least {MIN_PASSWORD} characters.")
+        raise RuleBroken("password_too_short", limit=MIN_PASSWORD)
     if len(password) > MAX_PASSWORD:
-        raise RuleBroken(f"The password must be {MAX_PASSWORD} characters or fewer.")
+        raise RuleBroken("password_too_long", limit=MAX_PASSWORD)
     return password
 
 
@@ -820,9 +893,9 @@ def check_text(text):
     """Return the post's text without extra spaces, or raise RuleBroken."""
     text = text.strip() if isinstance(text, str) else ""
     if text == "":
-        raise RuleBroken("The post must not be empty.")
+        raise RuleBroken("text_empty")
     if len(text) > MAX_TEXT:
-        raise RuleBroken(f"The post must be {MAX_TEXT} characters or fewer.")
+        raise RuleBroken("text_too_long", limit=MAX_TEXT)
     return text
 
 
@@ -831,7 +904,7 @@ def check_post_id(post_id):
     try:
         return int(post_id)
     except (TypeError, ValueError):
-        raise RuleBroken("The like must say which post it is for.")
+        raise RuleBroken("like_post_id_missing")
 
 
 def hash_password(password, salt, rounds):
@@ -889,8 +962,7 @@ def use_allowance(db_path, action, key):
             # The wait ends when the oldest counted attempt is `seconds` old.
             # Rounded up to whole seconds, and never less than 1.
             wait = max(1, math.ceil(rows[0]["at"] + seconds - now))
-            raise TooFast(f"Too many {WHAT[action]}. Please try again in {wait} seconds.",
-                          wait)
+            raise TooFast(TOO_FAST[action], seconds=wait)
         connection.execute("INSERT INTO attempts (action, key, at) VALUES (?, ?, ?)",
                            (action, key, now))
         connection.commit()
@@ -958,7 +1030,7 @@ def create_account(db_path, name, display_name, password, address="local"):
             # The name is taken, perhaps with other capital letters. The
             # database refused it, because of its UNIQUE index.
             connection.close()
-            raise RuleBroken("That account name is taken.")
+            raise RuleBroken("name_taken")
     token = start_session(connection, user_id)
     connection.commit()
     user = account_for(connection, user_id)
@@ -1001,7 +1073,7 @@ def log_in(db_path, name, password):
 def user_for_session(db_path, token):
     """The logged-in user (id and both names) this token belongs to, or raise NotSignedIn."""
     if not isinstance(token, str) or token == "":
-        raise NotSignedIn("Please log in first.")
+        raise NotSignedIn("login_needed")
     connection = connect(db_path)
     user = connection.execute("SELECT users.id, users.name, users.display_name "
                               "FROM sessions JOIN users ON users.id = sessions.user_id "
@@ -1009,7 +1081,7 @@ def user_for_session(db_path, token):
                               (hash_token(token), int(time.time()))).fetchone()
     connection.close()
     if user is None:
-        raise NotSignedIn("Your login has ended. Please log in again.")
+        raise NotSignedIn("login_ended")
     return user
 
 
@@ -1138,12 +1210,12 @@ def add_like(db_path, user_id, post_id):
     connection = connect(db_path)
     if connection.execute("SELECT id FROM posts WHERE id = ?", (post_id,)).fetchone() is None:
         connection.close()
-        raise RuleBroken("That post does not exist.")
+        raise RuleBroken("post_missing")
     already = connection.execute("SELECT 1 FROM likes WHERE post_id = ? AND user_id = ?",
                                  (post_id, user_id)).fetchone()
     if already is not None:
         connection.close()
-        raise RuleBroken("You have already liked that post.")
+        raise RuleBroken("like_already")
     count_like(connection, db_path, user_id)
     try:
         connection.execute("INSERT INTO likes (post_id, user_id) VALUES (?, ?)",
@@ -1152,7 +1224,7 @@ def add_like(db_path, user_id, post_id):
         # Two likes arrived at the same moment, so the check above saw nothing
         # both times. The database kept the first row and refused this one.
         connection.close()
-        raise RuleBroken("You have already liked that post.")
+        raise RuleBroken("like_already")
     connection.commit()
     count = like_count_for(connection, post_id)
     connection.close()
@@ -1171,7 +1243,7 @@ def remove_like(db_path, user_id, post_id):
     if connection.execute("SELECT 1 FROM likes WHERE post_id = ? AND user_id = ?",
                           (post_id, user_id)).fetchone() is None:
         connection.close()
-        raise RuleBroken("You have not liked that post.")
+        raise RuleBroken("like_not_there")
     count_like(connection, db_path, user_id)
     # One statement both removes the like and says whether it was there, so
     # there is no gap between looking and deleting for a second request to
@@ -1180,7 +1252,7 @@ def remove_like(db_path, user_id, post_id):
                                 (post_id, user_id))
     if cursor.rowcount == 0:
         connection.close()
-        raise RuleBroken("You have not liked that post.")
+        raise RuleBroken("like_not_there")
     connection.commit()
     count = like_count_for(connection, post_id)
     connection.close()
@@ -1235,7 +1307,7 @@ def who_liked(db_path, post_id):
         connection.execute("BEGIN")
         if connection.execute("SELECT id FROM posts WHERE id = ?",
                               (post_id,)).fetchone() is None:
-            raise RuleBroken("That post does not exist.")
+            raise RuleBroken("post_missing")
         rows = connection.execute(
             "SELECT users.name, users.display_name "
             "FROM likes JOIN users ON users.id = likes.user_id "
@@ -1257,11 +1329,11 @@ def check_post_ids(text):
     pieces = text.split(",") if isinstance(text, str) else []
     # Only the digits 0 to 9, at most 18 of them, so every id fits in the database.
     if not pieces or not all(POST_ID_TEXT.fullmatch(piece.strip()) for piece in pieces):
-        raise RuleBroken("The request must say which posts it is about.")
+        raise RuleBroken("post_ids_missing")
     # dict.fromkeys keeps the first of each id, in order.
     post_ids = list(dict.fromkeys(int(piece) for piece in pieces))
     if len(post_ids) > MAX_SUMMARY_POSTS:
-        raise RuleBroken(f"One request may ask about at most {MAX_SUMMARY_POSTS} posts.")
+        raise RuleBroken("post_ids_too_many", limit=MAX_SUMMARY_POSTS)
     return post_ids
 
 
@@ -1582,6 +1654,15 @@ def search_to_json(rows, more):
     return {"posts": posts_to_json(rows), "more": more}
 
 
+def problem_to_json(problem):
+    """A refusal: the English sentence, its code, and the values that fill it in.
+
+    The page shows the words for "code" in the reader's language. "error" is
+    the English, for an older page, the terminal, and anyone using curl.
+    """
+    return {"error": str(problem), "code": problem.code, "values": problem.values}
+
+
 def account_to_json(user):
     """Who is logged in: both names, and nothing about the password."""
     return {"account_name": user["name"], "display_name": user["display_name"]}
@@ -1597,8 +1678,10 @@ def bookmark_to_json(post_id, bookmarked):
 
 
 def too_fast_to_json(problem):
-    """A 429 answer: the words to show, and how many seconds to wait."""
-    return {"error": str(problem), "retry_after": problem.retry_after}
+    """A 429 answer: the refusal, as every refusal is sent, and how many seconds to wait."""
+    answer = problem_to_json(problem)
+    answer["retry_after"] = problem.retry_after
+    return answer
 
 
 def likes_to_json(counts, mine):

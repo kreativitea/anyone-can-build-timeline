@@ -30,6 +30,7 @@ piece of text the browser keeps and sends back by itself), never from a name in 
 | `with-backend/style.css` | How the screen looks. Each colour is written once for light and dark, as `light-dark(LIGHT, DARK)`. |
 | `with-backend/app.js` | Asks the server who is logged in, sends sign-ups, logins, log-outs, posts, likes and likes taken back, and asks for new posts and new like counts every second. Remembers the Colours choice in `localStorage`. It keeps a half-written post in this browser's `localStorage`, one per account, removed after posting or logging out. It shows who liked each post, and asks for the names only when a count changes. It searches posts (`GET /search`) and shows the results in their own view. It asks for the newest page of posts, older pages on scroll, and holds new posts behind a "3 new posts" button while you read lower down. It sends bookmarks and bookmarks taken back, and asks for your bookmarks (never every second). |
 | `with-backend/server.py` | The backend, in three labelled parts: **controller**, **model**, **view**. |
+| `with-backend/words.js` | Every word the page shows, by key (`WORDS`). English only for now; Japanese comes later. |
 | `with-backend/test_server.py` | The checks for `server.py`, and for the page and the server agreeing. |
 | `with-backend/timeline.db` | The database, in six tables. The server creates it when it starts, and brings an older one up to date. It is not in git. |
 | `Makefile` | Short commands: `make run`, `make test`, `make reset`, `make worktree BRANCH=name`. |
@@ -71,13 +72,15 @@ The three parts of `server.py`:
   anywhere: it is counted from the rows in `likes`, so a count and its likes can never disagree.
   Taking a like back deletes its row; nothing is marked as undone. A time is saved as UTC text by
   `utc_text`, and shown by `timeElement` in `app.js`. Errors: `RuleBroken` becomes
-  `400`, `NotSignedIn` becomes `401`.
+  `400`, `NotSignedIn` becomes `401`, `TooFast` becomes `429`. All three are a `Problem`, made
+  from a code in `PROBLEMS` (the table of every refusal and its English sentence), never from a
+  sentence.
 
   `who_liked` and `like_summaries` only read: they must never add a user, a like or a session.
   A person's popularity (likes on their own posts from other people) is counted from `likes`
   every time, never stored.
 - **View** (`post_to_json`, `posts_to_json`, `account_to_json`, `like_to_json`, `likes_to_json`,
-  `likers_to_json`, `summaries_to_json`, `search_to_json`, `session_cookie`, `post_to_log_line`): turns database rows into the JSON the page reads, the
+  `likers_to_json`, `summaries_to_json`, `search_to_json`, `problem_to_json`, `session_cookie`, `post_to_log_line`): turns database rows into the JSON the page reads, the
   cookie, and the one line printed for each new post.
 
 The database knows its own version (`PRAGMA user_version`). An older `timeline.db` from before
@@ -183,13 +186,44 @@ A **rate limit** is a rule of the form "at most N times in S seconds". They are 
 `LIMITS` in the model: posts 5 a minute and likes 30 a minute (each signed-in user), logins 5 tries
 in 10 minutes (each account name), sign-ups 30 an hour (each address). The rule lives in the model,
 in `use_allowance(db_path, action, key)`, which counts rows in `attempts` and raises `TooFast`. The
-controller turns `TooFast` into `429` with a `Retry-After` header and `{"error", "retry_after"}`;
+controller turns `TooFast` into `429` with a `Retry-After` header and `{"error", "code", "values", "retry_after"}`;
 the page shows the words and turns off that form's button for those seconds (`holdForm`).
 
 - Call `use_allowance` **after** the other rules, so a mistake never uses up the allowance.
 - A new way of saving a post must call `use_allowance(db_path, "post", ...)` too.
 - Tests never sleep: they put a `FakeClock` in place of `server.clock` and move it forward.
 - Reading (`GET`) and logging out are never limited.
+
+## Words
+
+Every word the page shows lives in `with-backend/words.js`. The server never translates: it sends
+a code, and the page shows the words for that code. Every feature follows these rules
+(`docs/plans/japanese.md`, section 3.4). `make test` checks each one.
+
+1. **A new rule in the model raises a code, never a sentence:** `raise RuleBroken("reply_parent_missing")`,
+   or with values: `raise RuleBroken("picture_too_big", limit=MAX_PICTURE_MB)`. `NotSignedIn` for
+   401. A refusal the controller makes itself: `self.send_problem(404, Problem("nothing_here", ...))`.
+   Never `send_json(4xx, {"error": ...})`.
+2. **The code goes in `PROBLEMS`** in `server.py`, with its English, at the end, under a comment
+   with your feature's name: `# replies`.
+3. **The same code goes in `words.js`**, at the end of `WORDS`, under the same comment, with
+   exactly the same English in `en:`. Do not write `ja:`: Japanese is written later, all at once.
+4. **Naming:** lower case with `_`. First the thing (`text_`, `like_`, `reply_`), then what is wrong
+   (`_empty`, `_too_long`, `_missing`). A value is named by what it is (`limit`, `seconds`,
+   `count`, `path`); the name inside `{…}` and the Python keyword are the same word.
+5. **A word the page shows is a key in `words.js`,** never a string in `app.js` or `index.html`. In
+   `index.html`: `data-words="key"` (or `data-words-placeholder`, `data-words-aria-label`,
+   `data-words-title`), with the English left inside. In `app.js`: `say("key", values)`,
+   `showStatus("key", values)`, `addView(name, "key")`, `addMenuItem(slots, action, "key")`, or set
+   `element.dataset.words = "key"` so a language change rewrites it. Words with values of their own
+   (a time, names, a count) are written again by a function given to `whenLanguageChanges(fn)`.
+   A server refusal: `showProblem(answer)`.
+6. **Words with a number** are two keys, `key_one` and `key_other`, shown with
+   `sayCount("key", n, values)`. The number is `{count}`; `values` are any others.
+7. **One sentence is one key.** Never join pieces (`say("a") + name`): write one sentence with `{name}`.
+8. **What people wrote is never a key:** posts, names, tags, place names. Use `textContent`.
+9. **A time or a date** uses `Intl.DateTimeFormat(language, …)` or `Intl.RelativeTimeFormat(language, …)`.
+10. **No Japanese in `server.py`**, and no `Accept-Language`.
 
 ## How to run it
 

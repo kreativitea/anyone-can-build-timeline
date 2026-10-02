@@ -103,7 +103,8 @@ never read. Every request with a body must say `Content-Type: application/json`.
 | `POST /likes` | `{"post_id": 7}` | `{"post_id": 7, "like_count": 3}` · or `400` with the rule it broke · or `401` |
 | `DELETE /likes` | `{"post_id": 7}` | the same answer, with the count one lower · or `400` if there was no such like · or `401` |
 | `GET /likes` | the cookie, if there is one | `{"counts": {"7": 3}, "mine": [7]}`: how many likes each post has, and which posts this person has liked (`mine` is empty when nobody is logged in) |
-| `GET /` and the three files | nothing | the page |
+| `GET /` and the page files | nothing | the page (`index.html`, `style.css`, `words.js`, `app.js`) |
+| any refusal (`4xx`) | — | `{"error": "The post must be 280 characters or fewer.", "code": "text_too_long", "values": {"limit": 280}}`: the English, the rule's code, and the values that fill in its words |
 
 Pressing a heart is one idea to a person, but two requests: the **method** says which, so `POST`
 adds a like and `DELETE` takes one back. The page decides which to send by looking at the heart it
@@ -141,6 +142,22 @@ restart. It never goes to the server: `server.py` and `timeline.db` know nothing
 - **Posting deletes the draft**, but only after the server says the post is saved. A refused post
   keeps it.
 - If the browser blocks or fills its storage, drafts quietly do nothing and posting still works.
+
+### Languages
+
+The page holds every word it shows; the server holds none of them.
+
+- **The server sends a code, and the page chooses the words.** Every refusal names its rule by a
+  code (`text_too_long`) and the values that fill in its sentence (`{"limit": 280}`). `PROBLEMS`
+  in the model keeps one English sentence for each code, sent as `"error"`, for the terminal, the
+  tests, and anyone using `curl`.
+- **`words.js`** holds every word of the page, by key: the codes, with exactly the same English as
+  `PROBLEMS`, and the page's own words (buttons, labels, the status line). `index.html` names each
+  word with `data-words="key"`; `app.js` uses `say("key", values)`. `make test` checks the two
+  tables agree, and that no word is written anywhere else.
+- **People's own words are never translated:** posts, display names, account names.
+- For now there is only English, and the language button is hidden. Japanese comes later, as one
+  `ja:` line under each entry.
 
 ## 5. The data model
 
@@ -277,6 +294,8 @@ and that the page has the model's limits and patterns.
 | Two normal windows share `localStorage`, so the page-only version looks shared. | design | accept | It hides the one thing the app exists to show. | The page-only version uses `sessionStorage`. |
 | The error message says "280" even if the limit is changed. | design | accept | A rule should be written in one place. | The message reads the limit from the rule. |
 | The author's name is copied into every post, so a rename would break old posts. | design | accept | One fact, one place, even without accounts. | A `users` table; each post points at its author by `author_id`. |
+| The server could translate, using the browser's `Accept-Language`. | japanese | reject | Then the words live in two places, and the server must know the reader. | The server sends a code; the page holds the words. |
+| `words.js` could be inside `app.js`. | japanese | reject | One file that only grows by adding is easier to merge, and easier for a translator. | `words.js` is its own file, loaded before `app.js`. |
 | Pictures would make posts more realistic. | product | reject | A picture needs file storage as well as the database. | Nothing; section 2 says so. |
 | The page should check every rule, not only an empty post. | design | reject | The server is where the rules count, and a long post shows the server refusing it. | Nothing. |
 | A `like_count` column on `posts` would save counting the rows every time. | design | reject | Two copies of one fact can drift apart, and this timeline is far too small for that to cost anything. | Nothing; the count is `COUNT(*)`. |

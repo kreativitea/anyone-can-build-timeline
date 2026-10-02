@@ -9,6 +9,7 @@ PageAndServerAgreeTest reads app.js and checks the page and the server agree.
 """
 
 import ast
+import html.parser
 import http.client
 import http.cookiejar
 import json
@@ -75,6 +76,43 @@ def use_fake_clock(test):
     patcher.start()
     test.addCleanup(patcher.stop)
     return fake
+
+
+# ---- Reading words.js (japanese) ----
+#
+# words.js is JavaScript, but every entry has one fixed shape, so Python can
+# read it with one regular expression (a pattern for finding text):
+#
+#   key: {
+#     en: "English words.",
+#     ja: "日本語",            <- from japanese Part B
+#   },
+WORD_ENTRY = re.compile(
+    r'^  ([a-z][a-z0-9_]*): \{\n'
+    r'    en: ("(?:[^"\\\n]|\\.)*"),\n'
+    r'(?:    ja: ("(?:[^"\\\n]|\\.)*"),\n)?'
+    r'  \},$', re.MULTILINE)
+
+# A {name} inside a sentence: a value filled in later.
+VALUE_NAME = re.compile(r"\{(\w+)\}")
+
+
+def read_words():
+    """words.js as (its text, the entries found in order, {key: {"en": ..., "ja": ...}})."""
+    with open(os.path.join(HERE, "words.js"), encoding="utf-8") as words_file:
+        text = words_file.read()
+    found = WORD_ENTRY.findall(text)
+    words = {}
+    for key, en, ja in found:
+        words[key] = {"en": json.loads(en)}
+        if ja:
+            words[key]["ja"] = json.loads(ja)
+    return text, found, words
+
+
+def value_names(sentence):
+    """The {names} in a sentence, as a set."""
+    return set(VALUE_NAME.findall(sentence))
 
 
 class ModelTests(unittest.TestCase):
@@ -378,7 +416,8 @@ class ModelTests(unittest.TestCase):
         with self.assertRaises(server.NotSignedIn) as wrong_password:
             server.log_in(self.db_path, "aiko", "not the password")
         self.assertEqual(str(wrong_name.exception), str(wrong_password.exception))
-        self.assertEqual(str(wrong_name.exception), server.WRONG_LOGIN)
+        self.assertEqual(wrong_name.exception.code, server.WRONG_LOGIN)
+        self.assertEqual(wrong_password.exception.code, server.WRONG_LOGIN)
 
     def test_no_token_is_not_signed_in(self):
         for token in ("", None, "made-up-token"):
@@ -1535,6 +1574,43 @@ class ModelTests(unittest.TestCase):
         self.assertIn("PRIMARY KEY (user_id, post_id)", sql)
         self.assertEqual(sql.count("ON DELETE CASCADE"), 2)
 
+    # -- japanese: a refusal names its rule by a code --
+
+    def test_a_problem_has_a_code_values_and_the_same_english_as_before(self):
+        problem = server.RuleBroken("text_too_long", limit=280)
+        self.assertEqual(problem.code, "text_too_long")
+        self.assertEqual(problem.values, {"limit": 280})
+        self.assertEqual(str(problem), "The post must be 280 characters or fewer.")
+        self.assertIsInstance(problem, server.Problem)
+        self.assertIsInstance(server.NotSignedIn("login_needed"), server.Problem)
+
+    def test_a_code_that_is_not_in_problems_fails_at_once(self):
+        with self.assertRaises(KeyError):
+            server.RuleBroken("no_such_code")
+
+    def test_a_refused_post_says_which_rule_by_its_code(self):
+        aiko = self.sign_up("aiko")
+        with self.assertRaises(server.RuleBroken) as empty:
+            server.save_post(self.db_path, aiko, "   ")
+        self.assertEqual((empty.exception.code, empty.exception.values), ("text_empty", {}))
+        with self.assertRaises(server.RuleBroken) as too_long:
+            server.save_post(self.db_path, aiko, "a" * (server.MAX_TEXT + 1))
+        self.assertEqual((too_long.exception.code, too_long.exception.values),
+                         ("text_too_long", {"limit": server.MAX_TEXT}))
+
+    def test_every_sentence_in_problems_can_be_filled_in(self):
+        for code, sentence in server.PROBLEMS.items():
+            with self.subTest(code=code):
+                self.assertRegex(code, r"^[a-z][a-z0-9_]*$")
+                values = {name: "x" for name in value_names(sentence)}
+                self.assertNotIn("{", sentence.format(**values))
+
+    def test_the_view_sends_the_english_the_code_and_the_values(self):
+        problem = server.RuleBroken("text_too_long", limit=280)
+        self.assertEqual(server.problem_to_json(problem),
+                         {"error": "The post must be 280 characters or fewer.",
+                          "code": "text_too_long", "values": {"limit": 280}})
+
 
 class RealServerTest(unittest.TestCase):
 
@@ -1645,7 +1721,7 @@ class RealServerTest(unittest.TestCase):
         self.sign_up().close()
         code, reason = self.refused("/sessions", {"account_name": "aiko",
                                                   "password": "not the password"})
-        self.assertEqual((code, reason), (401, server.WRONG_LOGIN))
+        self.assertEqual((code, reason), (401, server.PROBLEMS[server.WRONG_LOGIN]))
 
     def test_the_served_page_has_the_colours_switch(self):
         with self.window.open(self.base + "/") as answer:
@@ -1762,6 +1838,7 @@ class RealServerTest(unittest.TestCase):
         self.assertTrue(header.isdigit() and int(header) >= 1)
         self.assertEqual(answer, {"error": "Too many posts. Please try again in "
                                            + header + " seconds.",
+                                  "code": "post_too_fast", "values": {"seconds": int(header)},
                                   "retry_after": int(header)})
         self.assertEqual(len(self.get("/posts?after=0")), 5)
 
@@ -1898,6 +1975,72 @@ class RealServerTest(unittest.TestCase):
                                     content_type="text/plain")
         self.assertEqual((code, reason), (400, "The request must be JSON."))
         self.assertEqual(self.get("/bookmarks"), [])
+
+    # -- japanese: every refusal carries a code --
+
+    def refused_answer(self, request):
+        """Send a request the server should refuse. Return the code and the whole JSON answer."""
+        with self.assertRaises(urllib.error.HTTPError) as caught:
+            self.window.open(request)
+        answer = json.loads(caught.exception.read())
+        caught.exception.close()
+        return caught.exception.code, answer
+
+    def request(self, path, data=None, method="GET", content_type="application/json"):
+        return urllib.request.Request(
+            self.base + path, method=method, headers={"Content-Type": content_type},
+            data=json.dumps(data).encode("utf-8") if data is not None else None)
+
+    def test_an_empty_post_is_refused_with_its_code(self):
+        self.sign_up().close()
+        code, answer = self.refused_answer(self.request("/posts", {"text": ""}, "POST"))
+        self.assertEqual((code, answer), (400, {"error": "The post must not be empty.",
+                                                "code": "text_empty", "values": {}}))
+
+    def test_a_post_with_no_cookie_is_refused_with_login_needed(self):
+        code, answer = self.refused_answer(self.request("/posts", {"text": "hello"}, "POST"))
+        self.assertEqual((code, answer["code"]), (401, "login_needed"))
+
+    def test_a_request_that_is_not_json_is_refused_with_not_json(self):
+        code, answer = self.refused_answer(self.request("/posts", {"text": "hello"}, "POST",
+                                                        content_type="text/plain"))
+        self.assertEqual((code, answer["code"]), (400, "not_json"))
+
+    def test_an_unknown_path_is_refused_with_nothing_here_and_its_values(self):
+        code, answer = self.refused_answer(self.request("/nothing"))
+        self.assertEqual((code, answer["code"], answer["values"]),
+                         (404, "nothing_here", {"method": "GET", "path": "/nothing"}))
+
+    def test_the_server_gives_the_page_its_words(self):
+        with self.window.open(self.base + "/words.js") as answer:
+            self.assertEqual(answer.status, 200)
+            self.assertTrue(answer.headers["Content-Type"].startswith("text/javascript"))
+            self.assertIn("const WORDS = {", answer.read().decode("utf-8"))
+
+    def test_every_refusal_has_its_english_its_code_and_its_values(self):
+        self.sign_up().close()
+        requests = [
+            self.request("/posts?after=x"),
+            self.request("/nowhere", {}, "POST"),
+            self.request("/posts", {"text": "a" * (server.MAX_TEXT + 1)}, "POST"),
+            self.request("/likesummary?post_ids=x"),
+            self.request("/likers?post_id=99"),
+            self.request("/posts", [1, 2], "POST"),
+            self.request("/likes", {"post_id": 99}, "POST"),
+            self.request("/likes", {"post_id": 99}, "DELETE"),
+            self.request("/likes", {}, "POST"),
+            self.request("/accounts", {"account_name": "aiko", "password": PASSWORD}, "POST"),
+            self.request("/accounts", {"account_name": "a b", "password": PASSWORD}, "POST"),
+            self.request("/sessions", {"account_name": "aiko", "password": "wrong!!!"}, "POST"),
+        ]
+        for request in requests:
+            with self.subTest(request=request.get_method() + " " + request.full_url):
+                status, answer = self.refused_answer(request)
+                self.assertIn(status, (400, 401, 404))
+                self.assertEqual(set(answer), {"error", "code", "values"})
+                self.assertIn(answer["code"], server.PROBLEMS)
+                self.assertEqual(answer["error"],
+                                 server.PROBLEMS[answer["code"]].format(**answer["values"]))
 
 
 class JourneyTest(unittest.TestCase):
@@ -2646,7 +2789,9 @@ class PageAndServerAgreeTest(unittest.TestCase):
         self.assertIn("menu.hidden = true;", self.page_code)
         self.assertEqual(re.findall(r"(?<!function )\baddMenuItem\(", self.page_code), [])
         with open(os.path.join(HERE, "index.html"), encoding="utf-8") as page_file:
-            self.assertIn('<nav id="views" aria-label="Views" hidden>', page_file.read())
+            nav = re.search(r'<nav id="views"[^>]*>', page_file.read()).group(0)
+        self.assertIn('aria-label="Views"', nav)
+        self.assertIn(" hidden", nav)
         # The timeline, and the views features add: search and bookmarks.
         views = re.findall(r'\baddView\("(\w+)"', self.page_code)
         self.assertEqual(sorted(views), ["bookmarks", "search", "timeline"])
@@ -2774,8 +2919,8 @@ class PageAndServerAgreeTest(unittest.TestCase):
     def test_the_page_and_the_server_agree_on_429(self):
         self.assertIn("response.status === 429", self.page_code)
         self.assertIn("answer.retry_after", self.page_code)
-        self.assertEqual(set(server.too_fast_to_json(server.TooFast("Too many.", 3))),
-                         {"error", "retry_after"})
+        self.assertEqual(set(server.too_fast_to_json(server.TooFast("post_too_fast", 3))),
+                         {"error", "code", "values", "retry_after"})
 
     def test_every_request_that_can_be_too_fast_has_a_refused_branch(self):
         functions = functions_in(self.page_code)
@@ -2911,6 +3056,249 @@ class PageAndServerAgreeTest(unittest.TestCase):
                                        and node.name == function.__name__)))
         self.assertNotIn("bookmark", server.POSTS_WITH_AUTHORS)
 
+    # -- japanese: the words contract (docs/plans/japanese.md, section 3.4) --
+    #
+    # The server sends a code; the page shows the words for it, from words.js.
+    # These tests are what keep the two tables, PROBLEMS and WORDS, the same,
+    # and every word of the page in words.js.
+
+    def words(self):
+        return read_words()[2]
+
+    def keys_used_in_the_page_code(self):
+        """Every key app.js names, as {key: [the value names given with it, or None]}."""
+        code = re.sub(r"^\s*//.*$", "", self.page_code, flags=re.MULTILINE)
+        used = {}
+
+        def use(key, names=None):
+            used.setdefault(key, []).append(names)
+
+        # The values: a {…} written in the call is checked against the words; no
+        # values at all means the words must have no {names}; values in a
+        # variable cannot be read here, so they are not checked (None).
+        def given(rest, always=frozenset()):
+            if rest.startswith("{"):
+                return set(re.findall(r"(\w+):", rest)) | always
+            if rest.startswith(","):
+                return None
+            return set(always)
+
+        for key, rest in re.findall(
+                r'\b(?:say|showStatus|showSignedOut)\(\s*"(\w*)"\s*(?:,\s*)?(\{[^}]*\}|[^)\s]?)', code):
+            if key:
+                use(key, given(rest if rest in ("", ")") or rest.startswith("{") else ","))
+        for key, inside in re.findall(r'\bkey: "(\w+)", values: \{([^}]*)\}', code):
+            use(key, set(re.findall(r"(\w+):", inside)))
+        # sayCount("key", n) or sayCount("key", n, { first: ... }): two keys,
+        # key_one and key_other. {count} is always given; other values may be.
+        for key, rest in re.findall(
+                r'\bsayCount\(\s*"(\w+)"\s*,[^,)]*(,\s*\{[^}]*\}|,|)', code):
+            rest = rest.lstrip(", \n") if rest != "," else ","
+            names = given(rest, {"count"})
+            use(key + "_one", ("count", names) if names is not None else None)
+            use(key + "_other", ("count", names) if names is not None else None)
+        for key in re.findall(r'\baddView\(\s*"\w+",\s*"(\w+)"', code):
+            use(key)
+        for key in re.findall(r'\baddMenuItem\(\s*\w+,\s*"\w+",\s*"(\w+)"', code):
+            use(key)
+        for assigned in re.findall(r"\.dataset\.words\w*\s*=\s*([^;]+);", code):
+            for key in re.findall(r'"(\w+)"', assigned):
+                use(key)
+        return used
+
+    def test_words_js_is_read_whole(self):
+        # An entry written in another shape would be skipped without a word.
+        # So: as many entries found as `en:` lines, and as many as keys.
+        text, found, words = read_words()
+        self.assertEqual(len(found), len(re.findall(r"^\s*en:", text, re.MULTILINE)))
+        self.assertEqual(len(found), len(re.findall(r"^\s*\w+: \{", text, re.MULTILINE)))
+        self.assertEqual(len(found), len(words), "a key is written twice")
+        self.assertIn("const WORDS = {", text)
+
+    def test_every_code_in_problems_is_in_words_js_with_the_same_english(self):
+        words = self.words()
+        for code, sentence in server.PROBLEMS.items():
+            with self.subTest(code=code):
+                self.assertIn(code, words, "add it to words.js, at the end, under your slug")
+                self.assertEqual(words[code]["en"], sentence)
+
+    def test_every_problem_is_raised_with_a_known_code_and_its_values(self):
+        # server.py is read as Python. Every Problem(...), and every kind of
+        # Problem (RuleBroken, NotSignedIn, TooFast, and any new one), must name
+        # a code in PROBLEMS, as plain text (never a sentence), and give exactly
+        # the values its sentence has. A code may also be read from a table of
+        # codes, such as TOO_FAST[action]: then every code in it is checked.
+        kinds = {name for name, value in vars(server).items()
+                 if isinstance(value, type) and issubclass(value, server.Problem)}
+        self.assertLessEqual({"Problem", "RuleBroken", "NotSignedIn", "TooFast"}, kinds)
+        calls = 0
+        for node in ast.walk(ast.parse(self.server_code)):
+            if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+                    and node.func.id in kinds):
+                continue
+            calls += 1
+            with self.subTest(line=node.lineno):
+                self.assertEqual(len(node.args), 1, "one code, then values by name")
+                first = node.args[0]
+                if isinstance(first, ast.Name) and first.id == "WRONG_LOGIN":
+                    codes = [server.WRONG_LOGIN]
+                elif (isinstance(first, ast.Subscript) and isinstance(first.value, ast.Name)
+                      and isinstance(getattr(server, first.value.id, None), dict)):
+                    codes = list(getattr(server, first.value.id).values())
+                else:
+                    self.assertIsInstance(first, ast.Constant, 'write the code as "a_code"')
+                    codes = [first.value]
+                for code in codes:
+                    self.assertIn(code, server.PROBLEMS)
+                    self.assertEqual({keyword.arg for keyword in node.keywords},
+                                     value_names(server.PROBLEMS[code]))
+        self.assertGreater(calls, 20)
+        self.assertIsNone(re.search(r'\b(' + "|".join(kinds) + r')\(\s*f?"[A-Z]',
+                                    self.server_code))
+
+    def test_every_refusal_goes_through_send_problem(self):
+        self.assertIsNone(re.search(r"send_json\(\s*4\d\d", self.server_code))
+        # The word "error" is written only in the view's problem_to_json, so
+        # no answer can have an "error" without a "code".
+        uses = []
+        for function in ast.walk(ast.parse(self.server_code)):
+            if isinstance(function, ast.FunctionDef):
+                for node in ast.walk(function):
+                    if isinstance(node, ast.Constant) and node.value == "error":
+                        uses.append(function.name)
+        self.assertEqual(uses, ["problem_to_json"])
+
+    def test_every_key_the_page_code_uses_is_in_words_js(self):
+        words = self.words()
+        used = self.keys_used_in_the_page_code()
+        self.assertIn("cannot_reach", used)
+        for key, given in used.items():
+            with self.subTest(key=key):
+                self.assertIn(key, words)
+                for names in given:
+                    if isinstance(names, tuple):
+                        # sayCount: every {name} in the words must be given
+                        # ("1 new post" need not say {count}).
+                        self.assertLessEqual(value_names(words[key]["en"]), names[1])
+                    elif names is not None:
+                        # Values written with the key must be the {names} in its words.
+                        self.assertEqual(names, value_names(words[key]["en"]))
+
+    def test_the_page_checks_a_rule_with_the_same_code_as_the_model(self):
+        functions = functions_in(self.page_code)
+        for name in ("accountProblem", "textProblem"):
+            with self.subTest(function=name):
+                keys = re.findall(r'key: "(\w+)"', functions[name])
+                self.assertTrue(keys)
+                for key in keys:
+                    self.assertIn(key, server.PROBLEMS)
+
+    def test_the_status_line_is_never_given_a_sentence(self):
+        code = re.sub(r"^\s*//.*$", "", self.page_code, flags=re.MULTILINE)
+        for function, words in re.findall(
+                r'\b(say|sayCount|showStatus|showSignedOut)\(\s*"([^"]*)"', code):
+            with self.subTest(call=function + '("' + words + '")'):
+                self.assertRegex(words, r"^[a-z0-9_]*$", "use a key from words.js")
+        # The server's English is used only when the page has no words for the code.
+        self.assertEqual(re.findall(r"answer\.error", code), ["answer.error"])
+        self.assertIn("answer.error", functions_in(self.page_code)["showProblem"])
+
+    def test_the_page_code_writes_no_words_of_its_own(self):
+        # A line that puts text on the screen may hold a key, but never words.
+        code = re.sub(r"^\s*//.*$", "", self.page_code, flags=re.MULTILINE)
+        shows = re.compile(r"\.(textContent|placeholder|title|alt|innerText)\s*=|"
+                           r"setAttribute\(\s*\"(aria-label|title|placeholder|alt)\"")
+        for line in code.splitlines():
+            if not shows.search(line):
+                continue
+            with self.subTest(line=line.strip()):
+                rest = re.sub(r'(set|get)Attribute\(\s*"[\w-]+"', "", line)
+                rest = re.sub(r'\b(say|sayCount)\(\s*"\w+"', "", rest)
+                for literal in re.findall(r'"((?:[^"\\]|\\.)*)"', rest):
+                    literal = json.loads('"' + literal + '"')   # "\u2665" is a heart, not words
+                    self.assertIsNone(re.search(r"[^\W\d_]", literal),
+                                      "put the words in words.js and use say()")
+        # One sentence is one key: never joined from pieces.
+        self.assertIsNone(re.search(r"\bsay\([^)]*\)\s*\+|\+\s*say\(", code))
+
+    def test_every_word_in_index_html_names_its_key(self):
+        words = self.words()
+        page_values = {"min": server.MIN_PASSWORD}
+        not_words = {"aiko"}   # an example account name, the same in every language
+
+        class Words(html.parser.HTMLParser):
+            EMPTY = {"meta", "link", "input", "br", "img", "hr"}
+
+            def __init__(self):
+                super().__init__()
+                self.open = []      # the elements we are inside, innermost last
+                self.problems = []
+                self.keys = []
+
+            def check(self, where, words_now, key):
+                if key is None:
+                    self.problems.append(where + ": no data-words for " + repr(words_now))
+                elif key not in words:
+                    self.problems.append(where + ": " + key + " is not in words.js")
+                elif words[key]["en"].format(**page_values) != words_now:
+                    self.problems.append(where + ": " + repr(words_now) + " is not the "
+                                         "English of " + key)
+
+            def handle_starttag(self, tag, attrs):
+                attrs = dict(attrs)
+                for name in ("placeholder", "aria-label", "title", "alt"):
+                    value = attrs.get(name)
+                    if value and re.search(r"[^\W\d_]", value) and value not in not_words:
+                        self.check(tag + " " + name, value, attrs.get("data-words-" + name))
+                self.keys += [v for k, v in attrs.items() if k.startswith("data-words")]
+                if tag not in self.EMPTY:
+                    self.open.append((tag, attrs))
+
+            def handle_endtag(self, tag):
+                while self.open and self.open.pop()[0] != tag:
+                    pass
+
+            def handle_data(self, data):
+                text = " ".join(data.split())
+                if not re.search(r"[^\W\d_]", text) or not self.open:
+                    return
+                tag, attrs = self.open[-1]
+                if tag not in ("script", "style"):
+                    self.check(tag, text, attrs.get("data-words"))
+
+        with open(os.path.join(HERE, "index.html"), encoding="utf-8") as page_file:
+            page = Words()
+            page.feed(page_file.read())
+        self.assertEqual(page.problems, [])
+        self.assertIn("app_name", page.keys)
+        for key in page.keys:
+            self.assertIn(key, words)
+
+    def test_the_words_load_before_the_page_code(self):
+        with open(os.path.join(HERE, "index.html"), encoding="utf-8") as page_file:
+            page = page_file.read()
+        self.assertLess(page.index('<script src="words.js"></script>'),
+                        page.index('<script src="app.js"></script>'))
+
+    def test_the_language_button_is_there_but_hidden_until_part_b(self):
+        with open(os.path.join(HERE, "index.html"), encoding="utf-8") as page_file:
+            button = re.search(r'<button[^>]*id="language"[^>]*>', page_file.read()).group(0)
+        self.assertIn(" hidden", button)
+        self.assertIn('lang="ja"', button)
+
+    def test_the_server_never_translates(self):
+        self.assertIsNone(re.search(r"[\u3040-\u30ff\u3400-\u9fff\uff66-\uff9f]",
+                                    self.server_code))
+        self.assertNotIn("Accept-Language", self.server_code)
+
+    def test_nobody_writes_japanese_before_part_b(self):
+        # japanese Part B writes all the Japanese at once, in one voice. Until
+        # then, every entry has en: only. (Part B replaces this test with "every
+        # entry has ja:, with the same {names} as its en:".)
+        for key, entry in self.words().items():
+            with self.subTest(key=key):
+                self.assertEqual(set(entry), {"en"})
+
 
 class ColoursTest(unittest.TestCase):
     """The Colours switch (Auto, Light, Dark) and the colours themselves.
@@ -2980,7 +3368,7 @@ class ColoursTest(unittest.TestCase):
         self.check_contrast([("border", "background"), ("border", "card")], 3)
 
     def test_there_are_exactly_three_choices(self):
-        self.assertEqual(re.findall(r'<option value="(\w+)">', self.html),
+        self.assertEqual(re.findall(r'<option value="(\w+)"', self.html),
                          ["auto", "light", "dark"])
         self.assertIn(':root[data-theme="light"]', self.css)
         self.assertIn(':root[data-theme="dark"]', self.css)

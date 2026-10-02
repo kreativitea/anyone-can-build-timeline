@@ -1,4 +1,4 @@
-Status: approved
+Status: Part A built on branch japanese-words, awaiting merge
 
 # Japanese
 
