@@ -256,7 +256,8 @@ class TimelineHandler(BaseHTTPRequestHandler):
         if user is None:
             return
         try:
-            row = save_post(self.server.db_path, user["id"], data.get("text"))
+            row = save_post(self.server.db_path, user["id"], data.get("text"),
+                            place=data.get("place"))
         except RuleBroken as problem:
             self.send_problem(400, problem)
             return
@@ -411,6 +412,7 @@ class TimelineHandler(BaseHTTPRequestHandler):
 MAX_TEXT = 560
 MAX_AUTHOR = 40
 MAX_DISPLAY_NAME = 50
+MAX_PLACE = 40           # a place is a short label, like "Osaka", not a second post
 MIN_PASSWORD = 8
 MAX_PASSWORD = 200
 
@@ -525,6 +527,9 @@ PROBLEMS = {
     "bookmark_post_id_missing": "The bookmark must say which post it is for.",
     "bookmark_already": "You have already bookmarked that post.",
     "bookmark_not_there": "You have not bookmarked that post.",
+    # place
+    "place_too_long": "The place must be {limit} characters or fewer.",
+    "place_hidden": "The place must not have hidden characters or line breaks.",
 }
 
 # One code for a wrong name and for a wrong password, so a stranger cannot use
@@ -596,7 +601,7 @@ def connect(db_path):
 
 # The newest version of the database: the number the last upgrade below sets.
 # Each new upgrade raises it by one, and the tests read it from here.
-LATEST_VERSION = 5
+LATEST_VERSION = 6
 
 
 def create_tables(db_path):
@@ -639,6 +644,8 @@ def create_tables(db_path):
         upgrade_to_rate_limit(connection)
     if version < 5:
         upgrade_to_bookmarks(connection)
+    if version < 6:
+        upgrade_to_place(connection)
     connection.close()
 
 
@@ -874,10 +881,33 @@ def upgrade_to_bookmarks(connection):
     connection.commit()
 
 
+def upgrade_to_place(connection):
+    """Version 6: each post can say where it was written. Every old post is kept.
+
+    An old post has no place: its place is NULL. A new post with no place is
+    NULL too, so there is only one way to say "no place". The place is on
+    posts, never on users: the same person writes in Osaka today and in Kyoto
+    tomorrow, and a place on users would change every old post.
+    Adding a column keeps every row, so no rebuild is needed.
+    """
+    connection.execute("BEGIN")
+    columns = [c["name"] for c in connection.execute("PRAGMA table_info(posts)")]
+    # Like CREATE TABLE IF NOT EXISTS: if the column is already there, it is not
+    # added twice (for example, a file whose version number was set back).
+    if "place" not in columns:
+        # The database refuses an empty place and a place that is too long, even if
+        # the rule in check_place is got around. NULL passes the CHECK, so old posts
+        # pass. length() in SQLite counts characters, as len() does in Python.
+        connection.execute("ALTER TABLE posts ADD COLUMN place TEXT "
+                           "CHECK (place IS NULL OR length(place) BETWEEN 1 AND 40)")
+    connection.execute("PRAGMA user_version = 6")
+    connection.commit()
+
+
 # Each post, with its author's two names looked up in users, and how many people
 # have liked it. The view reads row["author"], row["display_name"] and row["like_count"].
 POSTS_WITH_AUTHORS = ("SELECT posts.id, users.name AS author, users.display_name, "
-                      "posts.text, posts.posted_at, posts.old_clock_time, "
+                      "posts.text, posts.posted_at, posts.old_clock_time, posts.place, "
                       "(SELECT COUNT(*) FROM likes WHERE likes.post_id = posts.id) "
                       "AS like_count "
                       "FROM posts JOIN users ON users.id = posts.author_id")
@@ -903,6 +933,23 @@ def check_display_name(display_name):
     if HIDDEN_CHARACTERS.search(display_name):
         raise RuleBroken("display_name_hidden")
     return display_name
+
+
+def check_place(place):
+    """Return the place without extra spaces, or None if there is no place. Or raise RuleBroken.
+
+    A place that is not text (a number, a list) counts as no place. It may not
+    hold a line break or a hidden character: it is shown on one line next to a
+    name, and printed in the terminal.
+    """
+    place = place.strip() if isinstance(place, str) else ""
+    if place == "":
+        return None
+    if len(place) > MAX_PLACE:
+        raise RuleBroken("place_too_long", limit=MAX_PLACE)
+    if HIDDEN_CHARACTERS.search(place):
+        raise RuleBroken("place_hidden")
+    return place
 
 
 def check_password(password):
@@ -1129,7 +1176,7 @@ def log_out(db_path, token):
 # example "place" or "parent_id"). A column name never comes from a request:
 # only a name on this list can reach the SQL. old_clock_time is not on it:
 # only the timestamps upgrade ever writes it.
-POST_EXTRA_COLUMNS = ("posted_at",)
+POST_EXTRA_COLUMNS = ("posted_at", "place")
 
 
 # A time is saved as text in UTC (the one clock the whole world agrees on), to
@@ -1190,18 +1237,19 @@ def post_by_id(connection, post_id):
                               (post_id,)).fetchone()
 
 
-def save_post(db_path, user_id, text, now=None):
+def save_post(db_path, user_id, text, now=None, place=None):
     """Check the rules, save the post by this user, and return the saved row.
 
     The time comes from the server's clock (utc_now), never from the request.
-    A test passes `now` to choose the time.
+    A test passes `now` to choose the time. `place` is optional (None: no place).
     """
     text = check_text(text)
+    place = check_place(place)
     now = now or utc_now()
 
     use_allowance(db_path, "post", str(user_id))   # after the rules: an empty post is not counted
     connection = connect(db_path)
-    post_id = insert_post(connection, user_id, text, posted_at=utc_text(now))
+    post_id = insert_post(connection, user_id, text, posted_at=utc_text(now), place=place)
     connection.commit()
     row = post_by_id(connection, post_id)
     connection.close()
@@ -1671,7 +1719,8 @@ def bookmarks_for(db_path, user_id):
 def post_to_json(row):
     return {"id": row["id"], "author": row["author"], "display_name": row["display_name"],
             "text": row["text"], "posted_at": row["posted_at"],
-            "old_clock_time": row["old_clock_time"], "like_count": row["like_count"]}
+            "old_clock_time": row["old_clock_time"], "like_count": row["like_count"],
+            "place": row["place"]}
 
 
 def posts_to_json(rows):
@@ -1754,7 +1803,11 @@ def post_to_log_line(row):
     can never make a second, fake line in the terminal.
     """
     text = json.dumps(row["text"], ensure_ascii=False)
-    return f"{row['posted_at']}  {row['display_name']} @{row['author']}: {text}"
+    line = f"{row['posted_at']}  {row['display_name']} @{row['author']}: {text}"
+    # A place can hold no line break (check_place), so it cannot fake a line.
+    if row["place"]:
+        line += f" · {row['place']}"
+    return line
 
 
 # ============================================================================

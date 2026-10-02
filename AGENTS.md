@@ -28,7 +28,7 @@ piece of text the browser keeps and sends back by itself), never from a name in 
 | `page-only/app.js` | Checks the rules and keeps the posts in this window's `sessionStorage`. There are no likes in this version. |
 | `with-backend/index.html` | The parts of the screen: Log in and Sign up forms when signed out; "Signed in as …", Log out and the post box when signed in; the timeline. A tiny script in `<head>` that sets the colours before the page is drawn, and the Colours switch. |
 | `with-backend/style.css` | How the screen looks. Each colour is written once for light and dark, as `light-dark(LIGHT, DARK)`. |
-| `with-backend/app.js` | Asks the server who is logged in, sends sign-ups, logins, log-outs, posts, likes and likes taken back, and asks for new posts and new like counts every second. Remembers the Colours choice in `localStorage`. It keeps a half-written post in this browser's `localStorage`, one per account, removed after posting or logging out. It shows who liked each post, and asks for the names only when a count changes. It searches posts (`GET /search`) and shows the results in their own view. It asks for the newest page of posts, older pages on scroll, and holds new posts behind a "3 new posts" button while you read lower down. It sends bookmarks and bookmarks taken back, and asks for your bookmarks (never every second). |
+| `with-backend/app.js` | Asks the server who is logged in, sends sign-ups, logins, log-outs, posts, likes and likes taken back, and asks for new posts and new like counts every second. Remembers the Colours choice in `localStorage`. It keeps a half-written post in this browser's `localStorage`, one per account, removed after posting or logging out. It shows who liked each post, and asks for the names only when a count changes. It searches posts (`GET /search`) and shows the results in their own view. It asks for the newest page of posts, older pages on scroll, and holds new posts behind a "3 new posts" button while you read lower down. It sends bookmarks and bookmarks taken back, and asks for your bookmarks (never every second). It remembers the last place typed (`timeline-place`), forgotten on log out. |
 | `with-backend/server.py` | The backend, in three labelled parts: **controller**, **model**, **view**. |
 | `with-backend/words.js` | Every word the page shows, by key (`WORDS`). English only for now; Japanese comes later. |
 | `with-backend/test_server.py` | The checks for `server.py`, and for the page and the server agreeing. |
@@ -44,7 +44,7 @@ The three parts of `server.py`:
   removes: the method says what happens, so the controller never has to guess. It reads who is
   asking from the session cookie, and answers `401` when nobody is logged in. It never reads a
   name from the JSON. A request with a body must say `Content-Type: application/json`.
-- **Model** (`check_name`, `check_display_name`, `check_password`, `check_text`, `check_post_id`,
+- **Model** (`check_name`, `check_display_name`, `check_place`, `check_password`, `check_text`, `check_post_id`,
   `hash_password`, `hash_token`, `create_account`, `log_in`, `user_for_session`, `log_out`,
   `start_session`, `account_for`, `save_post`, `posts_after`, `posts_before`, `check_id_bound`,
   `add_like`, `remove_like`,
@@ -56,7 +56,9 @@ The three parts of `server.py`:
     `display_name` is the name shown, and `password_salt`, `password_hash`, `password_rounds` hold
     a hash of the password. The password itself is never kept.
   - `posts`: each post points at its author by `author_id`. `posted_at` is the time in UTC; a post
-    from before timestamps has only `old_clock_time` (`HH:MM`) instead.
+    from before timestamps has only `old_clock_time` (`HH:MM`) instead. `place` is where the
+    writer said they were ("Osaka"), or NULL for no place (never `''`). A place is a detail of one
+    post, so it is a column on `posts`, never on `users`.
   - `likes`: one row for each person who liked each post.
   - `sessions`: one row for each logged-in window. It keeps only a hash of the token, the user's id,
     and when it ends. Logging out deletes the row.
@@ -227,6 +229,17 @@ a code, and the page shows the words for that code. Every feature follows these 
 8. **What people wrote is never a key:** posts, names, tags, place names. Use `textContent`.
 9. **A time or a date** uses `Intl.DateTimeFormat(language, …)` or `Intl.RelativeTimeFormat(language, …)`.
 10. **No Japanese in `server.py`**, and no `Accept-Language`.
+
+## Place
+
+A post can say where it was written, as a short place the writer types ("Osaka"), up to
+`MAX_PLACE` (40) characters, with no hidden characters (`HIDDEN_CHARACTERS`). `check_place` in the
+model checks it (codes `place_too_long`, `place_hidden`), `placeProblem` in `app.js` checks the
+same, and `posts.place` has a `CHECK` too. The words are `place_label`, `place_example` and
+`post_place` ("· {place}") in `words.js`; the place itself is what a person wrote, never a key.
+The page never finds the place by itself (no geolocation). The page shows it after the time as
+"· Osaka" (`placePart`, in the `head` slot), and remembers the last place in `localStorage`
+(`timeline-place`) until Log out. `upgrade_to_place` added the column; old posts have NULL.
 
 ## How to run it
 

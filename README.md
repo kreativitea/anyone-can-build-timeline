@@ -160,5 +160,9 @@ or close the tab and open it again: it is still dark. Now open the browser's dev
 goes back to *Auto* and follows the computer. `localStorage` stays after the tab closes; the
 `sessionStorage` that `page-only/` uses for its posts lasts only as long as one window.
 
+**A place.** Type "Osaka" in the *Place* box under the post box, and post: everyone sees
+"· Osaka" after the time. Post again: the box still says Osaka (the key `timeline-place` in Local
+Storage). Log out, and it is forgotten. Anyone can see a place, so type only what you want to share.
+
 Keep the three parts of `server.py` separate. A new rule goes in the model. `make test` must pass
 when you finish.

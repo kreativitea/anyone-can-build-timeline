@@ -99,6 +99,10 @@
         <label for="text" data-words="post_prompt">What is happening?</label>
         <textarea id="text" rows="3" placeholder="What is happening?"
                   data-words-placeholder="post_prompt"></textarea>
+        <!-- Optional. Everyone who reads the post sees the place. -->
+        <label for="place" class="place-label" data-words="place_label">Place (anyone can see this)</label>
+        <input id="place" type="text" autocomplete="off" placeholder="Osaka"
+               data-words-placeholder="place_example">
         <div class="post-row">
           <span id="count" class="count"></span>
           <button type="submit" data-words="post_button">Post</button>

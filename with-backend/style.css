@@ -517,3 +517,20 @@ time.post-time {
 .bookmarks-empty {
   color: var(--quiet);
 }
+
+/* place */
+/* "· Osaka" after the time, as quiet as the time. */
+.post-place {
+  margin-left: 8px;
+  color: var(--quiet);
+  overflow-wrap: anywhere;
+}
+
+/* The optional place box, under the post box. */
+.place-label {
+  margin-top: 10px;
+}
+
+#place {
+  margin-bottom: 4px;
+}

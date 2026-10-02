@@ -17,6 +17,7 @@ const MAX_AUTHOR = 40;
 const MAX_DISPLAY_NAME = 50;
 const MIN_PASSWORD = 8;
 const MAX_PASSWORD = 200;
+const MAX_PLACE = 40;
 // The account name rule, the same as ACCOUNT_NAME in server.py.
 const ACCOUNT_NAME = /^[A-Za-z0-9_]+$/;
 // The characters a display name may not hold, the same as HIDDEN_CHARACTERS in server.py.
@@ -39,6 +40,7 @@ const countLine = document.getElementById("count");
 const statusLine = document.getElementById("status");
 const timeline = document.getElementById("timeline");
 const postForm = document.getElementById("post-form");
+const placeBox = document.getElementById("place");
 
 // The key for the Colours choice in localStorage. The same key as the small
 // script in index.html, which uses it before the page is drawn.
@@ -869,6 +871,87 @@ function hideDraft() {
   updateCount();
 }
 
+// ---- Place: where a post was written, typed by the writer ----
+//
+// Optional. The writer types any short words ("Osaka", "home") or nothing.
+// The browser never looks up where the device is. Everyone can see a place,
+// so the box's label says so.
+//
+// The last place typed is kept in this browser's localStorage, under one key,
+// so it is not typed again for every post. It never goes to the server until
+// it is part of a post, and it is forgotten on Log out, so the next person on
+// a shared computer does not see it. Storage can be blocked: then every use
+// of it is caught, and the page simply does not remember.
+
+const PLACE_KEY = "timeline-place";
+
+// The rules for a place, the same as check_place in server.py, with the same
+// codes. An empty place is fine: it means "no place".
+// Returns the broken rule as { key, values }, or null if none.
+function placeProblem(place) {
+  if (characterCount(place) > MAX_PLACE) {
+    return { key: "place_too_long", values: { limit: MAX_PLACE } };
+  }
+  if (HIDDEN_CHARACTERS.test(place)) {
+    return { key: "place_hidden", values: {} };
+  }
+  return null;
+}
+
+// The place after the time: "· Osaka". A post with no place shows nothing.
+// textContent, never innerHTML: a place is shown as words, so it cannot run code.
+addPostPart(function placePart(post, slots) {
+  if (!post.place) {
+    return;
+  }
+  const place = document.createElement("span");
+  place.className = "post-place";
+  // The place itself is what a person wrote, so it is never a key: only the
+  // "· {place}" around it is. It is kept, to be written again in another language.
+  place.dataset.place = post.place;
+  place.textContent = say("post_place", { place: post.place });
+  slots.head.append(place);
+});
+
+// After a language change: every "· Osaka" again.
+whenLanguageChanges(function redrawPlaces() {
+  for (const place of document.querySelectorAll(".post-place")) {
+    place.textContent = say("post_place", { place: place.dataset.place });
+  }
+});
+
+// Keep the place, for the next post. An empty place removes the key.
+function rememberPlace(place) {
+  try {
+    if (place === "") {
+      localStorage.removeItem(PLACE_KEY);
+    } else {
+      localStorage.setItem(PLACE_KEY, place);
+    }
+  } catch (error) {
+    // Storage is blocked or full. The place is not kept; nothing else changes.
+  }
+}
+
+// The last place kept in this browser, or "" if there is none or storage is blocked.
+function rememberedPlace() {
+  try {
+    return localStorage.getItem(PLACE_KEY) || "";
+  } catch (error) {
+    return "";
+  }
+}
+
+// Forget the place, and empty the box (on Log out).
+function forgetPlace() {
+  placeBox.value = "";
+  try {
+    localStorage.removeItem(PLACE_KEY);
+  } catch (error) {
+    // Storage is blocked, so there is no place to remove.
+  }
+}
+
 // ---- Long posts: Show more / Show less ----
 //
 // A post taller than 6 lines shows only its first 6 lines (the CSS class
@@ -1274,6 +1357,7 @@ async function logOut() {
   try {
     await fetch("/sessions", { method: "DELETE" });
     forgetDraft();
+    forgetPlace();
     showSignedOut("");
     await afterAccountChange();
   } catch (error) {
@@ -1289,17 +1373,18 @@ async function sendPost(event) {
 
   // A quick check on the page, so the person does not wait for an answer.
   // The server checks the same rules again.
-  const problem = textProblem(text.trim());
+  const problem = textProblem(text.trim()) || placeProblem(placeBox.value.trim());
   if (problem !== null) {
     showStatus(problem.key, problem.values);
     return;
   }
+  const place = placeBox.value;
 
   try {
     const response = await fetch("/posts", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text: text }),
+      body: JSON.stringify({ text: text, place: place }),
     });
     const answer = await response.json();
     if (response.status === 401) {
@@ -1320,6 +1405,8 @@ async function sendPost(event) {
     textBox.value = "";
     forgetDraft();
     updateCount();
+    // The place box is not emptied: the same place is likely next time.
+    rememberPlace(place.trim());
     await checkForNewPosts();
     // timeline-flow: you expect to see your own post, so show every waiting one.
     showWaitingPosts();
@@ -1890,6 +1977,7 @@ loginForm.addEventListener("submit", logIn);
 signupForm.addEventListener("submit", signUp);
 logoutButton.addEventListener("click", logOut);
 themeSwitch.value = savedTheme();
+placeBox.value = rememberedPlace();
 themeSwitch.addEventListener("change", chooseTheme);
 languageButton.addEventListener("click", function () {
   setLanguage(language === "ja" ? "en" : "ja");

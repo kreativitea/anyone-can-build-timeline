@@ -511,6 +511,20 @@ A signed-in person presses ☆ on a post to save it (★), and presses again to 
   deleted, the database deletes its bookmarks too.
 - In the data model: `bookmarks (user_id, post_id)`, both pointing at their rows, nothing else.
 
+## Place
+
+- **A post can say where it was written.** Optional. The writer types it ("Osaka", "home"), up to
+  40 characters, with no line breaks or hidden characters. Everyone sees it after the time:
+  *Aiko Tanaka @aiko 15:42 · Osaka*. The box's label says "anyone can see this".
+- **Typed, not found by geolocation.** The browser can find where a device is, often to a few
+  metres. Shown to everyone, that would tell people where someone lives, and turning the numbers
+  into a town name would need someone else's service. A typed place is a label the writer chooses.
+- **A column on `posts`, not on `users`.** `posts.place` is text or NULL; NULL means no place,
+  never `''`. The database has `CHECK (place IS NULL OR length(place) BETWEEN 1 AND 40)`. A place
+  belongs to one post: on `users` it would change every old post, and keep where each person is.
+- **Remembered only in this browser.** The page keeps the last place in `localStorage`
+  (`timeline-place`), never on the server, and forgets it on Log out, for shared computers.
+
 ## 8. Build or borrow
 
 - **Built:** the page, the server and the data model.

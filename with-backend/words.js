@@ -371,4 +371,21 @@ const WORDS = {
   bookmarks_empty: {
     en: "You have no bookmarks yet. Press ☆ on a post to save it.",
   },
+  // place: refusals
+  place_too_long: {
+    en: "The place must be {limit} characters or fewer.",
+  },
+  place_hidden: {
+    en: "The place must not have hidden characters or line breaks.",
+  },
+  // place: the words of the page
+  place_label: {
+    en: "Place (anyone can see this)",
+  },
+  place_example: {
+    en: "Osaka",
+  },
+  post_place: {
+    en: "\u00b7 {place}",
+  },
 };

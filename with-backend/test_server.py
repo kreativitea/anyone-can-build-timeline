@@ -627,6 +627,10 @@ class ModelTests(unittest.TestCase):
         before, after = self.use_an_accounts_database()
         # timestamps then moved each old HH:MM from posted_at into old_clock_time.
         before["posts"] = [row[:3] + (None, row[3]) for row in before["posts"]]
+        # Later upgrades (place) add columns after these five, empty for an old post.
+        self.assertEqual([row[5:] for row in after["posts"]],
+                         [(None,) * (len(row) - 5) for row in after["posts"]])
+        after["posts"] = [row[:5] for row in after["posts"]]
         self.assertEqual(after, before)
         self.assertEqual(self.rows("PRAGMA user_version"), [(server.LATEST_VERSION,)])
         self.assertEqual(self.rows("PRAGMA foreign_key_check"), [])
@@ -999,7 +1003,8 @@ class ModelTests(unittest.TestCase):
         self.assertEqual(connection.execute("PRAGMA foreign_keys").fetchone()[0], 1)
         connection.close()
         # The column order keeps its shape: posted_at, then old_clock_time.
-        self.assertEqual([row[1] for row in self.rows("PRAGMA table_info(posts)")],
+        # Later upgrades (place) add their columns after these five.
+        self.assertEqual([row[1] for row in self.rows("PRAGMA table_info(posts)")][:5],
                          ["id", "author_id", "text", "posted_at", "old_clock_time"])
 
     def test_after_the_upgrade_a_new_post_gets_a_full_time_and_order_is_by_id(self):
@@ -1427,6 +1432,131 @@ class ModelTests(unittest.TestCase):
             server.likes_for(self.db_path, aiko, "abc")
         self.assertEqual(str(caught.exception), "'from' must be a whole number, 0 or more.")
 
+    # -- place --
+
+    def place_of(self, post_id):
+        return self.rows("SELECT place FROM posts WHERE id = ?", (post_id,))[0][0]
+
+    def test_a_post_with_no_place_saves_null(self):
+        aiko = self.sign_up("aiko")
+        for place in (None, "", "   "):
+            with self.subTest(place=place):
+                row = server.save_post(self.db_path, aiko, "hello", place=place)
+                self.assertIsNone(row["place"])
+                self.assertIsNone(self.place_of(row["id"]))
+        # And a call with no place at all, as every other feature makes it.
+        self.assertIsNone(server.save_post(self.db_path, aiko, "hello")["place"])
+
+    def test_a_place_is_saved_without_extra_spaces(self):
+        aiko = self.sign_up("aiko")
+        row = server.save_post(self.db_path, aiko, "hello", place=" Osaka ")
+        self.assertEqual(row["place"], "Osaka")
+        self.assertEqual(self.place_of(row["id"]), "Osaka")
+
+    def test_a_place_of_the_limit_is_allowed_and_one_more_is_refused(self):
+        aiko = self.sign_up("aiko")
+        row = server.save_post(self.db_path, aiko, "hello", place="a" * server.MAX_PLACE)
+        self.assertEqual(len(row["place"]), server.MAX_PLACE)
+        with self.assertRaises(server.RuleBroken) as caught:
+            server.save_post(self.db_path, aiko, "hello", place="a" * (server.MAX_PLACE + 1))
+        self.assertEqual(str(caught.exception),
+                         f"The place must be {server.MAX_PLACE} characters or fewer.")
+        self.assertEqual(len(self.rows("SELECT * FROM posts")), 1)
+
+    def test_a_place_with_hidden_characters_is_refused_and_nothing_is_saved(self):
+        aiko = self.sign_up("aiko")
+        for place in ("Osaka\nfake line", "Osa\u2028ka", "Osaka\u202e"):
+            with self.subTest(place=repr(place)):
+                with self.assertRaises(server.RuleBroken) as caught:
+                    server.save_post(self.db_path, aiko, "hello", place=place)
+                self.assertEqual(str(caught.exception),
+                                 "The place must not have hidden characters or line breaks.")
+        self.assertEqual(self.rows("SELECT * FROM posts"), [])
+        # A refused place is not counted against the rate limit either.
+        self.assertEqual(self.rows("SELECT * FROM attempts WHERE action = 'post'"), [])
+
+    def test_a_place_that_is_not_text_counts_as_no_place(self):
+        aiko = self.sign_up("aiko")
+        for place in (42, ["Osaka"], {"city": "Osaka"}, True):
+            with self.subTest(place=place):
+                self.assertIsNone(server.save_post(self.db_path, aiko, "hi", place=place)["place"])
+
+    def test_the_place_is_on_posts_never_on_users(self):
+        connection = server.connect(self.db_path)
+        posts = [c["name"] for c in connection.execute("PRAGMA table_info(posts)")]
+        users = [c["name"] for c in connection.execute("PRAGMA table_info(users)")]
+        connection.close()
+        self.assertIn("place", posts)
+        self.assertNotIn("place", users)
+
+    def test_the_database_itself_refuses_an_empty_or_too_long_place(self):
+        aiko = self.sign_up("aiko")
+        connection = server.connect(self.db_path)
+        for place in ("", "a" * (server.MAX_PLACE + 1)):
+            with self.subTest(length=len(place)):
+                with self.assertRaises(sqlite3.IntegrityError):
+                    connection.execute("INSERT INTO posts (author_id, text, posted_at, place) "
+                                       "VALUES (?, 'hi', '2026-10-02T07:42:10Z', ?)",
+                                       (aiko, place))
+        connection.close()
+
+    def test_the_place_upgrade_keeps_every_row(self):
+        # A database at the version before place: made with the place upgrade
+        # turned off, then given rows in every table.
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        self.db_path = os.path.join(folder.name, "old.db")
+        with mock.patch.object(server, "upgrade_to_place", lambda connection: None):
+            server.create_tables(self.db_path)
+        old_version = self.rows("PRAGMA user_version")[0][0]
+        self.assertLess(old_version, server.LATEST_VERSION)
+        columns = [row[1] for row in self.rows("PRAGMA table_info(posts)")]
+        self.assertNotIn("place", columns)
+        aiko = self.sign_up("aiko")
+        ben = self.sign_up("ben")
+        connection = server.connect(self.db_path)
+        for text in ("one", "two"):
+            connection.execute("INSERT INTO posts (author_id, text, posted_at) "
+                               "VALUES (?, ?, '2026-10-02T07:42:10Z')", (aiko, text))
+        connection.execute("INSERT INTO likes (post_id, user_id) VALUES (1, ?)", (ben,))
+        connection.commit()
+        connection.close()
+        tables = ("users", "posts", "likes", "sessions")
+        before = {table: self.rows("SELECT * FROM " + table + " ORDER BY 1, 2")
+                  for table in tables}
+
+        server.create_tables(self.db_path)
+        after = {table: self.rows("SELECT * FROM " + table + " ORDER BY 1, 2")
+                 for table in tables}
+        # Every old post is kept, with place NULL at the end.
+        self.assertEqual(after["posts"], [row + (None,) for row in before["posts"]])
+        for table in ("users", "likes", "sessions"):
+            self.assertEqual(after[table], before[table])
+        self.assertEqual(self.rows("PRAGMA user_version"), [(server.LATEST_VERSION,)])
+        self.assertEqual(self.rows("PRAGMA foreign_key_check"), [])
+
+        # Starting the server again changes nothing more.
+        server.create_tables(self.db_path)
+        self.assertEqual(self.rows("SELECT * FROM posts ORDER BY 1"), after["posts"])
+        row = server.save_post(self.db_path, aiko, "from Kyoto", place="Kyoto")
+        self.assertEqual(row["place"], "Kyoto")
+
+    def test_the_log_line_ends_with_the_place_only_when_there_is_one(self):
+        aiko = self.sign_up("aiko", "Aiko Tanaka")
+        with_place = server.save_post(self.db_path, aiko, "the library is open late",
+                                      now=SOME_MOMENT, place="Osaka")
+        self.assertEqual(server.post_to_log_line(with_place),
+                         '2026-10-02T07:42:10Z  Aiko Tanaka @aiko: '
+                         '"the library is open late" · Osaka')
+        without = server.save_post(self.db_path, aiko, "line one\nline two", now=SOME_MOMENT)
+        self.assertEqual(server.post_to_log_line(without),
+                         '2026-10-02T07:42:10Z  Aiko Tanaka @aiko: "line one\\nline two"')
+
+    def test_post_to_json_has_the_place(self):
+        aiko = self.sign_up("aiko")
+        self.assertEqual(server.post_to_json(
+            server.save_post(self.db_path, aiko, "hi", place="Osaka"))["place"], "Osaka")
+        self.assertIsNone(server.post_to_json(server.save_post(self.db_path, aiko, "hi"))["place"])
 
     # -- bookmarks: a post saved by one person, for that person only --
 
@@ -1901,7 +2031,7 @@ class RealServerTest(unittest.TestCase):
         self.assertEqual([post["text"] for post in answer["posts"]], ["my #cat is asleep"])
         self.assertEqual(set(answer["posts"][0]), set(server.post_to_json(
             {key: None for key in ("id", "author", "display_name", "text", "posted_at",
-                                   "old_clock_time", "like_count")})))
+                                   "old_clock_time", "like_count", "place")})))
 
     def test_a_search_with_no_words_gets_400_and_a_reason(self):
         for path in ("/search", "/search?q=", "/search?q=%20%20",
@@ -1956,6 +2086,31 @@ class RealServerTest(unittest.TestCase):
                          (400, "'from' must be a whole number, 0 or more."))
         self.assertEqual(self.get("/likes?from=5"), self.get("/likes"))
 
+    # -- place --
+
+    def test_a_post_with_a_place_shows_it_to_everyone(self):
+        self.sign_up().close()
+        with self.send("/posts", {"text": "hello", "place": "Osaka"}) as answer:
+            self.assertEqual(answer.status, 201)
+            self.assertEqual(json.loads(answer.read())["place"], "Osaka")
+        self.window = urllib.request.build_opener()   # a window with no cookie
+        self.assertEqual([post["place"] for post in self.get("/posts?after=0")], ["Osaka"])
+
+    def test_a_place_with_a_line_break_is_400_with_a_reason(self):
+        self.sign_up().close()
+        code, reason = self.refused("/posts", {"text": "hello", "place": "Osaka\nfake"})
+        self.assertEqual(code, 400)
+        self.assertEqual(reason, "The place must not have hidden characters or line breaks.")
+        self.assertEqual(self.get("/posts?after=0"), [])
+
+    def test_a_post_with_no_place_key_still_works(self):
+        self.sign_up().close()
+        with self.send("/posts", {"text": "hello"}) as answer:
+            self.assertEqual(answer.status, 201)
+            self.assertIsNone(json.loads(answer.read())["place"])
+
+    def test_a_place_without_a_login_is_401(self):
+        self.assertEqual(self.refused("/posts", {"text": "hi", "place": "Osaka"})[0], 401)
 
     # -- bookmarks --
 
@@ -2586,6 +2741,38 @@ class JourneyTest(unittest.TestCase):
         # Leaving `from` out gives the same as from the very first post.
         self.assertEqual(self.page_asks_for_counts(aiko), far)
 
+    def test_the_whole_journey_of_a_place(self):
+        aiko = self.open_window()
+        ben = self.open_window()
+
+        # 1. Aiko signs up and posts from Osaka. The row has the place.
+        self.page_signs_up(aiko, "aiko", "Aiko Tanaka")
+        status, post = self.page_sends(aiko, "/posts", {"text": "lunch", "place": " Osaka "},
+                                       "POST")
+        self.assertEqual((status, post["place"]), (201, "Osaka"))
+        self.assertEqual(self.rows("SELECT id, place FROM posts"), [(1, "Osaka")])
+
+        # 2. She posts with an empty place box: the row has NULL, never ''.
+        status, post = self.page_sends(aiko, "/posts", {"text": "back home", "place": ""},
+                                       "POST")
+        self.assertEqual((status, post["place"]), (201, None))
+        self.assertEqual(self.rows("SELECT id, place FROM posts ORDER BY id"),
+                         [(1, "Osaka"), (2, None)])
+
+        # 3. A place with a line break is refused, and nothing is saved.
+        code, reason = self.is_refused(self.page_sends, aiko, "/posts",
+                                       {"text": "sneaky", "place": "Osaka\n15:00  Ben"}, "POST")
+        self.assertEqual(code, 400)
+        self.assertIn("line breaks", reason)
+        self.assertEqual(self.rows("SELECT COUNT(*) FROM posts"), [(2,)])
+
+        # 4. Ben's window, not logged in, sees both posts: one place, one null.
+        posts = self.page_asks_for_new_posts(ben)
+        self.assertEqual(sorted((post["id"], post["place"]) for post in posts),
+                         [(1, "Osaka"), (2, None)])
+
+        # 5. The place is kept with the post, not with the person: users has no place.
+        self.assertNotIn("place", [row[1] for row in self.rows("PRAGMA table_info(users)")])
 
 
 class BookmarkJourneyTest(unittest.TestCase):
@@ -2988,6 +3175,52 @@ class PageAndServerAgreeTest(unittest.TestCase):
         self.assertIn("receiveNewPosts(posts)", functions["checkForNewPosts"])
         self.assertIn("showWaitingPosts()", functions["sendPost"])
 
+    # -- place --
+
+    def test_the_page_has_the_same_place_limit_and_sentences(self):
+        self.assertIn(f"const MAX_PLACE = {server.MAX_PLACE};", self.page_code)
+        problem = functions_in(self.page_code)["placeProblem"]
+        # The page uses the same two codes as the model, and each is in PROBLEMS.
+        self.assertEqual(re.findall(r'key: "(\w+)"', problem), ["place_too_long", "place_hidden"])
+        self.assertIn("values: { limit: MAX_PLACE }", problem)
+        self.assertIn("HIDDEN_CHARACTERS.test(place)", problem)
+        with self.assertRaises(server.RuleBroken) as caught:
+            server.check_place("a" * (server.MAX_PLACE + 1))
+        self.assertEqual((caught.exception.code, caught.exception.values),
+                         ("place_too_long", {"limit": server.MAX_PLACE}))
+        self.assertEqual(str(caught.exception),
+                         f"The place must be {server.MAX_PLACE} characters or fewer.")
+        with self.assertRaises(server.RuleBroken) as caught:
+            server.check_place("a\tb")
+        self.assertEqual(caught.exception.code, "place_hidden")
+        self.assertEqual(str(caught.exception),
+                         "The place must not have hidden characters or line breaks.")
+
+    def test_the_page_sends_and_shows_the_place(self):
+        functions = functions_in(self.page_code)
+        self.assertIn("place: place", functions["sendPost"])
+        self.assertIn("placeProblem(", functions["sendPost"])
+        # "· {place}" is one key; the place itself is never a key.
+        self.assertIn('say("post_place", { place: post.place })', self.page_code)
+        self.assertIn("redrawPlaces", self.page_code)
+        self.assertIn("slots.head.append(place)", self.page_code)
+
+    def test_the_place_is_remembered_in_this_browser_and_forgotten_on_log_out(self):
+        functions = functions_in(self.page_code)
+        self.assertIn('const PLACE_KEY = "timeline-place";', self.page_code)
+        self.assertIn("rememberPlace(", functions["sendPost"])
+        send = functions["sendPost"]
+        self.assertGreater(send.index("rememberPlace("), send.index("if (!response.ok)"))
+        self.assertIn("forgetPlace()", functions["logOut"])
+        self.assertIn("placeBox.value = rememberedPlace();", self.page_code)
+
+    def test_the_place_box_says_everyone_can_see_it(self):
+        with open(os.path.join(HERE, "index.html"), encoding="utf-8") as page:
+            html = page.read()
+        self.assertIn('<label for="place" class="place-label" data-words="place_label">'
+                      'Place (anyone can see this)</label>', html)
+        self.assertIn('data-words-placeholder="place_example"', html)
+        self.assertIn('<input id="place" type="text"', html)
 
 
     # -- search --
