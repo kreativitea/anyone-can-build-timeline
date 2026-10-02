@@ -534,3 +534,30 @@ time.post-time {
 #place {
   margin-bottom: 4px;
 }
+
+/* pictures: the picture under a post's words, and the two boxes to add one.
+   A picture is never wider than the post, nor taller than about half a
+   screen; object-fit: contain shrinks it without cutting or stretching it. */
+.post-picture {
+  display: block;
+  max-width: 100%;
+  max-height: 24rem;
+  margin-top: 10px;
+  border-radius: 8px;
+  object-fit: contain;
+}
+
+.picture-boxes {
+  margin-top: 10px;
+}
+
+.picture-boxes input {
+  margin-bottom: 8px;
+}
+
+/* A small note under a box. */
+.hint {
+  margin: 0;
+  color: var(--quiet);
+  font-size: 18px;
+}

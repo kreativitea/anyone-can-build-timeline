@@ -32,7 +32,7 @@ piece of text the browser keeps and sends back by itself), never from a name in 
 | `with-backend/server.py` | The backend, in three labelled parts: **controller**, **model**, **view**. |
 | `with-backend/words.js` | Every word the page shows, by key (`WORDS`). English only for now; Japanese comes later. |
 | `with-backend/test_server.py` | The checks for `server.py`, and for the page and the server agreeing. |
-| `with-backend/timeline.db` | The database, in six tables. The server creates it when it starts, and brings an older one up to date. It is not in git. |
+| `with-backend/timeline.db` | The database, in seven tables. The server creates it when it starts, and brings an older one up to date. It is not in git. |
 | `Makefile` | Short commands: `make run`, `make test`, `make reset`, `make worktree BRANCH=name`. |
 
 The Colours choice (Auto, Light or Dark) is the only thing the page keeps in `localStorage`
@@ -50,8 +50,9 @@ The three parts of `server.py`:
   `add_like`, `remove_like`,
   `like_count_for`, `likes_for`, `who_liked`, `check_post_ids`, `like_summaries`, `utc_now`,
   `utc_text`, `use_allowance`, `forget_attempts`, `clock`, `check_query`, `escape_like`, `tags_in`,
-  `has_tag`, `search_posts`, and `create_tables` with its upgrades):
-  the rules, and the database, in six tables:
+  `has_tag`, `search_posts`, `picture_kind`, `check_picture`, `check_alt_text`, `picture_for`, and
+  `create_tables` with its upgrades):
+  the rules, and the database, in seven tables:
   - `users`: each person once. `name` is the account name (unique, capitals ignored),
     `display_name` is the name shown, and `password_salt`, `password_hash`, `password_rounds` hold
     a hash of the password. The password itself is never kept.
@@ -68,6 +69,8 @@ The three parts of `server.py`:
     never polled. `check_bookmark_post_id`, `add_bookmark`, `remove_bookmark` and `bookmarks_for`
     (read through `select_posts`) take the user id from the cookie, never a name, and never add a
     user. `GET /bookmarks` is 401 when signed out. The view is `bookmark_to_json`.
+  - `pictures`: at most one picture for each post (`post_id` is the primary key, `ON DELETE
+    CASCADE`): its `kind` (`png`, `jpeg`, `gif` or `webp`), its `alt_text` and its `bytes`.
 
   A name is kept once, in `users`; never copy it into another table. Only sign-up
   (`create_account`) adds a user: posting, liking and reading never do. A like count is never kept
@@ -81,7 +84,7 @@ The three parts of `server.py`:
   `who_liked` and `like_summaries` only read: they must never add a user, a like or a session.
   A person's popularity (likes on their own posts from other people) is counted from `likes`
   every time, never stored.
-- **View** (`post_to_json`, `posts_to_json`, `account_to_json`, `like_to_json`, `likes_to_json`,
+- **View** (`post_to_json`, `picture_to_json`, `posts_to_json`, `account_to_json`, `like_to_json`, `likes_to_json`,
   `likers_to_json`, `summaries_to_json`, `search_to_json`, `problem_to_json`, `session_cookie`, `post_to_log_line`): turns database rows into the JSON the page reads, the
   cookie, and the one line printed for each new post.
 
@@ -241,13 +244,36 @@ The page never finds the place by itself (no geolocation). The page shows it aft
 "· Osaka" (`placePart`, in the `head` slot), and remembers the last place in `localStorage`
 (`timeline-place`) until Log out. `upgrade_to_place` added the column; old posts have NULL.
 
+## Pictures
+
+A post may carry one PNG, JPEG, GIF or WebP picture, up to 2 MB (`MAX_PICTURE_BYTES`,
+`MAX_PICTURE_MB`), with a description of 1 to 200 characters (`MAX_ALT_TEXT`). A post still needs
+its text.
+
+- The page sends it in the JSON of `POST /posts`, as base64 text: `picture` and `picture_alt`.
+  `save_post` checks every rule first, then saves the post and its picture in one transaction. A post
+  with a picture is still one post for the rate limit.
+- The kind is found from the first bytes (`picture_kind`), never from a name or a type the browser
+  says. SVG is never accepted. The refusals are the `picture_` codes in `PROBLEMS`;
+  `pictureProblem` in `app.js` checks the same rules with the same codes.
+- `GET /pictures/<post id>` sends the bytes, with `nosniff` and a `sandbox` Content-Security-Policy.
+  It reads only digits from the address, never a path. `picture_for` finds the post through
+  `select_posts`, so a post the viewer may not see answers 404, as an unknown one does.
+- Each post in `GET /posts` (and in search and bookmarks) has `"picture": {"url", "alt"}` or
+  `"picture": null`. The page uses the `url` as it is, and never builds `/pictures/...` itself.
+  The picture is a part in the `body` slot. The description is what the writer typed, never a key.
+- The page draws a JPEG again on a `<canvas>` before sending it (`redrawJpeg`), so the EXIF notes
+  and any GPS place are not sent. GIFs are sent as they are. The server still checks everything.
+- `upgrade_to_pictures` (database version 7) added the table.
+- Never `select *` from `pictures` in a terminal: it prints the raw bytes.
+
 ## How to run it
 
 - Page-only: open `page-only/index.html` in a browser. Nothing to start.
 - With a backend: `make run`, then open <http://localhost:8009>. Press Ctrl+C to stop.
 - Start again with an empty timeline: `make reset`.
 - See what is saved:
-  `sqlite3 with-backend/timeline.db 'select * from users; select * from posts; select * from likes; select * from sessions; select * from attempts; select * from bookmarks'`
+  `sqlite3 with-backend/timeline.db 'select * from users; select * from posts; select * from likes; select * from sessions; select * from attempts; select * from bookmarks; select post_id, kind, length(bytes), alt_text from pictures'`
 
 It needs only `python3` (3.9 or newer). Do not add libraries, packages or a build step.
 Write code that runs on Python 3.9: no `match` statements, and no `X | Y` in type hints.

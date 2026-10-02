@@ -18,6 +18,12 @@ const MAX_DISPLAY_NAME = 50;
 const MIN_PASSWORD = 8;
 const MAX_PASSWORD = 200;
 const MAX_PLACE = 40;
+// pictures: the same as MAX_PICTURE_BYTES, MAX_PICTURE_MB, MAX_ALT_TEXT and
+// PICTURE_TYPES in server.py.
+const MAX_PICTURE_BYTES = 2097152;   // 2 MB: 2 x 1024 x 1024 bytes
+const MAX_PICTURE_MB = 2;
+const MAX_ALT_TEXT = 200;
+const PICTURE_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp"];
 // The account name rule, the same as ACCOUNT_NAME in server.py.
 const ACCOUNT_NAME = /^[A-Za-z0-9_]+$/;
 // The characters a display name may not hold, the same as HIDDEN_CHARACTERS in server.py.
@@ -64,7 +70,7 @@ const LANGUAGE_KEY = "language";
 
 // Values that words in index.html need. The sign-up form says
 // "Password (8 characters or more)": the 8 is {min}.
-const PAGE_VALUES = { min: MIN_PASSWORD };
+const PAGE_VALUES = { min: MIN_PASSWORD, size: MAX_PICTURE_MB };
 
 // What the status line says now, so it can be written again in another language.
 let statusNow = { key: "", values: {}, fallback: "" };
@@ -736,6 +742,7 @@ function showSignedOut(reason) {
   signedOutSection.hidden = false;
   hideDraft();
   clearBookmarks();
+  clearPictureBoxes();
   showStatus(reason);
 }
 
@@ -1034,6 +1041,142 @@ addPostPart(function expandablePart(post, slots) {
 });
 
 ACTIONS.expand = toggleExpanded;
+
+// ---- pictures: one picture on a post, with a description ----
+//
+// A post may carry one PNG, JPEG, GIF or WebP picture, up to 2 MB, and a
+// description of it for people who cannot see it (the "alt text" a screen
+// reader says instead of the picture). The picture travels inside the JSON of
+// POST /posts, written as base64 (plain letters that stand for any bytes).
+//
+// A JPEG photo is drawn again on a <canvas> before it is sent. The new file
+// has only the picture: the hidden notes inside a photo (EXIF), which can hold
+// the place where it was taken, are left behind. The browser turns the photo
+// the right way up when it draws it, so that is kept. A big photo is made
+// smaller until it fits. A GIF is never drawn again, so it still moves.
+// The server checks every picture again, whatever the page did.
+
+// A redrawn JPEG is at most this many pixels wide or tall, and this good
+// (0 to 1). If it is still too big, it is drawn again at 3/4 of the size.
+const MAX_REDRAWN_SIDE = 4096;
+const REDRAWN_QUALITY = 0.9;
+
+const pictureBox = document.getElementById("picture");
+const pictureAltBox = document.getElementById("picture-alt");
+
+// The rules for a picture and its description, the same as check_picture and
+// check_alt_text in server.py, with the same codes, as far as a page can check
+// them. `file` is the chosen file, or null. Returns { key, values }, or null
+// if no rule is broken. The type the browser gives is only a quick hint: the
+// server reads the file's first bytes. A JPEG's size is checked after it is
+// drawn again (see redrawJpeg).
+function pictureProblem(file, altText) {
+  if (file === null) {
+    return altText === "" ? null : { key: "picture_missing", values: {} };
+  }
+  if (!PICTURE_TYPES.includes(file.type)) {
+    return { key: "picture_wrong_kind", values: {} };
+  }
+  if (file.type !== "image/jpeg" && file.size > MAX_PICTURE_BYTES) {
+    return { key: "picture_too_big", values: { limit: MAX_PICTURE_MB } };
+  }
+  if (altText === "") {
+    return { key: "picture_alt_empty", values: {} };
+  }
+  if (characterCount(altText) > MAX_ALT_TEXT) {
+    return { key: "picture_alt_too_long", values: { limit: MAX_ALT_TEXT } };
+  }
+  if (HIDDEN_CHARACTERS.test(altText)) {
+    return { key: "picture_alt_hidden", values: {} };
+  }
+  return null;
+}
+
+// Draw a JPEG again on a canvas, and return the new JPEG (a Blob: bytes in the
+// browser), or null if it will not get small enough. Only the picture is
+// drawn, so EXIF and the place go. "from-image" asks the browser to turn the
+// photo the way its notes say, before drawing. Throws if it cannot be opened.
+async function redrawJpeg(file) {
+  const bitmap = await createImageBitmap(file, { imageOrientation: "from-image" });
+  try {
+    let scale = Math.min(1, MAX_REDRAWN_SIDE / Math.max(bitmap.width, bitmap.height));
+    for (let tries = 0; tries < 8; tries = tries + 1) {
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+      canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+      canvas.getContext("2d").drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+      const blob = await new Promise(function (done) {
+        canvas.toBlob(done, "image/jpeg", REDRAWN_QUALITY);
+      });
+      if (blob === null) {
+        throw new Error("The canvas could not make a JPEG.");   // for the console only
+      }
+      if (blob.size <= MAX_PICTURE_BYTES) {
+        return blob;
+      }
+      scale = scale * 0.75;
+    }
+  } finally {
+    bitmap.close();
+  }
+  return null;
+}
+
+// Read a file (or Blob) as base64 text. readAsDataURL gives
+// "data:image/png;base64,iVBOR...": only the part after the comma is sent.
+function readPictureAsBase64(blob) {
+  return new Promise(function (done, failed) {
+    const reader = new FileReader();
+    reader.onload = function () {
+      done(reader.result.slice(reader.result.indexOf(",") + 1));
+    };
+    reader.onerror = function () {
+      failed(reader.error);
+    };
+    reader.readAsDataURL(blob);
+  });
+}
+
+// The chosen picture, ready to send as base64: a JPEG drawn again, any other
+// kind as it is. null if a JPEG will not get under the limit. Throws if the
+// file cannot be read.
+async function preparePicture(file) {
+  if (file.type !== "image/jpeg") {
+    return readPictureAsBase64(file);
+  }
+  const blob = await redrawJpeg(file);
+  if (blob === null) {
+    return null;
+  }
+  return readPictureAsBase64(blob);
+}
+
+// Empty both picture boxes: after a post is saved, and when nobody is logged in.
+function clearPictureBoxes() {
+  pictureBox.value = "";
+  pictureAltBox.value = "";
+}
+
+// One picture on the page. The address comes from the server (post.picture.url),
+// and the description is set as a property, never as HTML. The description is
+// what the writer typed, so it is never a key in words.js.
+function pictureElement(picture) {
+  const image = document.createElement("img");
+  image.className = "post-picture";
+  image.loading = "lazy";      // load it only when it is about to be seen
+  image.decoding = "async";
+  image.src = picture.url;
+  image.alt = picture.alt;
+  return image;
+}
+
+// The part, added after the text and its Show more button, so the picture
+// sits under the words. A post with no picture has "picture": null.
+addPostPart(function picturePart(post, slots) {
+  if (post.picture) {
+    slots.body.append(pictureElement(post.picture));
+  }
+});
 
 // The server answered 429: too many, too quickly. Turn off the form's button
 // for the seconds the server names, then turn it on again. The page does not
@@ -1380,11 +1523,35 @@ async function sendPost(event) {
   }
   const place = placeBox.value;
 
+  // pictures: a chosen file, and its description, go with the post. With no
+  // file, both stay undefined, and JSON.stringify leaves them out.
+  const file = pictureBox.files.length > 0 ? pictureBox.files[0] : null;
+  const pictureTrouble = pictureProblem(file, pictureAltBox.value.trim());
+  if (pictureTrouble !== null) {
+    showStatus(pictureTrouble.key, pictureTrouble.values);
+    return;
+  }
+  let picture;
+  let pictureAlt;
+  if (file !== null) {
+    try {
+      picture = await preparePicture(file);
+    } catch (error) {
+      showStatus("picture_unreadable");
+      return;
+    }
+    if (picture === null) {
+      showStatus("picture_too_big", { limit: MAX_PICTURE_MB });
+      return;
+    }
+    pictureAlt = pictureAltBox.value;
+  }
+
   try {
     const response = await fetch("/posts", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text: text, place: place }),
+      body: JSON.stringify({ text: text, place: place, picture: picture, picture_alt: pictureAlt }),
     });
     const answer = await response.json();
     if (response.status === 401) {
@@ -1403,6 +1570,7 @@ async function sendPost(event) {
     // This also brings in any post from another window that came just before ours.
     showStatus("");
     textBox.value = "";
+    clearPictureBoxes();
     forgetDraft();
     updateCount();
     // The place box is not emptied: the same place is likely next time.

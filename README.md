@@ -9,7 +9,8 @@ in two versions:
 - **`with-backend/`**: people sign up and log in. The page sends each post and each like to a small
   Python server, which saves them in a database. Every window asks the server for new posts and new
   like counts once a second, so every window sees every post, and every heart. Anyone can read the
-  timeline; only a signed-in person can post or like, and nobody can post as someone else.
+  timeline; only a signed-in person can post or like, and nobody can post as someone else. A post
+  can carry one picture (PNG, JPEG, GIF or WebP, up to 2 MB) with a short description.
 
 The difference between the two is the reason a backend exists.
 

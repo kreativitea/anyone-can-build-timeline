@@ -2,8 +2,8 @@
 
 This file has three parts:
   CONTROLLER  reads each request and decides what to do
-  MODEL       the rules, and the database (six tables: users, posts, likes, sessions,
-              attempts and bookmarks)
+  MODEL       the rules, and the database (seven tables: users, posts, likes, sessions,
+              attempts, bookmarks and pictures)
   VIEW        turns database rows into the JSON answer
 The server never translates: a refusal names its rule by a code (see PROBLEMS),
 and the page shows the words for that code in the reader's language (words.js).
@@ -11,6 +11,7 @@ It uses only the Python standard library, so there is nothing to install.
 """
 
 import argparse
+import base64
 import hashlib
 import hmac
 import http.cookies
@@ -95,6 +96,8 @@ class TimelineHandler(BaseHTTPRequestHandler):
             self.show_like_summaries(parse_qs(url.query).get("post_ids", [""])[0])
         elif url.path == "/bookmarks":
             self.show_bookmarks()
+        elif url.path.startswith("/pictures/"):
+            self.send_picture(url.path)
         elif url.path == "/sessions":
             # "Who am I?" The page asks this when it opens.
             user = self.signed_in_user()
@@ -256,8 +259,11 @@ class TimelineHandler(BaseHTTPRequestHandler):
         if user is None:
             return
         try:
+            # A picture and its description are optional (pictures): the model
+            # decides what to do when one, both or neither is sent.
             row = save_post(self.server.db_path, user["id"], data.get("text"),
-                            place=data.get("place"))
+                            place=data.get("place"), picture=data.get("picture"),
+                            picture_alt=data.get("picture_alt"))
         except RuleBroken as problem:
             self.send_problem(400, problem)
             return
@@ -355,6 +361,47 @@ class TimelineHandler(BaseHTTPRequestHandler):
             return
         self.send_json(200, bookmark_to_json(post_id, False))   # 200: nothing was created
 
+    # pictures: anyone may see a post's picture, as anyone may read the post.
+
+    def send_picture(self, path):
+        """GET /pictures/7: the picture of post 7, or 404.
+
+        Only digits are read from the address, and only as a number. No part of
+        the request is ever used as a file name: the bytes come from the database.
+        """
+        found = PICTURE_ADDRESS.fullmatch(path)
+        if found is None:
+            self.send_nothing_here("GET", path)
+            return
+        # Who is asking decides which posts they may see, as for GET /posts, so
+        # a hidden post's picture is hidden too.
+        viewer = self.user_or_none()
+        picture = picture_for(self.server.db_path, int(found.group(1)),
+                              viewer["id"] if viewer else None)
+        if picture is None:
+            self.send_nothing_here("GET", path)
+            return
+        self.send_picture_answer(PICTURE_TYPES[picture["kind"]], picture["bytes"])
+
+    def send_picture_answer(self, content_type, body):
+        """200 with a picture's bytes, and the headers that keep it only a picture."""
+        self.send_response(200)
+        # The type the server found from the first bytes, never what was sent.
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(body)))
+        # nosniff: the browser must believe the type and never guess another
+        # one. So a file that starts like a PNG but hides a web page is still
+        # only a picture.
+        self.send_header("X-Content-Type-Options", "nosniff")
+        # If someone opens the picture's address on its own, nothing in it can run.
+        self.send_header("Content-Security-Policy", "default-src 'none'; sandbox")
+        # A post's picture never changes, so a window can keep it for a day.
+        # "private": only this browser keeps it, because who may see a post
+        # can depend on who is asking.
+        self.send_header("Cache-Control", "private, max-age=86400")
+        self.end_headers()
+        self.wfile.write(body)
+
     def send_nothing_here(self, method, path):
         """404, in one sentence for every method, so it stays true when routes are added."""
         self.send_problem(404, Problem("nothing_here", method=method, path=path))
@@ -438,6 +485,20 @@ TAG = re.compile(r"#([0-9A-Za-z_々぀-ヿ㐀-鿿ｦ-ﾟ]+)")
 # 2 MB picture written as text (base64 makes it about a third bigger), with room
 # to spare. A bigger request is refused with 413 before it is read.
 MAX_REQUEST_BYTES = 4 * 1024 * 1024
+
+# pictures: one picture on a post, at most 2 MB, with a description (alt text)
+# of 1 to 200 characters for people who cannot see it.
+MAX_PICTURE_BYTES = 2 * 1024 * 1024
+MAX_PICTURE_MB = MAX_PICTURE_BYTES // (1024 * 1024)   # the same limit, as the words say it
+MIN_PICTURE_BYTES = 12        # the shortest real picture is longer than this
+MAX_ALT_TEXT = 200
+# The four kinds of picture, and the type the server sends for each. The kind
+# is found from the file's first bytes (picture_kind), never from its name.
+# SVG is never accepted: it is text, and it can hold a script.
+PICTURE_TYPES = {"png": "image/png", "jpeg": "image/jpeg", "gif": "image/gif",
+                 "webp": "image/webp"}
+# The address of one picture: /pictures/ and the post's id, digits only.
+PICTURE_ADDRESS = re.compile(r"/pictures/([0-9]{1,18})")
 
 # How many times the password is hashed. More is slower for an attacker who
 # has copied the database and is guessing, and still fast enough for one
@@ -530,6 +591,14 @@ PROBLEMS = {
     # place
     "place_too_long": "The place must be {limit} characters or fewer.",
     "place_hidden": "The place must not have hidden characters or line breaks.",
+    # pictures
+    "picture_wrong_kind": "The picture must be a PNG, JPEG, GIF or WebP file.",
+    "picture_too_big": "The picture must be {limit} MB or smaller.",
+    "picture_unreadable": "The picture could not be read.",
+    "picture_missing": "Please choose a picture for this description.",
+    "picture_alt_empty": "Please describe the picture in a few words.",
+    "picture_alt_too_long": "The description must be {limit} characters or fewer.",
+    "picture_alt_hidden": "The description must not have hidden characters or line breaks.",
 }
 
 # One code for a wrong name and for a wrong password, so a stranger cannot use
@@ -601,7 +670,7 @@ def connect(db_path):
 
 # The newest version of the database: the number the last upgrade below sets.
 # Each new upgrade raises it by one, and the tests read it from here.
-LATEST_VERSION = 6
+LATEST_VERSION = 7
 
 
 def create_tables(db_path):
@@ -646,6 +715,8 @@ def create_tables(db_path):
         upgrade_to_bookmarks(connection)
     if version < 6:
         upgrade_to_place(connection)
+    if version < 7:
+        upgrade_to_pictures(connection)
     connection.close()
 
 
@@ -904,12 +975,43 @@ def upgrade_to_place(connection):
     connection.commit()
 
 
+def upgrade_to_pictures(connection):
+    """Version 7: the pictures table. Every row is kept; old posts have no picture.
+
+    A picture is its own table, not a column of posts, so a query for posts
+    never reads picture bytes by accident. The database itself makes sure of
+    these rules, even if every check in the code is got around:
+      - post_id is the primary key, so a post has at most one picture;
+      - it points at a real post, and goes when its post's row is deleted
+        (ON DELETE CASCADE);
+      - kind is one of four words, so the server can only ever send one of
+        the four picture types;
+      - the bytes are bytes (a BLOB), 12 bytes to 2 MB (MAX_PICTURE_BYTES; a
+        test checks that the two numbers agree);
+      - the description is 1 to 200 characters (MAX_ALT_TEXT).
+    """
+    connection.execute("BEGIN")
+    connection.execute(
+        "CREATE TABLE IF NOT EXISTS pictures ("
+        "post_id INTEGER PRIMARY KEY REFERENCES posts(id) ON DELETE CASCADE, "
+        "kind TEXT NOT NULL CHECK (kind IN ('png', 'jpeg', 'gif', 'webp')), "
+        "alt_text TEXT NOT NULL CHECK (length(alt_text) BETWEEN 1 AND 200), "
+        "bytes BLOB NOT NULL CHECK (typeof(bytes) = 'blob' "
+        "AND length(bytes) BETWEEN 12 AND 2097152))")
+    connection.execute("PRAGMA user_version = 7")
+    connection.commit()
+
+
 # Each post, with its author's two names looked up in users, and how many people
 # have liked it. The view reads row["author"], row["display_name"] and row["like_count"].
+# picture_alt is the description of the post's picture, or NULL when it has none
+# (a description is never empty). The picture's bytes are never read here.
 POSTS_WITH_AUTHORS = ("SELECT posts.id, users.name AS author, users.display_name, "
                       "posts.text, posts.posted_at, posts.old_clock_time, posts.place, "
                       "(SELECT COUNT(*) FROM likes WHERE likes.post_id = posts.id) "
-                      "AS like_count "
+                      "AS like_count, "
+                      "(SELECT alt_text FROM pictures WHERE pictures.post_id = posts.id) "
+                      "AS picture_alt "
                       "FROM posts JOIN users ON users.id = posts.author_id")
 
 
@@ -933,6 +1035,63 @@ def check_display_name(display_name):
     if HIDDEN_CHARACTERS.search(display_name):
         raise RuleBroken("display_name_hidden")
     return display_name
+
+
+# ---- pictures: the rules for a picture and its description ----
+
+def picture_kind(data):
+    """"png", "jpeg", "gif" or "webp", found from the first bytes, or None.
+
+    Every kind of file starts with its own few bytes (its "magic number").
+    Only these are read: the file's name and the type the browser says are
+    never trusted.
+    """
+    if data[:8] == b"\x89PNG\r\n\x1a\n":
+        return "png"
+    if data[:3] == b"\xff\xd8\xff":
+        return "jpeg"
+    if data[:6] in (b"GIF87a", b"GIF89a"):
+        return "gif"
+    # A WAV sound file also starts with RIFF, so WEBP at bytes 8 to 11 is needed too.
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "webp"
+    return None
+
+
+def check_picture(encoded):
+    """Return (kind, bytes) for a picture sent as base64 text, or raise RuleBroken."""
+    if not isinstance(encoded, str):
+        raise RuleBroken("picture_unreadable")
+    # Base64 writes 3 bytes as 4 letters. Too long is refused before decoding,
+    # so a huge text is never turned into bytes.
+    if len(encoded) > (MAX_PICTURE_BYTES + 2) // 3 * 4:
+        raise RuleBroken("picture_too_big", limit=MAX_PICTURE_MB)
+    try:
+        # validate=True: only base64 letters. A "data:image/png;base64," start
+        # is refused; the page removes it before sending.
+        data = base64.b64decode(encoded, validate=True)
+    except ValueError:
+        raise RuleBroken("picture_unreadable")
+    if len(data) > MAX_PICTURE_BYTES:
+        raise RuleBroken("picture_too_big", limit=MAX_PICTURE_MB)
+    if len(data) < MIN_PICTURE_BYTES:
+        raise RuleBroken("picture_unreadable")
+    kind = picture_kind(data)
+    if kind is None:
+        raise RuleBroken("picture_wrong_kind")
+    return kind, data
+
+
+def check_alt_text(alt_text):
+    """Return the picture's description without extra spaces, or raise RuleBroken."""
+    alt_text = alt_text.strip() if isinstance(alt_text, str) else ""
+    if alt_text == "":
+        raise RuleBroken("picture_alt_empty")
+    if len(alt_text) > MAX_ALT_TEXT:
+        raise RuleBroken("picture_alt_too_long", limit=MAX_ALT_TEXT)
+    if HIDDEN_CHARACTERS.search(alt_text):
+        raise RuleBroken("picture_alt_hidden")
+    return alt_text
 
 
 def check_place(place):
@@ -1237,19 +1396,34 @@ def post_by_id(connection, post_id):
                               (post_id,)).fetchone()
 
 
-def save_post(db_path, user_id, text, now=None, place=None):
+def save_post(db_path, user_id, text, now=None, place=None, picture=None, picture_alt=None):
     """Check the rules, save the post by this user, and return the saved row.
 
     The time comes from the server's clock (utc_now), never from the request.
     A test passes `now` to choose the time. `place` is optional (None: no place).
+
+    picture is the picture as base64 text, and picture_alt its description.
+    Both are left out (None) for a post with no picture. Every rule is checked
+    first; then the post and its picture are saved in one transaction, so a
+    broken rule saves nothing, and a post with a picture still counts as one post.
     """
     text = check_text(text)
     place = check_place(place)
     now = now or utc_now()
+    if picture is None and picture_alt is None:
+        kind = None
+    elif picture is None:
+        raise RuleBroken("picture_missing")
+    else:
+        kind, data = check_picture(picture)
+        picture_alt = check_alt_text(picture_alt)
 
     use_allowance(db_path, "post", str(user_id))   # after the rules: an empty post is not counted
     connection = connect(db_path)
     post_id = insert_post(connection, user_id, text, posted_at=utc_text(now), place=place)
+    if kind is not None:
+        connection.execute("INSERT INTO pictures (post_id, kind, alt_text, bytes) "
+                           "VALUES (?, ?, ?, ?)", (post_id, kind, picture_alt, data))
     connection.commit()
     row = post_by_id(connection, post_id)
     connection.close()
@@ -1517,6 +1691,26 @@ def posts_after(db_path, after, viewer_id=None):
     return rows
 
 
+def picture_for(db_path, post_id, viewer_id=None):
+    """The picture of this post, as a row with kind and bytes, or None.
+
+    post_id is a number, never a path. None when the post does not exist, has
+    no picture, or is one this viewer may not see: the post is looked for
+    through select_posts, so visible_to applies here too. Only reads.
+    """
+    connection = connect(db_path)
+    try:
+        # One read transaction: the post and its picture from the same moment.
+        connection.execute("BEGIN")
+        if not select_posts(connection, ["posts.id = ?"], [post_id], viewer_id, "posts.id"):
+            return None
+        return connection.execute("SELECT kind, bytes FROM pictures WHERE post_id = ?",
+                                  (post_id,)).fetchone()
+    finally:
+        connection.rollback()   # it only read, so there is nothing to keep
+        connection.close()
+
+
 # ---- search ----
 
 def check_query(query):
@@ -1720,7 +1914,17 @@ def post_to_json(row):
     return {"id": row["id"], "author": row["author"], "display_name": row["display_name"],
             "text": row["text"], "posted_at": row["posted_at"],
             "old_clock_time": row["old_clock_time"], "like_count": row["like_count"],
-            "place": row["place"]}
+            "place": row["place"], "picture": picture_to_json(row)}
+
+
+def picture_to_json(row):
+    """The post's picture: its address and its description, or None if it has none.
+
+    The page uses this address as it is, and never builds one itself.
+    """
+    if row["picture_alt"] is None:
+        return None
+    return {"url": "/pictures/" + str(row["id"]), "alt": row["picture_alt"]}
 
 
 def posts_to_json(rows):

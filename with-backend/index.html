@@ -103,6 +103,14 @@
         <label for="place" class="place-label" data-words="place_label">Place (anyone can see this)</label>
         <input id="place" type="text" autocomplete="off" placeholder="Osaka"
                data-words-placeholder="place_example">
+        <!-- pictures: one picture, with a description for people who cannot see it. -->
+        <div class="picture-boxes">
+          <label for="picture" data-words="picture_label">Picture (optional): PNG, JPEG, GIF or WebP, up to 2 MB</label>
+          <input id="picture" type="file" accept="image/png,image/jpeg,image/gif,image/webp">
+          <label for="picture-alt" data-words="picture_alt_label">Describe the picture for people who cannot see it</label>
+          <input id="picture-alt" type="text" maxlength="200">
+          <p class="hint" data-words="picture_hint">A JPEG photo is drawn again before it is sent, so the place where it was taken is not shared.</p>
+        </div>
         <div class="post-row">
           <span id="count" class="count"></span>
           <button type="submit" data-words="post_button">Post</button>

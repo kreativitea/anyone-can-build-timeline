@@ -388,4 +388,36 @@ const WORDS = {
   post_place: {
     en: "\u00b7 {place}",
   },
+  // pictures: refusals
+  picture_wrong_kind: {
+    en: "The picture must be a PNG, JPEG, GIF or WebP file.",
+  },
+  picture_too_big: {
+    en: "The picture must be {limit} MB or smaller.",
+  },
+  picture_unreadable: {
+    en: "The picture could not be read.",
+  },
+  picture_missing: {
+    en: "Please choose a picture for this description.",
+  },
+  picture_alt_empty: {
+    en: "Please describe the picture in a few words.",
+  },
+  picture_alt_too_long: {
+    en: "The description must be {limit} characters or fewer.",
+  },
+  picture_alt_hidden: {
+    en: "The description must not have hidden characters or line breaks.",
+  },
+  // pictures: the words of the page
+  picture_label: {
+    en: "Picture (optional): PNG, JPEG, GIF or WebP, up to {size} MB",
+  },
+  picture_alt_label: {
+    en: "Describe the picture for people who cannot see it",
+  },
+  picture_hint: {
+    en: "A JPEG photo is drawn again before it is sent, so the place where it was taken is not shared.",
+  },
 };

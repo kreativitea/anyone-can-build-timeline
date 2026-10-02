@@ -9,6 +9,7 @@ PageAndServerAgreeTest reads app.js and checks the page and the server agree.
 """
 
 import ast
+import base64
 import html.parser
 import http.client
 import http.cookiejar
@@ -95,6 +96,30 @@ WORD_ENTRY = re.compile(
 
 # A {name} inside a sentence: a value filled in later.
 VALUE_NAME = re.compile(r"\{(\w+)\}")
+
+
+# pictures: tiny pictures for the tests, written as bytes, so no test needs a
+# real photo. Only the first bytes matter to the server; the PNG and the GIF
+# are whole 1 x 1 pictures.
+PNG = bytes.fromhex("89504e470d0a1a0a0000000d4948445200000001000000010806000000"
+                    "1f15c4890000000d4944415478da63f8ffff3f0005fe02fea7d6a5c000"
+                    "00000049454e44ae426082")
+GIF = (b"GIF89a\x01\x00\x01\x00\x80\x00\x00\x00\x00\x00\xff\xff\xff!\xf9\x04"
+       b"\x01\x00\x00\x00\x00,\x00\x00\x00\x00\x01\x00\x01\x00\x00\x02\x02D\x01\x00;")
+JPEG = b"\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00\xff\xd9"
+WEBP = b"RIFF\x1a\x00\x00\x00WEBPVP8L\x0d\x00\x00\x00/\x00\x00\x00\x10\x07\x10\x11\x11\x88"
+# Files that are not pictures. A WAV sound starts with RIFF, like a WebP.
+NOT_PICTURES = {
+    "text named cat.png": b"This is only text, in a file named cat.png.",
+    "svg": b'<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>',
+    "html": b"<!DOCTYPE html><html><script>alert(1)</script></html>",
+    "wav": b"RIFF$\x00\x00\x00WAVEfmt \x10\x00\x00\x00\x01\x00\x01\x00",
+}
+
+
+def as_base64(data):
+    """Bytes written as base64 text, as the page sends a picture."""
+    return base64.b64encode(data).decode("ascii")
 
 
 def read_words():
@@ -1506,7 +1531,9 @@ class ModelTests(unittest.TestCase):
         folder = tempfile.TemporaryDirectory()
         self.addCleanup(folder.cleanup)
         self.db_path = os.path.join(folder.name, "old.db")
-        with mock.patch.object(server, "upgrade_to_place", lambda connection: None):
+        # Every later upgrade is held back too (pictures), so the file stops before place.
+        with mock.patch.object(server, "upgrade_to_place", lambda connection: None), \
+                mock.patch.object(server, "upgrade_to_pictures", lambda connection: None):
             server.create_tables(self.db_path)
         old_version = self.rows("PRAGMA user_version")[0][0]
         self.assertLess(old_version, server.LATEST_VERSION)
@@ -1757,6 +1784,183 @@ class ModelTests(unittest.TestCase):
         self.assertEqual(server.problem_to_json(problem),
                          {"error": "The post must be 280 characters or fewer.",
                           "code": "text_too_long", "values": {"limit": 280}})
+
+    # -- pictures --
+
+    def picture_post(self, user_id, data=PNG, alt="a small square", text="look"):
+        return server.save_post(self.db_path, user_id, text, picture=as_base64(data),
+                                picture_alt=alt)
+
+    def picture_counts(self):
+        return (self.rows("SELECT COUNT(*) FROM posts")[0][0],
+                self.rows("SELECT COUNT(*) FROM pictures")[0][0])
+
+    def test_each_kind_of_picture_is_found_from_its_first_bytes(self):
+        for data, kind in ((PNG, "png"), (JPEG, "jpeg"), (GIF, "gif"), (WEBP, "webp")):
+            with self.subTest(kind=kind):
+                self.assertEqual(server.picture_kind(data), kind)
+                self.assertEqual(server.check_picture(as_base64(data)), (kind, data))
+        self.assertEqual(set(server.PICTURE_TYPES), {"png", "jpeg", "gif", "webp"})
+
+    def test_a_file_that_is_not_a_picture_is_refused(self):
+        for name, data in NOT_PICTURES.items():
+            with self.subTest(file=name):
+                self.assertIsNone(server.picture_kind(data))
+                with self.assertRaises(server.RuleBroken) as caught:
+                    server.check_picture(as_base64(data))
+                self.assertIn("PNG, JPEG, GIF or WebP", str(caught.exception))
+                self.assertEqual(caught.exception.code, "picture_wrong_kind")
+
+    def test_a_picture_at_the_size_limit_is_kept_and_one_byte_more_is_refused(self):
+        aiko = self.person("aiko")
+        biggest = PNG + bytes(server.MAX_PICTURE_BYTES - len(PNG))
+        post = self.picture_post(aiko, biggest)
+        self.assertEqual(server.picture_for(self.db_path, post["id"])["bytes"], biggest)
+        with self.assertRaises(server.RuleBroken) as caught:
+            self.picture_post(aiko, biggest + b"\x00")
+        self.assertIn("2 MB", str(caught.exception))
+        self.assertEqual((caught.exception.code, caught.exception.values),
+                         ("picture_too_big", {"limit": 2}))
+
+    def test_bad_base64_a_data_start_and_a_tiny_file_are_refused(self):
+        for picture in ("not base64 at all!", "data:image/png;base64," + as_base64(PNG),
+                        as_base64(PNG) + "\n", "", 12345, ["a"], as_base64(b"\xff\xd8\xff")):
+            with self.subTest(picture=str(picture)[:30]):
+                with self.assertRaises(server.RuleBroken) as caught:
+                    server.check_picture(picture)
+                self.assertEqual(str(caught.exception), "The picture could not be read.")
+
+    def test_the_rules_for_the_description(self):
+        aiko = self.person("aiko")
+        for alt in ("", "   ", None, 7, "a" * (server.MAX_ALT_TEXT + 1), "two\nlines",
+                    "turned \u202earound"):
+            with self.subTest(alt=alt):
+                with self.assertRaises(server.RuleBroken):
+                    self.picture_post(aiko, alt=alt)
+        post = self.picture_post(aiko, alt="  " + "a" * server.MAX_ALT_TEXT + "  ")
+        self.assertEqual(server.post_to_json(post)["picture"]["alt"], "a" * server.MAX_ALT_TEXT)
+
+    def test_a_description_without_a_picture_is_refused(self):
+        aiko = self.person("aiko")
+        with self.assertRaises(server.RuleBroken) as caught:
+            server.save_post(self.db_path, aiko, "hello", picture_alt="a cat")
+        self.assertEqual(str(caught.exception), "Please choose a picture for this description.")
+
+    def test_no_picture_only_posts(self):
+        aiko = self.person("aiko")
+        with self.assertRaises(server.RuleBroken):
+            self.picture_post(aiko, text="   ")
+
+    def test_a_broken_rule_saves_nothing_and_uses_no_allowance(self):
+        aiko = self.person("aiko")
+        for data, alt in ((NOT_PICTURES["svg"], "a picture"), (PNG, ""), (GIF, "x" * 201)):
+            with self.assertRaises(server.RuleBroken):
+                self.picture_post(aiko, data, alt)
+        self.assertEqual(self.picture_counts(), (0, 0))
+        self.assertEqual(self.rows("SELECT COUNT(*) FROM attempts"), [(0,)])
+
+    def test_the_bytes_read_back_are_the_bytes_sent(self):
+        aiko = self.person("aiko")
+        for data, kind in ((PNG, "png"), (JPEG, "jpeg"), (GIF, "gif"), (WEBP, "webp")):
+            with self.subTest(kind=kind):
+                post = self.picture_post(aiko, data)
+                picture = server.picture_for(self.db_path, post["id"])
+                self.assertEqual((picture["kind"], picture["bytes"]), (kind, data))
+                self.assertEqual(server.post_to_json(post)["picture"],
+                                 {"url": "/pictures/" + str(post["id"]), "alt": "a small square"})
+
+    def test_a_post_with_a_picture_counts_as_one_post(self):
+        use_fake_clock(self)
+        aiko = self.person("aiko")
+        self.picture_post(aiko)
+        self.assertEqual(self.rows("SELECT action, key FROM attempts"), [("post", str(aiko))])
+
+    def test_a_post_without_a_picture_has_none_and_no_query_reads_the_bytes(self):
+        aiko = self.person("aiko")
+        plain = self.post_by(aiko)
+        self.picture_post(aiko)
+        rows = server.posts_after(self.db_path, 0)
+        self.assertEqual([server.post_to_json(row)["picture"] is None for row in rows],
+                         [True, False])
+        for row in rows:
+            self.assertNotIn("bytes", row.keys())
+        self.assertIsNone(server.picture_for(self.db_path, plain))
+        self.assertIsNone(server.picture_for(self.db_path, 999))
+
+    def test_the_database_itself_refuses_a_bad_picture(self):
+        aiko = self.person("aiko")
+        post = self.picture_post(aiko)["id"]
+        plain = self.post_by(aiko)
+        bad = [
+            ("a second picture", post, "png", "a", PNG),
+            ("svg", plain, "svg", "a", PNG),
+            ("too many bytes", plain, "png", "a", PNG + bytes(server.MAX_PICTURE_BYTES)),
+            ("too few bytes", plain, "png", "a", PNG[:11]),
+            ("text, not bytes", plain, "png", "a", "x" * 100),
+            ("no description", plain, "png", "", PNG),
+            ("no such post", 999, "png", "a", PNG),
+        ]
+        for what, post_id, kind, alt, data in bad:
+            with self.subTest(what=what):
+                connection = server.connect(self.db_path)
+                with self.assertRaises(sqlite3.IntegrityError):
+                    connection.execute("INSERT INTO pictures (post_id, kind, alt_text, bytes) "
+                                       "VALUES (?, ?, ?, ?)", (post_id, kind, alt, data))
+                connection.close()
+
+    def test_the_numbers_in_the_table_are_the_model_s(self):
+        sql = self.rows("SELECT sql FROM sqlite_master WHERE name = 'pictures'")[0][0]
+        self.assertEqual(re.search(r"length\(bytes\) BETWEEN (\d+) AND (\d+)", sql).groups(),
+                         (str(server.MIN_PICTURE_BYTES), str(server.MAX_PICTURE_BYTES)))
+        self.assertIn(f"length(alt_text) BETWEEN 1 AND {server.MAX_ALT_TEXT}", sql)
+        self.assertEqual(server.MAX_PICTURE_MB * 1024 * 1024, server.MAX_PICTURE_BYTES)
+        for kind in server.PICTURE_TYPES:
+            self.assertIn(f"'{kind}'", sql)
+
+    def test_deleting_a_post_deletes_its_picture(self):
+        aiko = self.person("aiko")
+        post = self.picture_post(aiko)["id"]
+        connection = server.connect(self.db_path)
+        connection.execute("DELETE FROM posts WHERE id = ?", (post,))
+        connection.commit()
+        connection.close()
+        self.assertEqual(self.picture_counts(), (0, 0))
+
+    def test_a_post_the_viewer_may_not_see_has_no_picture(self):
+        aiko, ben = self.person("aiko"), self.person("ben")
+        post = self.picture_post(aiko)["id"]
+        # As block will: Ben may not see Aiko's posts. visible_to is the one
+        # place that decides, so the picture must follow it too.
+        hide_aiko_from_ben = lambda viewer: ("posts.author_id != ? OR ? IS NULL",
+                                             [aiko if viewer == ben else 0, viewer])
+        with mock.patch.object(server, "visible_to", hide_aiko_from_ben):
+            self.assertIsNone(server.picture_for(self.db_path, post, ben))
+            self.assertEqual(server.picture_for(self.db_path, post, aiko)["bytes"], PNG)
+            self.assertEqual(server.picture_for(self.db_path, post, None)["bytes"], PNG)
+
+    def test_the_pictures_upgrade_keeps_every_row(self):
+        # A version-6 database (before pictures) with rows in every table.
+        aiko = self.sign_up("aiko")
+        ben = self.person("ben")
+        post_id = self.post_by(aiko)
+        server.add_like(self.db_path, ben, post_id)
+        connection = sqlite3.connect(self.db_path)
+        connection.executescript("DROP TABLE pictures; PRAGMA user_version = 6;")
+        connection.close()
+        tables = ("users", "posts", "likes", "sessions", "attempts", "bookmarks")
+        before = {table: self.rows("SELECT * FROM " + table + " ORDER BY 1, 2")
+                  for table in tables}
+        server.create_tables(self.db_path)
+        after = {table: self.rows("SELECT * FROM " + table + " ORDER BY 1, 2")
+                 for table in tables}
+        self.assertEqual(after, before)
+        self.assertEqual(self.rows("PRAGMA user_version"), [(server.LATEST_VERSION,)])
+        self.assertEqual(self.rows("PRAGMA foreign_key_check"), [])
+        self.assertEqual(self.rows("SELECT * FROM pictures"), [])
+        self.assertIsNone(server.post_to_json(server.posts_after(self.db_path, 0)[0])["picture"])
+        self.picture_post(aiko)
+        server.create_tables(self.db_path)   # twice is harmless
+        self.assertEqual(self.picture_counts(), (2, 1))
 
 
 class RealServerTest(unittest.TestCase):
@@ -2031,7 +2235,8 @@ class RealServerTest(unittest.TestCase):
         self.assertEqual([post["text"] for post in answer["posts"]], ["my #cat is asleep"])
         self.assertEqual(set(answer["posts"][0]), set(server.post_to_json(
             {key: None for key in ("id", "author", "display_name", "text", "posted_at",
-                                   "old_clock_time", "like_count", "place")})))
+                                   "old_clock_time", "like_count", "place",
+                                   "picture_alt")})))
 
     def test_a_search_with_no_words_gets_400_and_a_reason(self):
         for path in ("/search", "/search?q=", "/search?q=%20%20",
@@ -2213,6 +2418,92 @@ class RealServerTest(unittest.TestCase):
                 self.assertIn(answer["code"], server.PROBLEMS)
                 self.assertEqual(answer["error"],
                                  server.PROBLEMS[answer["code"]].format(**answer["values"]))
+
+    # -- pictures --
+
+    def raw_get(self, path):
+        """GET a path exactly as written (no tidying of ".."). Return code, headers, body."""
+        connection = http.client.HTTPConnection("127.0.0.1", self.server.server_address[1],
+                                                timeout=5)
+        connection.request("GET", path)
+        answer = connection.getresponse()
+        result = answer.status, answer.headers, answer.read()
+        connection.close()
+        return result
+
+    def post_picture(self, data, alt="a small square"):
+        with self.send("/posts", {"text": "look", "picture": as_base64(data),
+                                  "picture_alt": alt}) as answer:
+            self.assertEqual(answer.status, 201)
+            return json.loads(answer.read())
+
+    def test_a_png_is_posted_and_sent_back_only_as_a_picture(self):
+        self.sign_up().close()
+        post = self.post_picture(PNG)
+        self.assertEqual(post["picture"], {"url": "/pictures/1", "alt": "a small square"})
+        code, headers, body = self.raw_get(post["picture"]["url"])
+        self.assertEqual((code, body), (200, PNG))
+        self.assertEqual(headers["Content-Type"], "image/png")
+        self.assertEqual(headers["X-Content-Type-Options"], "nosniff")
+        self.assertEqual(headers["Content-Security-Policy"], "default-src 'none'; sandbox")
+        self.assertIn("max-age=", headers["Cache-Control"])
+        self.assertEqual(self.get("/posts?after=0")[0]["picture"], post["picture"])
+
+    def test_the_type_comes_from_the_bytes(self):
+        # A GIF the person named photo.jpg: the name never reaches the server,
+        # and the type is found from the bytes.
+        self.sign_up().close()
+        post = self.post_picture(GIF)
+        code, headers, body = self.raw_get(post["picture"]["url"])
+        self.assertEqual((code, headers["Content-Type"], body), (200, "image/gif", GIF))
+
+    def test_odd_picture_addresses_get_404_and_never_a_file(self):
+        self.sign_up().close()
+        self.post_picture(PNG)
+        with self.send("/posts", {"text": "no picture"}) as answer:
+            plain = json.loads(answer.read())
+        self.assertIsNone(plain["picture"])
+        for path in ("/pictures/999", "/pictures/2", "/pictures/abc", "/pictures/1.png",
+                     "/pictures/", "/pictures/-1", "/pictures/1/", "/pictures/../timeline.db",
+                     "/pictures/%2e%2e%2fserver.py", "/pictures/..%2Fserver.py",
+                     "/pictures/" + "9" * 19):
+            with self.subTest(path=path):
+                code, headers, body = self.raw_get(path)
+                self.assertEqual(code, 404)
+                self.assertEqual(headers["Content-Type"], "application/json; charset=utf-8")
+                self.assertNotIn(b"SQLite", body)
+                self.assertNotIn(b"import", body)
+
+    def test_a_picture_post_needs_a_login_and_json(self):
+        data = {"text": "look", "picture": as_base64(PNG), "picture_alt": "a square"}
+        self.assertEqual(self.refused("/posts", data)[0], 401)
+        self.sign_up().close()
+        self.assertEqual(self.refused("/posts", data, content_type="text/plain")[0], 400)
+        self.assertEqual(self.get("/posts?after=0"), [])
+
+    def test_a_picture_that_is_not_one_gets_400(self):
+        self.sign_up().close()
+        code, reason = self.refused("/posts", {"text": "look", "picture_alt": "a cat",
+                                               "picture": as_base64(NOT_PICTURES["html"])})
+        self.assertEqual((code, reason), (400, "The picture must be a PNG, JPEG, GIF or WebP file."))
+        self.assertEqual(self.get("/posts?after=0"), [])
+
+    def test_a_search_result_carries_its_picture_and_hides_it_as_the_timeline_does(self):
+        self.sign_up().close()
+        self.post_picture(PNG, alt="my #cat asleep")
+        found = self.get("/search?q=look")["posts"]
+        self.assertEqual(found[0]["picture"], {"url": "/pictures/1", "alt": "my #cat asleep"})
+        # A post this viewer may not see is in no search, and its picture is 404.
+        with mock.patch.object(server, "visible_to", lambda viewer: ("0 = 1", [])):
+            self.assertEqual(self.get("/search?q=look")["posts"], [])
+            self.assertEqual(self.raw_get("/pictures/1")[0], 404)
+
+    def test_the_biggest_picture_fits_in_one_request(self):
+        self.sign_up().close()
+        biggest = PNG + bytes(server.MAX_PICTURE_BYTES - len(PNG))
+        post = self.post_picture(biggest)
+        code, headers, body = self.raw_get(post["picture"]["url"])
+        self.assertEqual((code, len(body)), (200, server.MAX_PICTURE_BYTES))
 
 
 class JourneyTest(unittest.TestCase):
@@ -2773,6 +3064,57 @@ class JourneyTest(unittest.TestCase):
 
         # 5. The place is kept with the post, not with the person: users has no place.
         self.assertNotIn("place", [row[1] for row in self.rows("PRAGMA table_info(users)")])
+
+
+    def test_the_whole_journey_of_a_picture(self):
+        aiko = self.open_window()
+        ben = self.open_window()
+        self.page_signs_up(aiko, "aiko", "Aiko Tanaka")
+        self.page_signs_up(ben, "ben", "Ben Ito")
+
+        # 1. Aiko posts with a picture (sendPost: text, picture, picture_alt).
+        status, post = self.page_sends(aiko, "/posts", {
+            "text": "My desk today", "picture": as_base64(PNG),
+            "picture_alt": "A small square, all one colour"}, "POST")
+        self.assertEqual(status, 201)
+        # The store: one pictures row for that post, with the kind found from the bytes.
+        self.assertEqual(self.rows("SELECT post_id, kind, length(bytes), alt_text FROM pictures"),
+                         [(post["id"], "png", len(PNG), "A small square, all one colour")])
+
+        # 2. Ben's window gets the post with the picture's address, and loads it.
+        seen = self.page_asks_for_new_posts(ben)
+        self.assertEqual(seen[0]["picture"], {"url": "/pictures/" + str(post["id"]),
+                                              "alt": "A small square, all one colour"})
+        with ben.open(self.base + seen[0]["picture"]["url"]) as answer:
+            self.assertEqual(answer.headers["Content-Type"], "image/png")
+            self.assertEqual(answer.read(), PNG)
+
+        # 3. Ben posts a text file renamed .png: 400, and nothing new is stored.
+        code, reason = self.is_refused(self.page_sends, ben, "/posts", {
+            "text": "my cat", "picture": as_base64(NOT_PICTURES["text named cat.png"]),
+            "picture_alt": "my cat"}, "POST")
+        self.assertEqual((code, reason), (400, "The picture must be a PNG, JPEG, GIF or WebP file."))
+        self.assertEqual(self.rows("SELECT (SELECT COUNT(*) FROM posts), "
+                                   "(SELECT COUNT(*) FROM pictures)"), [(1, 1)])
+
+        # 4. If Ben may not see Aiko's posts (as block or report will decide in
+        #    visible_to), he cannot load her picture either. Aiko still can.
+        url = self.base + post["picture"]["url"]
+        hide_aiko = lambda viewer: ("posts.author_id = 2", []) if viewer == 2 else ("1 = 1", [])
+        with mock.patch.object(server, "visible_to", hide_aiko):
+            code, reason = self.is_refused(ben.open, url)
+            self.assertEqual(code, 404)
+            with aiko.open(url) as answer:
+                self.assertEqual(answer.read(), PNG)
+
+        # 5. The post's row is deleted (as edit-delete will): its picture goes
+        #    with it, and the address answers 404.
+        connection = server.connect(self.db_path)
+        connection.execute("DELETE FROM posts WHERE id = ?", (post["id"],))
+        connection.commit()
+        connection.close()
+        self.assertEqual(self.rows("SELECT COUNT(*) FROM pictures"), [(0,)])
+        self.assertEqual(self.is_refused(ben.open, url)[0], 404)
 
 
 class BookmarkJourneyTest(unittest.TestCase):
@@ -3482,7 +3824,7 @@ class PageAndServerAgreeTest(unittest.TestCase):
 
     def test_every_word_in_index_html_names_its_key(self):
         words = self.words()
-        page_values = {"min": server.MIN_PASSWORD}
+        page_values = {"min": server.MIN_PASSWORD, "size": server.MAX_PICTURE_MB}
         not_words = {"aiko"}   # an example account name, the same in every language
 
         class Words(html.parser.HTMLParser):
@@ -3576,6 +3918,62 @@ class PageAndServerAgreeTest(unittest.TestCase):
         for key, entry in self.words().items():
             with self.subTest(key=key):
                 self.assertEqual(set(entry), {"en"})
+
+    # -- pictures --
+
+    def test_the_page_has_the_model_s_picture_rules(self):
+        self.assertIn(f"const MAX_PICTURE_BYTES = {server.MAX_PICTURE_BYTES};", self.page_code)
+        self.assertIn(f"const MAX_PICTURE_MB = {server.MAX_PICTURE_MB};", self.page_code)
+        self.assertIn(f"const MAX_ALT_TEXT = {server.MAX_ALT_TEXT};", self.page_code)
+        types = ", ".join('"' + kind + '"' for kind in server.PICTURE_TYPES.values())
+        self.assertIn(f"const PICTURE_TYPES = [{types}];", self.page_code)
+        with open(os.path.join(HERE, "index.html"), encoding="utf-8") as page_file:
+            page = page_file.read()
+        self.assertIn('accept="' + ",".join(server.PICTURE_TYPES.values()) + '"', page)
+        # The page checks with the model's own codes, and the label's {size} is the limit.
+        keys = re.findall(r'key: "(\w+)"', functions_in(self.page_code)["pictureProblem"])
+        self.assertEqual(len(keys), 6)
+        for key in keys:
+            self.assertIn(key, server.PROBLEMS)
+        self.assertIn("size: MAX_PICTURE_MB", self.page_code)
+
+    def test_the_page_sends_the_picture_with_the_post(self):
+        send = functions_in(self.page_code)["sendPost"]   # an async function
+        self.assertIn("JSON.stringify({ text: text, place: place, picture: picture, "
+                      "picture_alt: pictureAlt })",
+                      send)
+        self.assertIn("pictureProblem(", send)
+        self.assertIn("clearPictureBoxes()", send)
+        self.assertIn('data.get("picture")', self.server_code)
+        self.assertIn('data.get("picture_alt")', self.server_code)
+
+    def test_a_jpeg_is_drawn_again_and_a_gif_is_not(self):
+        functions = functions_in(self.page_code)
+        self.assertIn('if (file.type !== "image/jpeg") {', functions["preparePicture"])
+        redraw = functions["redrawJpeg"]
+        self.assertIn('imageOrientation: "from-image"', redraw)
+        self.assertIn('canvas.toBlob(done, "image/jpeg"', redraw)
+        self.assertIn("blob.size <= MAX_PICTURE_BYTES", redraw)
+
+    def test_the_page_shows_the_picture_the_server_names(self):
+        self.assertIn("slots.body.append(pictureElement(post.picture));", self.page_code)
+        made = self.function_body("pictureElement")
+        self.assertIn("image.src = picture.url;", made)
+        self.assertIn("image.alt = picture.alt;", made)
+        # The page never builds a picture's address itself.
+        self.assertNotIn('"/pictures', self.page_code)
+        self.assertNotIn("picture", self.function_body("makePostItem"))
+        self.assertNotIn("picture", self.function_body("showPost"))
+        # Search results are built by makePostItem too, so they get the picture part.
+        self.assertIn("makePostItem(post)", functions_in(self.page_code)["showResults"])
+        self.assertIn("makePostItem(post)", functions_in(self.page_code)["showBookmarkList"])
+
+    def test_the_server_answers_a_picture_address(self):
+        self.assertEqual(self.answer_code("GET", "/pictures/1"), 404)   # known route, no post yet
+
+    def test_the_request_limit_fits_the_biggest_picture_exactly(self):
+        as_text = (server.MAX_PICTURE_BYTES + 2) // 3 * 4
+        self.assertGreaterEqual(server.MAX_REQUEST_BYTES, as_text + 64 * 1024)
 
 
 class ColoursTest(unittest.TestCase):

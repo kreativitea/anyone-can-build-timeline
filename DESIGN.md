@@ -21,7 +21,8 @@ the other has a backend that every window shares.
 - No HTTPS. The server listens on `127.0.0.1` only, so the password never leaves the computer.
 - No login in `page-only/`. It is a demo of a page with no server, so it has nothing to log in to.
 - No follows, replies, deleting or editing. They are left for whoever extends the app.
-- No pictures. A picture needs a second kind of storage for its files, which is a design of its own.
+- Pictures came later: see "Pictures" below. A table of bytes in the database turned out to be
+  enough; no second kind of storage was needed.
 - No realtime connection (no WebSockets). The page asks for new posts once a second.
 - Nothing reachable from another machine. The server listens on `127.0.0.1` only.
 - No libraries, no install, no build step.
@@ -296,7 +297,10 @@ and that the page has the model's limits and patterns.
 | The author's name is copied into every post, so a rename would break old posts. | design | accept | One fact, one place, even without accounts. | A `users` table; each post points at its author by `author_id`. |
 | The server could translate, using the browser's `Accept-Language`. | japanese | reject | Then the words live in two places, and the server must know the reader. | The server sends a code; the page holds the words. |
 | `words.js` could be inside `app.js`. | japanese | reject | One file that only grows by adding is easier to merge, and easier for a translator. | `words.js` is its own file, loaded before `app.js`. |
-| Pictures would make posts more realistic. | product | reject | A picture needs file storage as well as the database. | Nothing; section 2 says so. |
+| Pictures would make posts more realistic. | product | reject | A picture needs file storage as well as the database. | Nothing; section 2 says so. (Later built: see "Pictures".) |
+| A picture should be sent as a multipart form, the usual way to send a file. | design | reject | Python's `cgi` module, which read those, is gone since 3.13, and splitting the parts by hand is fiddly. | The picture is base64 inside the JSON of `POST /posts`: one request, and the JSON-only protection still covers it. |
+| Pictures should be files in a folder, as big sites keep them. | design | reject | A file and its row could disagree, and a file path could be tricked into reading another file. | A `pictures` table with the bytes in a BLOB; `GET /pictures/<id>` reads only digits. |
+| A phone photo can carry the place it was taken (EXIF GPS). | security | accept | Sharing a place should be a choice, never an accident. | The page draws a JPEG again on a canvas before sending, which leaves EXIF behind. GIFs are sent as they are. |
 | The page should check every rule, not only an empty post. | design | reject | The server is where the rules count, and a long post shows the server refusing it. | Nothing. |
 | A `like_count` column on `posts` would save counting the rows every time. | design | reject | Two copies of one fact can drift apart, and this timeline is far too small for that to cost anything. | Nothing; the count is `COUNT(*)`. |
 | `GET /posts?after=<id>` never carries a like, so other windows would never see one. | design | accept | It would have looked like a bug in the polling, when it is really what `after` means. | A request of its own, `GET /likes`, asked for in the same once-a-second tick. |
@@ -524,6 +528,31 @@ A signed-in person presses ☆ on a post to save it (★), and presses again to 
   belongs to one post: on `users` it would change every old post, and keep where each person is.
 - **Remembered only in this browser.** The page keeps the last place in `localStorage`
   (`timeline-place`), never on the server, and forgets it on Log out, for shared computers.
+
+## Pictures
+
+- **One picture on a post**, a PNG, JPEG, GIF or WebP file, up to 2 MB, with a description (alt
+  text, 1 to 200 characters) for people who cannot see it. A post still needs its words.
+- **It travels as base64 inside the JSON of `POST /posts`.** Base64 writes any bytes as plain
+  letters. It is about a third bigger, which fits in the 4 MB request limit. Not a multipart form:
+  Python's `cgi` module, which read those, is gone, and the JSON-only rule already stops another
+  website from posting as you.
+- **The kind comes from the first bytes** (the "magic number"), never from the file's name or the
+  type the browser says. WebP needs `RIFF` and then `WEBP`, because a WAV sound also starts with
+  `RIFF`. SVG is never accepted: it is text, and it can hold a script.
+- **It is kept in the database**, in a `pictures` table: the post's id (its primary key, so one
+  picture per post), the kind, the description and the bytes (a BLOB). `ON DELETE CASCADE` removes
+  it with its post. CHECKs keep the kind to four words and the size to 2 MB, even if the code is
+  got around. Database version 7 adds the table.
+- **`GET /pictures/<post id>`** reads only digits from the address, and no part of the request is
+  ever a file name. It sends the type the server found, `X-Content-Type-Options: nosniff` (the
+  browser must not guess another type), and `Content-Security-Policy: default-src 'none'; sandbox`
+  (nothing in it can run, even opened on its own). It looks for the post through `select_posts`,
+  so a post this viewer may not see has no picture either: 404.
+- **The page draws a JPEG again before sending it**, on a `<canvas>`. Only the picture is drawn,
+  so the hidden EXIF notes, and any GPS place in them, are left behind. The browser turns the photo
+  the right way up as it draws. A big photo is made smaller until it fits 2 MB. A GIF is never drawn
+  again, so it still moves. The server checks every picture anyway.
 
 ## 8. Build or borrow
 
