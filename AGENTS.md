@@ -189,6 +189,22 @@ Anyone may search. Searches are never printed in the terminal.
   `postParts`, and shown with `showView("search")`. Their hearts are disabled: liking is done on the
   timeline. The results list uses `clickOnTimeline` too, so other buttons in a post work there.
 
+## Links, tags and names
+
+A web link, a `#tag` and an `@name` in a post become clickable. A tag or name click calls
+`searchFor`; a link opens in a new tab, `rel="noopener noreferrer"`.
+
+- **A post's text always goes through `showPostText(element, text)`.** It is called by the text
+  part (`textPart`). Any new place that draws a post's text (an edited post, a quoted post) must
+  call it too: never `textContent = post.text` alone, and never `innerHTML`, `outerHTML`,
+  `insertAdjacentHTML` or `document.write` (a test checks `app.js` has none of them).
+- **Twins.** `postTextPieces` and `trimLinkEnd` in `app.js` are twins of `post_text_pieces` and
+  `trim_link_end` in the model, line for line, built from the same patterns `LINK`, `LINK_START`,
+  `LINK_END`, `NAME` and search's `TAG` (a test checks the text is the same). A change to one is a
+  change to both, and to the `EXAMPLES` table in `PostTextTests`.
+- Only `http:` and `https:` become links: the pattern says so, and `linkElement` checks
+  `new URL(...).protocol` a second time.
+
 ## Timeline flow (pages of posts)
 
 - The page asks for the newest `PAGE_SIZE` (20) posts with `GET /posts?before=0`, then each older

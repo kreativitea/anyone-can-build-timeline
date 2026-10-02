@@ -26,6 +26,18 @@ const MAX_ALT_TEXT = 200;
 const PICTURE_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp"];
 // The account name rule, the same as ACCOUNT_NAME in server.py.
 const ACCOUNT_NAME = /^[A-Za-z0-9_]+$/;
+// links-and-tags: the same patterns as LINK, LINK_START, LINK_END and NAME in
+// server.py, as exactly the same text (a test checks this; a regular
+// expression here writes \/ for /). A #tag uses TAG, in the search part below.
+// A web link: http:// or https://, then only the characters a web address may hold.
+const LINK = /https?:\/\/[A-Za-z0-9\-._~:/?#\[\]@!$&'()*+,;=%]+/;
+// After its end is cut, a link must still have a letter or digit after ://.
+const LINK_START = /^https?:\/\/[A-Za-z0-9]/;
+// Cut from the end of a link, one at a time. ) and ] are cut by trimLinkEnd.
+const LINK_END = ".,:;!?*'";
+// An @name: @ and then 1 to MAX_AUTHOR of the ACCOUNT_NAME characters, not
+// just after a letter, digit or _ (so aiko@mail.com is not a name).
+const NAME = /(?<![A-Za-z0-9_])@[A-Za-z0-9_]{1,40}(?![A-Za-z0-9_])/;
 // The characters a display name may not hold, the same as HIDDEN_CHARACTERS in server.py.
 const HIDDEN_CHARACTERS = /[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u2028-\u202e\u2066-\u2069]/;
 
@@ -470,9 +482,149 @@ whenLanguageChanges(function redrawTimes() {
 addPostPart(function textPart(post, slots) {
   const text = document.createElement("p");
   text.className = "post-text";
-  text.textContent = post.text;
+  showPostText(text, post.text);
   slots.body.append(text);
 });
+
+// ---- links-and-tags: web links, #tags and @names you can click ----
+//
+// A post's text is cut into pieces: plain words, links, tags and names. Each
+// piece is built by hand: words as a text node, the others as an <a> element.
+// Never innerHTML: a post is always shown as words, so it cannot run code.
+// postTextPieces and trimLinkEnd are twins of post_text_pieces and
+// trim_link_end in server.py, line for line; the tests check those with a
+// table of examples (EXAMPLES in test_server.py). Change both, or neither.
+
+// Put a post's text into an element, with its links, tags and names clickable.
+function showPostText(element, text) {
+  for (const piece of postTextPieces(text)) {
+    element.append(pieceElement(piece));
+  }
+}
+
+// The link without the punctuation at its end. A ) is cut only if the link
+// has more ) than (, so .../wiki/Kyoto_(city) keeps its ). The same for ].
+function trimLinkEnd(link) {
+  while (link !== "") {
+    const last = link[link.length - 1];
+    if (LINK_END.includes(last)) {
+      link = link.slice(0, -1);
+    } else if (last === ")" && countOf(link, ")") > countOf(link, "(")) {
+      link = link.slice(0, -1);
+    } else if (last === "]" && countOf(link, "]") > countOf(link, "[")) {
+      link = link.slice(0, -1);
+    } else {
+      break;
+    }
+  }
+  return link;
+}
+
+// How many times one character is in a text.
+function countOf(text, character) {
+  return text.split(character).length - 1;
+}
+
+// A post's text, cut into pieces: [{kind, text}, ...]. kind is "text",
+// "link", "tag" or "name". Joined together, the pieces are the whole text.
+function postTextPieces(text) {
+  const pieces = [];
+  function add(kind, words) {
+    if (words === "") {
+      return;
+    }
+    if (kind === "text" && pieces.length > 0 && pieces[pieces.length - 1].kind === "text") {
+      pieces[pieces.length - 1].text += words;
+    } else {
+      pieces.push({ kind: kind, text: words });
+    }
+  }
+  // All three patterns, tried together, left to right. A new RegExp each
+  // time, because a "g" pattern remembers where it stopped.
+  const piece = new RegExp(
+    "(?:" + LINK.source + ")|(?:" + TAG.source + ")|(?:" + NAME.source + ")", "g");
+  let at = 0;
+  for (const found of text.matchAll(piece)) {
+    let words = found[0];
+    let tail = "";
+    let kind;
+    if (words.startsWith("#")) {
+      kind = "tag";
+    } else if (words.startsWith("@")) {
+      kind = "name";
+    } else {
+      kind = "link";
+      const link = trimLinkEnd(words);
+      tail = words.slice(link.length);
+      words = link;
+      if (!LINK_START.test(words)) {
+        kind = "text";   // nothing left that can be a link: it stays words
+      }
+    }
+    add("text", text.slice(at, found.index));
+    add(kind, words);
+    add("text", tail);
+    at = found.index + found[0].length;
+  }
+  add("text", text.slice(at));
+  return pieces;
+}
+
+// One piece, as something to put on the page.
+function pieceElement(piece) {
+  if (piece.kind === "link") {
+    return linkElement(piece.text);
+  }
+  if (piece.kind === "tag") {
+    return searchElement(piece.text, "post-tag");
+  }
+  if (piece.kind === "name") {
+    return searchElement(piece.text, "post-name");
+  }
+  return document.createTextNode(piece.text);
+}
+
+// A web link that opens in a new tab. Only http: and https: ever become a
+// link: the pattern already says so, and new URL checks it a second time.
+// noopener: the other website cannot control this tab. noreferrer: it does
+// not learn the address it came from. The words are the address as typed.
+function linkElement(address) {
+  let url;
+  try {
+    url = new URL(address);
+  } catch (error) {
+    return document.createTextNode(address);
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    return document.createTextNode(address);
+  }
+  const link = document.createElement("a");
+  link.className = "post-link";
+  link.href = url.href;
+  link.target = "_blank";
+  link.rel = "noopener noreferrer";
+  link.textContent = address;
+  return link;
+}
+
+// A #tag or an @name: a link to a search for it, /?q=%23kyoto. A plain click
+// searches in this tab without loading the page again (searchFor). A click
+// with Ctrl, Cmd, Shift or the middle button is left to the browser, so the
+// search opens in a new tab, where searchFromAddress runs it.
+function searchElement(words, className) {
+  const link = document.createElement("a");
+  link.className = className;
+  link.href = searchAddress(words);
+  link.textContent = words;
+  link.addEventListener("click", function (event) {
+    if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) {
+      return;
+    }
+    event.preventDefault();
+    searchFor(words);
+  });
+  return link;
+}
 
 // The heart, and how many people have pressed it. The button says what it
 // does (data-action="like") and carries its own post id, so one click handler
@@ -1091,7 +1243,7 @@ function toggleExpanded(postId, button) {
 }
 
 // The part, added after the text part, so the text is already filled in.
-// links-and-tags may build the text differently; it still has class post-text.
+// links-and-tags builds the text with showPostText; it still has class post-text.
 addPostPart(function expandablePart(post, slots) {
   const textElement = slots.body.querySelector(".post-text");
   if (textElement !== null) {
@@ -3166,7 +3318,7 @@ function buildVersions(list, versions) {
   for (const version of versions) {
     const words = document.createElement("p");
     words.className = "version-text";
-    words.textContent = version.text;   // what a person wrote: never a key
+    showPostText(words, version.text);   // what a person wrote: never a key
     const row = document.createElement("li");
     row.append(words, timeElement(version.replaced_at, null));
     list.append(row);

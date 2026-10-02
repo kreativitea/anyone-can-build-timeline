@@ -171,6 +171,9 @@ signing up, posting, liking and unliking, with the database file opened and read
     the other three (the "⋯" menu, then **Report**): it disappears from every other open window,
     and from a window that is not logged in. The author still sees it, faded, with a note. Take one
     report back, and it comes back for everyone.
+12. **Try a link, a tag and a name.** Post `see https://example.com. #kyoto @aiko`. The link
+    opens in a new tab, without the `.`; `#kyoto` and `@aiko` open a search. Post
+    `javascript:alert(1)` too: it stays plain words.
 
 Each feature changes a different set of parts.
 

@@ -459,8 +459,8 @@ with a **Back to the timeline** button.
 - **Every list goes through `select_posts`**, so `visible_to` applies to search too. Searching only
   reads: it never adds a user or changes a row.
 - **The address says the search:** `/?q=%23cat`. The browser's Back and Forward work, and a link to
-  a search opens with the search done. `links-and-tags` will make each `#tag` a link to that address,
-  and call `searchFor("#cat")` on a click.
+  a search opens with the search done. `links-and-tags` makes each `#tag` a link to that address,
+  and calls `searchFor("#cat")` on a click.
 - **Results do not update by themselves**, and their hearts are greyed out ("Open the timeline to
   like"): a heart is kept up to date only on the live timeline. Searches are not printed in the
   server's terminal, because what a person searched for is their own business.
@@ -698,6 +698,40 @@ Where each rule is kept:
 | Only after posting before it | — (the page may not have every older post) | `check_report_rules` (`report_too_early`) | — |
 | A reason is 200 characters at most | `MAX_REASON` | `check_reason` | `CHECK (length(reason) <= 200)` |
 | Three reports hide a post, except from its author | — | `not_hidden_sql` in `visible_to` | counted, never stored |
+
+## Links, tags and names
+
+A web address (`https://example.com`), a `#tag` and an `@name` in a post are shown in colour, and
+you can click them. A link opens the website in a new tab. A `#tag` or an `@name` opens a search
+for it in this tab (`searchFor`), with the address `/?q=%23kyoto`, so it also works in a new tab.
+Writing a post does not change: you type plain words.
+
+- **Never `innerHTML`.** The page cuts the text into pieces and builds each one by hand: plain
+  words as a text node, a link, tag or name as an `<a>` made with `createElement`, its words put in
+  with `textContent`. So a post that says `<script>` shows those characters and runs nothing.
+- **Only `http:` and `https:`.** `LINK` starts with the letters `http://` or `https://`, so
+  `javascript:…`, `data:…` and `file:…` can never even match: they stay words. As a second guard,
+  the page reads the address with `new URL` and makes a link only if its `protocol` is exactly
+  `"http:"` or `"https:"`. Only lowercase `http` counts.
+- **The three patterns.** `LINK`: `https?://` and then only the characters a web address may hold
+  (RFC 3986), so a link stops at a space, `<`, `>`, `"` and any Japanese letter. `TAG` is search's
+  one tag rule (see Search), not a second one. `NAME`: `@` and then 1 to 40 of `[A-Za-z0-9_]`, the
+  account-name rule, not just after a letter, digit or `_`, so `aiko@mail.com` is not a name. They
+  are tried together, left to right; the one that starts first wins, so `https://x.com/#top` is one
+  link.
+- **Punctuation at the end is not part of a link.** `LINK_END` (`. , : ; ! ? * '`) is cut from the
+  end, again and again. A `)` is cut only if the link has more `)` than `(`, so
+  `(see https://x.com)` cuts it and `…/wiki/Kyoto_(city)` keeps it; `]` works the same way. After
+  that, a letter or digit must follow `://` (`LINK_START`), so `https://.` stays words.
+- **Safe new tabs.** Every link has `target="_blank"` and `rel="noopener noreferrer"`: the other
+  website cannot control this tab, nor learn the address it came from.
+- **The whole address is shown,** exactly as typed, so a person sees where a link goes before
+  they click. A long one wraps (`overflow-wrap: anywhere`).
+- **The server does not change.** It sends text as JSON, never as HTML, so nothing is refused and
+  nothing new is sent. The model has a twin of the page's function, `post_text_pieces`, used only
+  by the tests, which check it against a table of examples (`EXAMPLES`).
+- **An `@name` search finds the text `@aiko`** (posts that mention aiko), not the posts aiko wrote.
+  The page does not ask whether the account exists.
 
 ## 8. Build or borrow
 

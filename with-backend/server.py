@@ -709,6 +709,29 @@ SESSION_DAYS = 30
 # contain a space and is always one word after the @.
 ACCOUNT_NAME = re.compile(r"[A-Za-z0-9_]+")
 
+# links-and-tags: the patterns that find a web link and an @name in a post's
+# text, so the page can make them clickable. app.js has exactly the same text
+# (a test checks this). A #tag uses TAG, above: there is only one tag rule.
+#
+# A web link: http:// or https://, then only the characters a web address may
+# hold (RFC 3986). So javascript:, data: and file: can never be a link, and a
+# link stops at a space, at < > " and at any non-English letter.
+LINK = re.compile(r"https?://[A-Za-z0-9\-._~:/?#\[\]@!$&'()*+,;=%]+")
+# After its end is cut, a link must still have a letter or digit after ://.
+LINK_START = re.compile(r"^https?://[A-Za-z0-9]")
+# These are cut from the end of a link, one at a time: "see https://x.com."
+# links https://x.com. A ) or ] is cut only when the link has more of it than
+# of ( or [ (see trim_link_end).
+LINK_END = ".,:;!?*'"
+# An @name: @ and then 1 to MAX_AUTHOR (40) of the ACCOUNT_NAME characters. It
+# must not come just after a letter, digit or _ (so aiko@mail.com is not a
+# name), and a longer run is not a name at all. (?<! ) means "not just after",
+# (?! ) means "not just before".
+NAME = re.compile(r"(?<![A-Za-z0-9_])@[A-Za-z0-9_]{1,40}(?![A-Za-z0-9_])")
+# All three, tried together, left to right. Where they overlap, the one that
+# starts first wins, so https://x.com/#top is one link, not a link and a tag.
+PIECE = re.compile("(?:" + LINK.pattern + ")|(?:" + TAG.pattern + ")|(?:" + NAME.pattern + ")")
+
 # Characters a display name may not hold: control characters, such as a new
 # line, the two other line breaks (\u2028 and \u2029), and the invisible marks
 # that turn text around. They are written as \u codes, because on screen they
@@ -2902,6 +2925,73 @@ def check_not_blocked_by_author(connection, post_id, user_id, what="like"):
                              (post_id, user_id)).fetchone()
     if row is not None:
         raise RuleBroken(BLOCKED_CODES[what])
+
+
+# ---- links-and-tags ----
+#
+# The page cuts a post's text into words, links, tags and names, in
+# postTextPieces in app.js. These are its twin, line for line, so the tests
+# (which run only Python) can check the behaviour with a table of examples.
+# They touch no database and change nothing that is saved or sent.
+
+def trim_link_end(link):
+    """The link without the punctuation at its end.
+
+    "https://x.com." becomes "https://x.com". A ) is cut only if the link has
+    more ) than (, so https://en.wikipedia.org/wiki/Kyoto_(city) keeps its ).
+    The same for ] and [.
+    """
+    while link != "":
+        last = link[-1]
+        if last in LINK_END:
+            link = link[:-1]
+        elif last == ")" and link.count(")") > link.count("("):
+            link = link[:-1]
+        elif last == "]" and link.count("]") > link.count("["):
+            link = link[:-1]
+        else:
+            break
+    return link
+
+
+def post_text_pieces(text):
+    """A post's text, cut into pieces: [{"kind": ..., "text": ...}, ...].
+
+    kind is "text", "link", "tag" or "name". Joined together, the pieces' text
+    is always the whole post again, letter for letter. Two text pieces are
+    never next to each other: they are joined into one.
+    """
+    pieces = []
+
+    def add(kind, words):
+        if words == "":
+            return
+        if kind == "text" and pieces and pieces[-1]["kind"] == "text":
+            pieces[-1]["text"] += words
+        else:
+            pieces.append({"kind": kind, "text": words})
+
+    at = 0
+    for found in PIECE.finditer(text):
+        words = found.group(0)
+        tail = ""
+        if words.startswith("#"):
+            kind = "tag"
+        elif words.startswith("@"):
+            kind = "name"
+        else:
+            kind = "link"
+            link = trim_link_end(words)
+            tail = words[len(link):]
+            words = link
+            if not LINK_START.search(words):
+                kind = "text"   # nothing left that can be a link: it stays words
+        add("text", text[at:found.start()])
+        add(kind, words)
+        add("text", tail)
+        at = found.end()
+    add("text", text[at:])
+    return pieces
 
 
 # ============================================================================

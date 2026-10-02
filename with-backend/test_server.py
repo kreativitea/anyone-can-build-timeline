@@ -4555,6 +4555,37 @@ class JourneyTest(unittest.TestCase):
                          [(ids["ben"],), (ids["chika"],), (ids["dai"],)])
 
 
+    # -- links-and-tags --
+
+    def test_a_post_with_links_tags_and_code_is_kept_letter_for_letter(self):
+        # The server neither changes nor refuses such a post: drawing it safely
+        # (links as <a>, everything else as words) is the page's job.
+        use_fake_clock(self)
+        aiko = self.open_window()
+        self.page_signs_up(aiko, "aiko", "Aiko")
+        text = "see https://x.com. #kyoto @ben javascript:alert(1) <b>hi</b>"
+        status, saved = self.page_posts(aiko, text)
+        self.assertEqual(status, 201)
+        self.assertEqual(saved["text"], text)
+
+        # 1. GET /posts gives it back exactly, with the same keys as any post.
+        answer = self.page_asks_for_new_posts(aiko)
+        post = [post for post in answer if post["id"] == saved["id"]][0]
+        self.assertEqual(post["text"], text)
+        self.assertEqual(set(post), set(saved))
+        self.assertNotIn("pieces", post)
+
+        # 2. The database file holds exactly the same text.
+        connection = server.connect(self.db_path)
+        stored = connection.execute("SELECT text FROM posts WHERE id = ?",
+                                    (saved["id"],)).fetchone()[0]
+        connection.close()
+        self.assertEqual(stored, text)
+
+        # 3. A search for the #tag finds it, as a click on the tag would.
+        status, found = self.page_searches(aiko, "#Kyoto")
+        self.assertEqual([post["id"] for post in found["posts"]], [saved["id"]])
+
 class BookmarkJourneyTest(unittest.TestCase):
     """The journey of a private bookmark, through all three levels at once.
 
@@ -4657,6 +4688,7 @@ class BookmarkJourneyTest(unittest.TestCase):
         self.assertEqual(len(self.rows("SELECT * FROM users")), 2)
         self.assertEqual(self.rows("SELECT post_id, user_id FROM likes"),
                          [(bens_post["id"], ben_id)])
+
 
 
 class PageAndServerAgreeTest(unittest.TestCase):
@@ -5643,6 +5675,77 @@ class PageAndServerAgreeTest(unittest.TestCase):
         self.assertIn("shown", server.CHANGE_KINDS)
 
 
+    # -- links-and-tags --
+
+    def page_pattern(self, name):
+        r"""The text of `const NAME = /.../;` in app.js, with \/ turned into /."""
+        found = re.search(r"^const " + name + r" = /(.*)/;$", self.page_code, re.MULTILINE)
+        self.assertIsNotNone(found, name + " is not in app.js")
+        return found.group(1).replace("\\/", "/")
+
+    def test_the_page_has_the_same_link_and_name_patterns(self):
+        for name in ("LINK", "LINK_START", "NAME", "TAG"):
+            with self.subTest(pattern=name):
+                self.assertEqual(self.page_pattern(name), getattr(server, name).pattern)
+        self.assertIn(f'const LINK_END = "{server.LINK_END}";', self.page_code)
+
+    def test_a_name_follows_the_account_name_rule(self):
+        self.assertEqual(server.ACCOUNT_NAME.pattern, "[A-Za-z0-9_]+")
+        self.assertIn("@[A-Za-z0-9_]{1," + str(server.MAX_AUTHOR) + "}", server.NAME.pattern)
+
+    def test_the_page_never_reads_text_as_html(self):
+        for unsafe in (".innerHTML", ".outerHTML", "insertAdjacentHTML", "document.write"):
+            with self.subTest(unsafe=unsafe):
+                self.assertNotIn(unsafe, self.page_code)
+
+    def test_a_link_is_only_http_or_https_and_opens_safely(self):
+        link = functions_in(self.page_code)["linkElement"]
+        self.assertIn('url.protocol !== "http:" && url.protocol !== "https:"', link)
+        self.assertIn('link.rel = "noopener noreferrer";', link)
+        self.assertIn('link.target = "_blank";', link)
+        self.assertIn("link.textContent = address;", link)
+        # No other protocol is named where a post's text is drawn. (Elsewhere,
+        # pictures may use data: for its own preview, which is not a post's text.)
+        functions = functions_in(self.page_code)
+        drawing = "".join(functions[name] for name in (
+            "showPostText", "postTextPieces", "trimLinkEnd", "pieceElement", "linkElement",
+            "searchElement"))
+        for protocol in ("javascript:", "data:", "file:", "vbscript:"):
+            self.assertNotIn(protocol, drawing)
+
+    def test_the_text_part_uses_show_post_text(self):
+        part = re.search(r"^addPostPart\(function textPart\(.*?^\}\);", self.page_code,
+                         re.MULTILINE | re.DOTALL).group(0)
+        self.assertIn("showPostText(text, post.text);", part)
+        self.assertIn('text.className = "post-text";', part)
+        self.assertNotIn("text.textContent = post.text", self.page_code)
+        functions = functions_in(self.page_code)
+        self.assertIn("pieceElement(piece)", functions["showPostText"])
+        self.assertIn("document.createTextNode(piece.text)", functions["pieceElement"])
+        # An earlier version of an edited post (edit-delete) is drawn the same way.
+        self.assertIn("showPostText(words, version.text);", functions["buildVersions"])
+
+    def test_a_tag_or_name_opens_a_search_by_the_contract(self):
+        search = functions_in(self.page_code)["searchElement"]
+        self.assertIn("link.href = searchAddress(words);", search)
+        self.assertIn("event.preventDefault();", search)
+        self.assertIn("searchFor(words);", search)
+        self.assertIn("link.textContent = words;", search)
+
+    def test_the_page_twin_is_built_the_same_way(self):
+        functions = functions_in(self.page_code)
+        pieces = functions["postTextPieces"]
+        self.assertIn('"(?:" + LINK.source + ")|(?:" + TAG.source + ")|(?:" + NAME.source + ")", "g"',
+                      pieces)
+        self.assertIn("trimLinkEnd(words)", pieces)
+        self.assertIn("LINK_START.test(words)", pieces)
+        self.assertEqual(server.PIECE.pattern, "(?:" + server.LINK.pattern + ")|(?:"
+                         + server.TAG.pattern + ")|(?:" + server.NAME.pattern + ")")
+        trim = functions["trimLinkEnd"]
+        self.assertIn("LINK_END.includes(last)", trim)
+        self.assertIn('countOf(link, ")") > countOf(link, "(")', trim)
+        self.assertIn('countOf(link, "]") > countOf(link, "[")', trim)
+
 class ColoursTest(unittest.TestCase):
     """The Colours switch (Auto, Light, Dark) and the colours themselves.
 
@@ -5823,6 +5926,91 @@ class PageDraftTest(unittest.TestCase):
         self.assertIn("found.v === 2", read)
         self.assertIn("return { text: kept, replyTo: null };", read)
         self.assertIn("catch", read)
+
+
+class PostTextTests(unittest.TestCase):
+    """links-and-tags: how a post's text is cut into words, links, tags and names.
+
+    The page does the cutting (postTextPieces in app.js), and its JavaScript
+    never runs here. So the behaviour is written down once, as EXAMPLES, and
+    checked on the model's twin, post_text_pieces. PageAndServerAgreeTest
+    checks the page's twin is built from the very same patterns.
+    """
+
+    A40 = "@" + "a" * 40
+    A41 = "@" + "a" * 41
+
+    # (text, the pieces it is cut into, as (kind, text))
+    EXAMPLES = [
+        ("hello", [("text", "hello")]),
+        ("see https://x.com.", [("text", "see "), ("link", "https://x.com"), ("text", ".")]),
+        ("(see https://x.com)", [("text", "(see "), ("link", "https://x.com"), ("text", ")")]),
+        ("https://en.wikipedia.org/wiki/Kyoto_(city)",
+         [("link", "https://en.wikipedia.org/wiki/Kyoto_(city)")]),
+        ("[https://x.com/a]", [("text", "["), ("link", "https://x.com/a"), ("text", "]")]),
+        ("https://x.com/?a=1&b=2!!", [("link", "https://x.com/?a=1&b=2"), ("text", "!!")]),
+        ("http://x.com", [("link", "http://x.com")]),
+        ("javascript:alert(1)", [("text", "javascript:alert(1)")]),
+        ("data:text/html,<b>hi</b>", [("text", "data:text/html,<b>hi</b>")]),
+        ("ftp://x.com", [("text", "ftp://x.com")]),
+        ("HTTPS://x.com", [("text", "HTTPS://x.com")]),
+        ("https://.", [("text", "https://.")]),
+        ("https://x.com/を見て", [("link", "https://x.com/"), ("text", "を見て")]),
+        ('"https://x.com"', [("text", '"'), ("link", "https://x.com"), ("text", '"')]),
+        ("<script>alert(1)</script>", [("text", "<script>alert(1)</script>")]),
+        ("#kyoto is nice", [("tag", "#kyoto"), ("text", " is nice")]),
+        ("#東京は雨。", [("tag", "#東京は雨"), ("text", "。")]),
+        ("#kyoto!", [("tag", "#kyoto"), ("text", "!")]),
+        # TAG is search's one tag rule: digits alone make a tag, and a tag may
+        # come straight after a letter.
+        ("we are #1", [("text", "we are "), ("tag", "#1")]),
+        ("page#top", [("text", "page"), ("tag", "#top")]),
+        ("a lone # here", [("text", "a lone # here")]),
+        ("https://x.com/#top", [("link", "https://x.com/#top")]),
+        ("hi @aiko's cat", [("text", "hi "), ("name", "@aiko"), ("text", "'s cat")]),
+        ("(@ben_2)", [("text", "("), ("name", "@ben_2"), ("text", ")")]),
+        ("mail aiko@mail.com", [("text", "mail aiko@mail.com")]),
+        (A40, [("name", A40)]),
+        (A41, [("text", A41)]),
+        ("@aiko #kyoto https://x.com",
+         [("name", "@aiko"), ("text", " "), ("tag", "#kyoto"), ("text", " "),
+          ("link", "https://x.com")]),
+        ("", []),
+    ]
+
+    def test_every_example(self):
+        for text, expected in self.EXAMPLES:
+            with self.subTest(text=text):
+                pieces = server.post_text_pieces(text)
+                self.assertEqual([(piece["kind"], piece["text"]) for piece in pieces], expected)
+
+    def test_the_pieces_join_to_the_whole_post(self):
+        for text, expected in self.EXAMPLES:
+            with self.subTest(text=text):
+                pieces = server.post_text_pieces(text)
+                self.assertEqual("".join(piece["text"] for piece in pieces), text)
+
+    def test_two_text_pieces_are_never_side_by_side(self):
+        for text, expected in self.EXAMPLES:
+            kinds = [piece["kind"] for piece in server.post_text_pieces(text)]
+            for first, second in zip(kinds, kinds[1:]):
+                self.assertFalse(first == second == "text", text)
+
+    def test_the_tags_shown_are_the_tags_search_finds(self):
+        # Outside a link, a tag on the screen is exactly a tag search finds.
+        for text, expected in self.EXAMPLES:
+            if any(kind == "link" for kind, words in expected):
+                continue
+            with self.subTest(text=text):
+                shown = {words[1:].lower() for kind, words in expected if kind == "tag"}
+                self.assertEqual(shown, server.tags_in(text))
+
+    def test_trim_link_end(self):
+        self.assertEqual(server.trim_link_end("https://x.com.,;:!?*'"), "https://x.com")
+        self.assertEqual(server.trim_link_end("https://x.com/a_(b))"), "https://x.com/a_(b)")
+        self.assertEqual(server.trim_link_end("https://x.com/[1]"), "https://x.com/[1]")
+        self.assertEqual(server.trim_link_end("https://x.com/1]."), "https://x.com/1")
+        self.assertEqual(server.trim_link_end(""), "")
 
 
 if __name__ == "__main__":

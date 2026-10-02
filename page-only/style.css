@@ -697,3 +697,36 @@ time.post-time {
   color: var(--warning);
   font-size: 18px;
 }
+
+/* links-and-tags: a web link, a #tag and an @name in a post's text. They use
+   the --author colour, which both themes already have. A web link is also
+   underlined, so it never depends on colour alone. Only with-backend/ has
+   them, but both copies of this file stay the same. */
+.post-link,
+.post-tag,
+.post-name {
+  color: var(--author);
+}
+
+.post-link {
+  text-decoration: underline;
+}
+
+.post-tag,
+.post-name {
+  text-decoration: none;
+  font-weight: 600;
+}
+
+.post-tag:hover,
+.post-name:hover {
+  text-decoration: underline;
+}
+
+.post-link:focus-visible,
+.post-tag:focus-visible,
+.post-name:focus-visible {
+  outline: 3px solid var(--author);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
