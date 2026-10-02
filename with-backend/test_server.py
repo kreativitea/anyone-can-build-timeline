@@ -79,12 +79,12 @@ class ModelTests(unittest.TestCase):
     def test_too_long_text_is_refused(self):
         aiko = self.sign_up("aiko")
         with self.assertRaises(server.RuleBroken):
-            server.save_post(self.db_path, aiko, "a" * 281)
+            server.save_post(self.db_path, aiko, "a" * (server.MAX_TEXT + 1))
 
-    def test_text_of_exactly_280_is_allowed(self):
+    def test_text_of_exactly_the_limit_is_allowed(self):
         aiko = self.sign_up("aiko")
-        row = server.save_post(self.db_path, aiko, "a" * 280)
-        self.assertEqual(len(row["text"]), 280)
+        row = server.save_post(self.db_path, aiko, "a" * server.MAX_TEXT)
+        self.assertEqual(len(row["text"]), server.MAX_TEXT)
 
     def test_saved_post_comes_back_with_id_and_time(self):
         aiko = self.sign_up("aiko", "Aiko Tanaka")
@@ -628,6 +628,19 @@ class ModelTests(unittest.TestCase):
         self.assertEqual(self.rows("PRAGMA user_version"), [(2,)])
         self.assertEqual(server.save_post(self.db_path, aiko, "second")["id"], 2)
 
+    # -- long-posts --
+
+    def test_the_limit_is_560(self):
+        # The one place a test says the number on purpose, so a wrong edit is noticed.
+        self.assertEqual(server.MAX_TEXT, 560)
+
+    def test_an_emoji_counts_as_one_character(self):
+        aiko = self.sign_up("aiko")
+        row = server.save_post(self.db_path, aiko, "\U0001F600" * server.MAX_TEXT)
+        self.assertEqual(len(row["text"]), server.MAX_TEXT)
+        with self.assertRaises(server.RuleBroken):
+            server.save_post(self.db_path, aiko, "\U0001F600" * (server.MAX_TEXT + 1))
+
 
 class RealServerTest(unittest.TestCase):
 
@@ -774,6 +787,16 @@ class RealServerTest(unittest.TestCase):
                 caught.exception.close()
                 self.assertEqual((caught.exception.code, reason),
                                  (404, f"There is nothing to {method} at /nowhere."))
+
+    # -- long-posts --
+
+    def test_a_post_at_the_limit_gets_201_and_one_more_gets_400(self):
+        self.sign_up().close()
+        with self.send("/posts", {"text": "a" * server.MAX_TEXT}) as answer:
+            self.assertEqual(answer.status, 201)
+        code, reason = self.refused("/posts", {"text": "a" * (server.MAX_TEXT + 1)})
+        self.assertEqual(code, 400)
+        self.assertIn("560", reason)
 
 
 class JourneyTest(unittest.TestCase):
@@ -1116,6 +1139,62 @@ class PageAndServerAgreeTest(unittest.TestCase):
         as_text = (picture + 2) // 3 * 4
         self.assertGreaterEqual(server.MAX_REQUEST_BYTES, as_text + 1024)
 
+    # -- long-posts --
+    # MAX_TEXT itself is already compared in test_the_page_has_the_same_limits_as_the_model.
+
+    def function_body(self, name):
+        """The text of one top-level function in app.js."""
+        return re.search(r"\nfunction " + name + r"\([^)]*\) \{\n(.*?)\n\}\n",
+                         self.page_code, re.DOTALL).group(1)
+
+    def test_the_page_counts_characters_as_python_does(self):
+        self.assertIn("return [...text].length;", self.function_body("characterCount"))
+        self.assertIn("characterCount(text) > MAX_TEXT", self.function_body("textProblem"))
+        self.assertIn("characterCount(textBox.value)", self.function_body("updateCount"))
+        self.assertNotIn("text.length", self.function_body("textProblem"))
+        self.assertNotIn("value.length", self.function_body("updateCount"))
+
+    def test_the_html_does_not_write_the_limit(self):
+        with open(os.path.join(HERE, "index.html"), encoding="utf-8") as page_file:
+            page = page_file.read()
+        self.assertNotIn("/ 280", page)
+        self.assertNotIn("/ 560", page)
+        # updateCount(); with no indent is a start-up line, outside every function.
+        self.assertIn("\nupdateCount();\n", self.page_code)
+
+    def test_a_long_post_is_folded_by_the_css_the_page_uses(self):
+        for folder in (HERE, os.path.join(HERE, "..", "page-only")):
+            with open(os.path.join(folder, "style.css"), encoding="utf-8") as css_file:
+                css = css_file.read()
+            with self.subTest(folder=folder):
+                rule = re.search(r"\.post-text\.collapsed \{(.*?)\}", css, re.DOTALL).group(1)
+                self.assertIn("-webkit-line-clamp: 6;", rule)
+                self.assertIn("display: -webkit-box;", rule)
+                self.assertIn("overflow: hidden;", rule)
+                self.assertIn(".show-more {", css)
+        self.assertIn('classList.add("collapsed")', self.page_code)
+        self.assertIn('classList.toggle("collapsed")', self.page_code)
+        self.assertIn('className = "show-more"', self.page_code)
+
+    def test_the_show_more_button_is_accessible(self):
+        make = self.function_body("makeExpandable")
+        self.assertIn('button.type = "button";', make)
+        self.assertIn('"aria-expanded", "false"', make)
+        self.assertIn('"aria-controls"', make)
+        self.assertIn('"aria-expanded"', self.function_body("toggleExpanded"))
+        # The text is only clipped by the CSS, never hidden from a screen reader.
+        self.assertNotIn("textElement.hidden", self.page_code)
+        self.assertNotIn("aria-hidden", self.page_code)
+
+    def test_show_more_goes_through_the_shared_pieces(self):
+        # A part, not a change to showPost; an entry in ACTIONS, not a change to clickOnTimeline.
+        self.assertIn("makeExpandable(", self.page_code.split("function expandablePart")[1])
+        self.assertIn('dataset.action = "expand"', self.function_body("makeExpandable"))
+        self.assertIn("ACTIONS.expand = toggleExpanded;", self.page_code)
+        self.assertNotIn("expand", self.function_body("clickOnTimeline"))
+        self.assertNotIn("makeExpandable", self.function_body("showPost"))
+        # The height is measured again whenever the text changes size on the page.
+        self.assertIn("textSizeWatcher.observe(textElement);", self.function_body("makeExpandable"))
 
 
 class ColoursTest(unittest.TestCase):

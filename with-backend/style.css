@@ -329,3 +329,33 @@ button {
   outline: 3px solid var(--author);
   outline-offset: 2px;
 }
+
+/* long-posts: a post taller than 6 lines shows only its first 6, with a
+   Show more button under it. Line clamp cuts between two lines, never through
+   one, and ends with "…". It needs display: -webkit-box and
+   -webkit-box-orient: vertical. The text is only clipped, never hidden, so a
+   screen reader still reads all of it. */
+.post-text.collapsed {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 6;
+  line-clamp: 6;
+  overflow: hidden;
+}
+
+/* A quiet text button under the post, the same size as the text. */
+.show-more {
+  display: block;
+  margin-top: 6px;
+  padding: 0;
+  border-radius: 0;
+  background: none;
+  color: var(--author);
+  font-weight: 400;
+  text-decoration: underline;
+}
+
+.show-more:focus-visible {
+  outline: 3px solid var(--author);
+  outline-offset: 2px;
+}

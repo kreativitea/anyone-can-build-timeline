@@ -35,7 +35,7 @@ One screen in `with-backend/`:
   has to type it. The timeline is below, so anyone can read it. Pressing a heart says *Please log in
   to like a post.*
 - **Signed in.** *Signed in as Aiko Tanaka @aiko · Log out*, then a *What is happening?* box with a
-  live count (*x / 280*) and a **Post** button, and the timeline below it, newest first (display
+  live count (*x / 560*) and a **Post** button, and the timeline below it, newest first (display
   name, `@`account name, time, text, and a heart with the number of people who pressed it). A heart
   you have pressed is shown in a different colour, and pressing it again takes the like back.
 
@@ -119,7 +119,7 @@ page having to remember.
 unique even if the capitals differ · a display name is at most 50 characters and has no line
 breaks, control characters or marks that turn text around (empty means "use the account name") · a
 password is 8 to 200 characters and is never trimmed · text is not empty after trimming · text is at
-most 280 characters · a like says which post it is for, and that post exists · the same person
+most 560 characters · a like says which post it is for, and that post exists · the same person
 cannot like the same post twice · a like cannot be taken back if it was never there · posting and
 liking need a login. The server checks them even though the page checks them too, because a user
 can change anything that runs on their own device.
@@ -238,7 +238,7 @@ back — and solves it with a flag that allows one press at a time.
    it, the server should refuse and say why, and the page should ask again rather than guess.
 7. When an older `timeline.db` is opened, every user, post and like should still be there, and the
    first sign-up with an old name should claim it, once.
-8. **And when it goes wrong:** when a post is empty, or longer than 280 characters, the server
+8. **And when it goes wrong:** when a post is empty, or longer than 560 characters, the server
    should refuse it and say which rule it broke. An account name with a space or a symbol, a name
    already taken (in any capitals), a display name over 50 characters or with a hidden character, or
    a password under 8 characters should be refused the same way. A request that is not JSON should
@@ -314,6 +314,32 @@ changes.**
   seen that id would never show the new one.
 - **Two small controller fixes.** A body over 4 MB gets `413` before it is read, and an unknown
   path gets one sentence: "There is nothing to {method} at {path}."
+
+## Long posts
+
+A post can be up to 560 characters (140, then 280, then 560: each step doubles).
+
+- **The limit is written in two places only:** `MAX_TEXT` in `server.py` and `MAX_TEXT` in
+  `app.js`. A test fails if they differ. The count under the box is written by the page from
+  `MAX_TEXT`, so `index.html` holds no number.
+- **One character is one code point on both sides.** A *code point* is one Unicode number.
+  Python's `len()` counts these. JavaScript's `.length` counts something else (UTF-16 units), so
+  the page uses `characterCount(text)`, which is `[...text].length`. So 😀 is 1 on both sides, and
+  the family emoji 👨‍👩‍👧 is 5 on both sides. The count never says "fine" for a post the server
+  will refuse.
+- **A post taller than 6 lines folds.** It is measured by height on the page, not by counting
+  characters, because each line break starts a new line and a phone fits fewer words on a line.
+  The CSS class `collapsed` uses line clamp, which cuts between two lines and ends with "…".
+  A **Show more** button opens it, and becomes **Show less**. A short post has no button.
+- **How it fits the groundwork.** A post part (`expandablePart`) folds the text after the text
+  part has filled it, and the button has `data-action="expand"`, handled by `ACTIONS.expand`.
+  Neither `showPost` nor `clickOnTimeline` changed. A height can be measured only on the page, and
+  a part runs before the post is placed, so a `ResizeObserver` (the browser calls a function when an
+  element changes size) measures each text when it first appears, when the window is resized, and
+  when a hidden view is shown.
+- **For a screen reader**, the text is only clipped, never hidden, so the whole post is read. The
+  button is a real `<button>` with `aria-expanded` and `aria-controls`.
+- `page-only/` keeps its own limit of 280. Its `style.css` has the new rules only to stay a copy.
 
 ## 8. Build or borrow
 

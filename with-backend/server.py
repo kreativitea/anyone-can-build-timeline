@@ -252,7 +252,7 @@ class TimelineHandler(BaseHTTPRequestHandler):
 #  A new rule goes here, never in the controller or the view.
 # ============================================================================
 
-MAX_TEXT = 280
+MAX_TEXT = 560
 MAX_AUTHOR = 40
 MAX_DISPLAY_NAME = 50
 MIN_PASSWORD = 8

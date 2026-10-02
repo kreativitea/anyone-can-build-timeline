@@ -108,7 +108,7 @@ make test
 ```
 
 This runs the checks in `with-backend/test_server.py`. They test the rules (an empty post and a
-post over 280 characters are refused), accounts (passwords kept only as hashes, one message for a
+post over 560 characters are refused), accounts (passwords kept only as hashes, one message for a
 wrong name or password, logging out, old names claimed once), saving a post, asking only for newer
 posts, likes (counting them, refusing a second one from the same person, and taking one back), full
 trips through the real server, and one whole journey through all three levels at once: two people
@@ -128,6 +128,10 @@ signing up, posting, liking and unliking, with the database file opened and read
 3. **Say what changed and why.** Which parts did your feature change: the page, the controller, the
    model, the view, the database? Why those parts, and not the others?
 4. **Try a draft.** Type half a post, close the tab, and open the page again.
+5. **Try a long post.** Post 560 characters with a few line breaks: only 6 lines show, with
+   **Show more** under them. Press it, then **Show less**. Make the window narrow, and see a
+   shorter post fold too. Press Tab to reach the button with the keyboard. Type an emoji 😀: the
+   count goes up by one, as on the server.
 
 Each feature changes a different set of parts.
 

@@ -12,7 +12,7 @@
 
 // The same rules as the model in server.py, with the same names, so a rule
 // changed on one side is easy to find on the other.
-const MAX_TEXT = 280;
+const MAX_TEXT = 560;
 const MAX_AUTHOR = 40;
 const MAX_DISPLAY_NAME = 50;
 const MIN_PASSWORD = 8;
@@ -22,6 +22,9 @@ const ACCOUNT_NAME = /^[A-Za-z0-9_]+$/;
 // The characters a display name may not hold, the same as HIDDEN_CHARACTERS in server.py.
 const HIDDEN_CHARACTERS = /[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u2028-\u202e\u2066-\u2069]/;
 const CANNOT_REACH = "Cannot reach the server. Trying again every second.";
+// The words on the button under a long post (long-posts).
+const SHOW_MORE = "Show more";
+const SHOW_LESS = "Show less";
 
 const signedOutSection = document.getElementById("signed-out");
 const signedInSection = document.getElementById("signed-in");
@@ -310,15 +313,21 @@ function textProblem(text) {
   if (text === "") {
     return "The post must not be empty.";
   }
-  if (text.length > MAX_TEXT) {
+  if (characterCount(text) > MAX_TEXT) {
     return "The post must be " + MAX_TEXT + " characters or fewer.";
   }
   return "";
 }
 
-// The live count under the box: "x / 280".
+// How many characters, counted the way the server counts them.
+// "😀".length is 2 in JavaScript, but [..."😀"].length is 1, as in Python.
+function characterCount(text) {
+  return [...text].length;
+}
+
+// The live count under the box: "x / MAX_TEXT".
 function updateCount() {
-  const length = textBox.value.length;
+  const length = characterCount(textBox.value);
   countLine.textContent = length + " / " + MAX_TEXT;
   countLine.classList.toggle("too-long", length > MAX_TEXT);
 }
@@ -400,6 +409,87 @@ function hideDraft() {
   textBox.value = "";
   updateCount();
 }
+
+// ---- Long posts: Show more / Show less ----
+//
+// A post taller than 6 lines shows only its first 6 lines (the CSS class
+// "collapsed" does this), with a Show more button under them. It is measured
+// by height on the page, not by counting characters, because a line break
+// starts a new line and a narrow screen fits fewer words on a line.
+//
+// A height can be measured only when the post is on the page. makePostItem
+// builds a post before it is placed, so the text part cannot measure it
+// itself. Instead a ResizeObserver (something the browser offers that calls a
+// function whenever an element's size changes) watches every post's text. It
+// calls checkOverflow when the post first appears on the page, when the
+// window is resized, and when a hidden view is shown again.
+const textSizeWatcher = new ResizeObserver(function (entries) {
+  for (const entry of entries) {
+    checkOverflow(entry.target);
+  }
+});
+
+// Each text gets its own id, so its button can say which text it opens. The
+// same post can be in two lists (for example the timeline and search), so the
+// id is a counter, not the post id.
+let expandableCount = 0;
+
+// Fold this post's text, and put a Show more button right after it. The
+// button stays hidden until checkOverflow sees that the text is too tall.
+function makeExpandable(textElement, postId) {
+  expandableCount = expandableCount + 1;
+  textElement.id = "post-text-" + expandableCount;
+  textElement.classList.add("collapsed");
+
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "show-more";
+  button.dataset.action = "expand";
+  button.dataset.postId = postId;
+  button.setAttribute("aria-controls", textElement.id);
+  button.setAttribute("aria-expanded", "false");
+  button.textContent = SHOW_MORE;
+  button.hidden = true;
+  textElement.after(button);
+
+  textSizeWatcher.observe(textElement);
+  return button;
+}
+
+// While the text is folded, show its button only if the text really goes on
+// past 6 lines (the + 1 allows for rounding). An open post keeps its
+// Show less button until the reader closes it.
+function checkOverflow(textElement) {
+  const button = textElement.nextElementSibling;
+  if (button === null || !button.classList.contains("show-more")) {
+    return;
+  }
+  if (textElement.classList.contains("collapsed")) {
+    button.hidden = !(textElement.scrollHeight > textElement.clientHeight + 1);
+  }
+}
+
+// Show more or Show less was pressed: open or fold the text it controls.
+function toggleExpanded(postId, button) {
+  const textElement = document.getElementById(button.getAttribute("aria-controls"));
+  if (textElement === null) {
+    return;
+  }
+  const folded = textElement.classList.toggle("collapsed");
+  button.setAttribute("aria-expanded", folded ? "false" : "true");
+  button.textContent = folded ? SHOW_MORE : SHOW_LESS;
+}
+
+// The part, added after the text part, so the text is already filled in.
+// links-and-tags may build the text differently; it still has class post-text.
+addPostPart(function expandablePart(post, slots) {
+  const textElement = slots.body.querySelector(".post-text");
+  if (textElement !== null) {
+    makeExpandable(textElement, post.id);
+  }
+});
+
+ACTIONS.expand = toggleExpanded;
 
 // When the page opens, ask the server who is logged in in this window.
 async function askWhoIAm() {
@@ -738,5 +828,6 @@ themeSwitch.value = savedTheme();
 themeSwitch.addEventListener("change", chooseTheme);
 addView("timeline", "Timeline");
 showView("timeline");
+updateCount();
 askWhoIAm();
 keepChecking();
