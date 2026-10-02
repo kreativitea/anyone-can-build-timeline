@@ -290,6 +290,31 @@ and that the page has the model's limits and patterns.
 | Save the draft only after the person stops typing ("debounce"). | design | reject | A draft is a few hundred characters, and saving it takes far less than a millisecond. A timer would lose the last words if the tab closed. | Nothing; it is saved on every change. |
 | Keep drafts on the server, so they follow you to another device. | product | reject | A new table and a new route, for a rare need. | Nothing; a draft stays in this browser. |
 
+## Groundwork
+
+Many planned features change the same few places: how a post is drawn, the click handler, the
+query that lists posts, and the `INSERT` that adds one. Groundwork gives each of those one shared
+shape first, so each feature adds a few lines in its own place. **Nothing a person can see
+changes.**
+
+- **The page builds a post from slots.** `makePostItem` makes four empty slots (`head`, `body`,
+  `foot`, `menu`) and runs each registered part to fill them. The slots take no room on screen, so a
+  post looks exactly as before. Every button says what it does with `data-action`, and one click
+  handler looks it up in `ACTIONS`. Each post has a "⋯" menu, hidden while it is empty. Views
+  (`showView`, `addView`) switch between sections of the page; the switch is hidden while there is
+  one view.
+- **One filter for every list of posts.** `select_posts` is the only place that reads a list of
+  posts, and it always adds `visible_to(viewer)`. Today that allows every post. Later, blocking and
+  reporting each add one condition there, and every list obeys it.
+- **One place that adds a post.** `insert_post`, with extra columns only from a fixed list.
+- **A safe way to change a table.** `rebuild_table` makes a table again from its own `CREATE` text,
+  keeping every row, index and trigger, in one transaction, with the foreign keys checked.
+- **Post ids are never reused.** `posts.id` now has `AUTOINCREMENT` (database version 2). Without
+  it, deleting the newest post would give its id to the next post, and windows that had already
+  seen that id would never show the new one.
+- **Two small controller fixes.** A body over 4 MB gets `413` before it is read, and an unknown
+  path gets one sentence: "There is nothing to {method} at {path}."
+
 ## 8. Build or borrow
 
 - **Built:** the page, the server and the data model.

@@ -8,6 +8,8 @@ database file.
 PageAndServerAgreeTest reads app.js and checks the page and the server agree.
 """
 
+import ast
+import http.client
 import http.cookiejar
 import json
 import os
@@ -407,7 +409,7 @@ class ModelTests(unittest.TestCase):
         self.assertEqual(self.rows("SELECT id, name FROM users ORDER BY id"), users)
         self.assertEqual(self.rows("SELECT * FROM posts ORDER BY id"), posts)
         self.assertEqual(self.rows("SELECT * FROM likes ORDER BY post_id, user_id"), likes)
-        self.assertEqual(self.rows("PRAGMA user_version"), [(1,)])
+        self.assertEqual(self.rows("PRAGMA user_version"), [(2,)])   # accounts, then groundwork
 
     def test_an_old_user_has_their_name_as_display_name_and_no_password(self):
         self.use_an_old_database()
@@ -427,7 +429,7 @@ class ModelTests(unittest.TestCase):
         before = self.rows("SELECT * FROM users ORDER BY id")
         server.create_tables(self.db_path)
         self.assertEqual(self.rows("SELECT * FROM users ORDER BY id"), before)
-        self.assertEqual(self.rows("PRAGMA user_version"), [(1,)])
+        self.assertEqual(self.rows("PRAGMA user_version"), [(2,)])   # accounts, then groundwork
 
     def test_the_first_sign_up_with_an_old_name_claims_it_and_its_posts(self):
         self.use_an_old_database()
@@ -459,6 +461,172 @@ class ModelTests(unittest.TestCase):
         self.assertEqual(self.rows("SELECT name, password_hash FROM users WHERE id = 3"),
                          [("Daniel Radcliffe", None)])
         self.assertEqual(self.rows("SELECT text FROM posts WHERE author_id = 3"), [("third",)])
+
+    # -- groundwork: one filter for every list, one place that adds a post --
+
+    def test_posts_after_with_no_viewer_gives_what_it_gave_before(self):
+        aiko, ben = self.sign_up("aiko"), self.sign_up("ben")
+        for text in ("first", "second", "third"):
+            server.save_post(self.db_path, aiko, text)
+        # The query posts_after ran before groundwork, written out by hand.
+        before = self.rows(server.POSTS_WITH_AUTHORS + " WHERE posts.id > ? ORDER BY posts.id",
+                           (1,))
+        for viewer in (None, aiko, ben):
+            with self.subTest(viewer=viewer):
+                rows = server.posts_after(self.db_path, 1, viewer)
+                self.assertEqual([tuple(row) for row in rows], before)
+        self.assertEqual([tuple(row) for row in server.posts_after(self.db_path, 1)], before)
+
+    def test_visible_to_allows_every_post(self):
+        aiko = self.sign_up("aiko")
+        server.save_post(self.db_path, aiko, "first")
+        server.save_post(self.db_path, aiko, "second")
+        for viewer in (None, aiko):
+            with self.subTest(viewer=viewer):
+                sql, params = server.visible_to(viewer)
+                self.assertEqual(self.rows("SELECT id FROM posts WHERE " + sql, params),
+                                 [(1,), (2,)])
+
+    def test_insert_post_refuses_a_column_that_is_not_on_its_list(self):
+        aiko = self.sign_up("aiko")
+        connection = server.connect(self.db_path)
+        for name in ("author_id", "posted_at", "text) VALUES (1, 'x', 'y'); --"):
+            with self.subTest(column=name):
+                with self.assertRaises(ValueError):
+                    server.insert_post(connection, aiko, "hello", **{name: "x"})
+        connection.commit()
+        connection.close()
+        self.assertEqual(self.rows("SELECT * FROM posts"), [])
+
+    def test_a_post_id_is_never_given_out_twice(self):
+        aiko = self.sign_up("aiko")
+        for text in ("first", "second", "third"):
+            server.save_post(self.db_path, aiko, text)
+        connection = server.connect(self.db_path)
+        connection.execute("DELETE FROM posts WHERE id = 3")
+        connection.commit()
+        connection.close()
+        row = server.save_post(self.db_path, aiko, "fourth")
+        # Without AUTOINCREMENT this would be 3 again, and a window that had
+        # already seen post 3 would never ask for it.
+        self.assertEqual(row["id"], 4)
+
+    def use_an_accounts_database(self):
+        """Build a version-1 database (accounts, before groundwork) by hand, with rows."""
+        self.db_path = os.path.join(self.folder.name, "accounts.db")
+        connection = sqlite3.connect(self.db_path)
+        connection.executescript("""
+            CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE,
+                                display_name TEXT NOT NULL DEFAULT '', password_salt TEXT,
+                                password_hash TEXT, password_rounds INTEGER);
+            CREATE TABLE posts (id INTEGER PRIMARY KEY,
+                                author_id INTEGER NOT NULL REFERENCES users(id),
+                                text TEXT NOT NULL, posted_at TEXT NOT NULL);
+            CREATE TABLE likes (post_id INTEGER NOT NULL REFERENCES posts(id),
+                                user_id INTEGER NOT NULL REFERENCES users(id),
+                                PRIMARY KEY (post_id, user_id));
+            CREATE UNIQUE INDEX users_name_any_case ON users (name COLLATE NOCASE);
+            CREATE TABLE sessions (token_hash TEXT PRIMARY KEY,
+                                   user_id INTEGER NOT NULL REFERENCES users(id),
+                                   expires_at INTEGER NOT NULL);
+            INSERT INTO users VALUES (1, 'aiko', 'Aiko Tanaka', 'aa', 'bb', 600000),
+                                     (2, 'ben', 'Ben Ito', 'cc', 'dd', 600000);
+            INSERT INTO posts VALUES (1, 1, 'first', '09:00'), (2, 2, 'second', '09:01'),
+                                     (5, 1, 'fifth', '09:05');
+            INSERT INTO likes VALUES (1, 2), (5, 1), (5, 2);
+            INSERT INTO sessions VALUES ('hash-of-a-token', 2, 9999999999);
+            PRAGMA user_version = 1;
+        """)
+        connection.close()
+        tables = ("users", "posts", "likes", "sessions")
+        before = {table: self.rows("SELECT * FROM " + table + " ORDER BY 1, 2")
+                  for table in tables}
+        server.create_tables(self.db_path)
+        after = {table: self.rows("SELECT * FROM " + table + " ORDER BY 1, 2")
+                 for table in tables}
+        return before, after
+
+    def test_the_groundwork_upgrade_keeps_every_row(self):
+        before, after = self.use_an_accounts_database()
+        self.assertEqual(after, before)
+        self.assertEqual(self.rows("PRAGMA user_version"), [(2,)])
+        self.assertEqual(self.rows("PRAGMA foreign_key_check"), [])
+        # posts now has AUTOINCREMENT, and SQLite remembers the largest id it gave.
+        posts_sql = self.rows("SELECT sql FROM sqlite_master WHERE name = 'posts'")[0][0]
+        self.assertIn("AUTOINCREMENT", posts_sql)
+        self.assertEqual(self.rows("SELECT seq FROM sqlite_sequence WHERE name = 'posts'"),
+                         [(5,)])
+        # The index from accounts is still there, and likes still points at posts.
+        self.assertEqual(self.rows("SELECT name FROM sqlite_master WHERE type = 'index' "
+                                   "AND name = 'users_name_any_case'"),
+                         [("users_name_any_case",)])
+        with self.assertRaises(sqlite3.IntegrityError):
+            connection = server.connect(self.db_path)
+            try:
+                connection.execute("INSERT INTO likes VALUES (99, 1)")   # no post 99
+            finally:
+                connection.close()
+
+    def test_a_version_0_database_gets_both_upgrades(self):
+        users, posts, likes = self.use_an_old_database()
+        self.assertEqual(self.rows("SELECT * FROM posts ORDER BY id"), posts)
+        self.assertEqual(self.rows("PRAGMA user_version"), [(2,)])
+        self.assertEqual(self.rows("PRAGMA foreign_key_check"), [])
+        self.assertEqual(self.rows("SELECT seq FROM sqlite_sequence WHERE name = 'posts'"),
+                         [(3,)])
+
+    def test_rebuild_table_keeps_an_extra_column_an_index_and_a_trigger(self):
+        aiko = self.sign_up("aiko")
+        server.save_post(self.db_path, aiko, "first")
+        connection = server.connect(self.db_path)
+        # What another plan might have added to posts before this rebuild.
+        connection.executescript("""
+            ALTER TABLE posts ADD COLUMN mood TEXT NOT NULL DEFAULT 'happy';
+            CREATE INDEX posts_by_author ON posts (author_id);
+            CREATE TABLE post_log (post_id INTEGER);
+            CREATE TRIGGER log_each_post AFTER INSERT ON posts
+              BEGIN INSERT INTO post_log VALUES (new.id); END;
+        """)
+        connection.execute("UPDATE posts SET mood = 'sleepy'")
+        connection.commit()
+        # The change for this test: one more column at the end.
+        server.rebuild_table(connection, "posts", lambda sql: sql[:-1] + ", note TEXT)")
+        self.assertEqual(connection.execute("PRAGMA foreign_keys").fetchone()[0], 1)
+        connection.close()
+        self.assertEqual(self.rows("SELECT id, text, mood, note FROM posts"),
+                         [(1, "first", "sleepy", None)])
+        self.assertEqual(self.rows("SELECT type, name FROM sqlite_master "
+                                   "WHERE tbl_name = 'posts' AND type IN ('index', 'trigger') "
+                                   "ORDER BY name"),
+                         [("trigger", "log_each_post"), ("index", "posts_by_author")])
+        server.save_post(self.db_path, aiko, "second")   # the trigger still works
+        self.assertEqual(self.rows("SELECT post_id FROM post_log"), [(2,)])
+        self.assertEqual(self.rows("PRAGMA foreign_key_check"), [])
+
+    def test_rebuild_table_changes_nothing_if_a_row_would_point_at_nothing(self):
+        aiko = self.sign_up("aiko")
+        server.save_post(self.db_path, aiko, "first")
+        connection = sqlite3.connect(self.db_path)   # foreign keys off, to break a rule
+        connection.execute("INSERT INTO likes VALUES (99, 1)")
+        connection.commit()
+        before = self.rows("SELECT sql FROM sqlite_master WHERE name = 'posts'")
+        with self.assertRaises(SystemExit):
+            server.rebuild_table(connection, "posts", lambda sql: sql[:-1] + ", note TEXT)")
+        self.assertEqual(connection.execute("PRAGMA foreign_keys").fetchone()[0], 1)
+        connection.close()
+        self.assertEqual(self.rows("SELECT sql FROM sqlite_master WHERE name = 'posts'"), before)
+        self.assertEqual(self.rows("SELECT id, text FROM posts"), [(1, "first")])
+
+    def test_create_tables_twice_is_harmless_after_groundwork(self):
+        aiko = self.sign_up("aiko")
+        server.save_post(self.db_path, aiko, "first")
+        before = self.rows("SELECT * FROM posts")
+        schema = self.rows("SELECT sql FROM sqlite_master ORDER BY name")
+        server.create_tables(self.db_path)
+        self.assertEqual(self.rows("SELECT * FROM posts"), before)
+        self.assertEqual(self.rows("SELECT sql FROM sqlite_master ORDER BY name"), schema)
+        self.assertEqual(self.rows("PRAGMA user_version"), [(2,)])
+        self.assertEqual(server.save_post(self.db_path, aiko, "second")["id"], 2)
 
 
 class RealServerTest(unittest.TestCase):
@@ -577,6 +745,35 @@ class RealServerTest(unittest.TestCase):
             page = answer.read().decode("utf-8")
         self.assertIn('id="theme"', page)
         self.assertIn('localStorage.getItem("timeline-theme")', page)
+
+    def test_a_body_over_the_size_limit_gets_413_and_is_not_read(self):
+        self.sign_up().close()
+        connection = http.client.HTTPConnection("127.0.0.1", self.server.server_address[1],
+                                                timeout=5)
+        connection.putrequest("POST", "/posts")
+        connection.putheader("Content-Type", "application/json")
+        connection.putheader("Content-Length", str(server.MAX_REQUEST_BYTES + 1))
+        connection.endheaders()
+        # Only the headers were sent, never the body. A server that tried to
+        # read the body would wait for it, and this would time out.
+        answer = connection.getresponse()
+        self.assertEqual(answer.status, 413)
+        self.assertIn("too big", json.loads(answer.read())["error"])
+        connection.close()
+        self.assertEqual(self.get("/posts?after=0"), [])
+
+    def test_an_unknown_route_gets_one_sentence(self):
+        for method in ("GET", "POST", "DELETE"):
+            with self.subTest(method=method):
+                request = urllib.request.Request(self.base + "/nowhere", method=method,
+                                                 data=b"{}" if method != "GET" else None,
+                                                 headers={"Content-Type": "application/json"})
+                with self.assertRaises(urllib.error.HTTPError) as caught:
+                    self.window.open(request)
+                reason = json.loads(caught.exception.read())["error"]
+                caught.exception.close()
+                self.assertEqual((caught.exception.code, reason),
+                                 (404, f"There is nothing to {method} at /nowhere."))
 
 
 class JourneyTest(unittest.TestCase):
@@ -874,6 +1071,50 @@ class PageAndServerAgreeTest(unittest.TestCase):
         with open(os.path.join(HERE, "style.css"), "rb") as one:
             with open(os.path.join(HERE, "..", "page-only", "style.css"), "rb") as other:
                 self.assertEqual(one.read(), other.read())
+
+    # -- groundwork --
+
+    def test_every_data_action_has_an_entry_in_actions(self):
+        used = set(re.findall(r'dataset\.action = "(\w+)"', self.page_code))
+        used.update(re.findall(r'addMenuItem\(\w+, "(\w+)"', self.page_code))
+        handled = set(re.findall(r"ACTIONS\.(\w+) = ", self.page_code))
+        self.assertIn("like", used)
+        self.assertLessEqual(used, handled)
+        self.assertNotIn("likeParts", self.page_code)   # replaced by postParts
+
+    def test_show_post_builds_the_post_with_make_post_item(self):
+        show_post = re.search(r"\nfunction showPost\(post\) \{\n(.*?)\n\}\n",
+                              self.page_code, re.DOTALL).group(1)
+        self.assertIn("makePostItem(post)", show_post)
+        self.assertIn("placePost(", show_post)
+
+    def test_nothing_new_shows_yet(self):
+        # The "⋯" menu starts hidden, and only addMenuItem shows it; nothing calls
+        # addMenuItem yet. The views nav starts hidden, with one view.
+        self.assertIn("menu.hidden = true;", self.page_code)
+        self.assertEqual(re.findall(r"(?<!function )\baddMenuItem\(", self.page_code), [])
+        with open(os.path.join(HERE, "index.html"), encoding="utf-8") as page_file:
+            self.assertIn('<nav id="views" aria-label="Views" hidden>', page_file.read())
+        self.assertEqual(re.findall(r'\baddView\("', self.page_code), ['addView("'])
+
+    def test_posts_with_authors_is_used_only_in_select_posts_and_post_by_id(self):
+        # Read server.py as Python, and count each use of POSTS_WITH_AUTHORS by
+        # the function it is in. A new query that read posts some other way
+        # would get round visible_to.
+        uses = {}
+        for function in ast.walk(ast.parse(self.server_code)):
+            if isinstance(function, ast.FunctionDef):
+                for node in ast.walk(function):
+                    if isinstance(node, ast.Name) and node.id == "POSTS_WITH_AUTHORS":
+                        uses[function.name] = uses.get(function.name, 0) + 1
+        self.assertEqual(uses, {"select_posts": 1, "post_by_id": 1})
+
+    def test_the_request_limit_is_big_enough_for_a_picture(self):
+        # pictures will allow 2 MB. Written as base64 text it is a third bigger,
+        # plus the rest of the JSON. pictures will make this check exact.
+        picture = 2 * 1024 * 1024
+        as_text = (picture + 2) // 3 * 4
+        self.assertGreaterEqual(server.MAX_REQUEST_BYTES, as_text + 1024)
 
 
 

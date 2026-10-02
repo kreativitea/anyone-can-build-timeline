@@ -33,6 +33,10 @@
       </select>
     </div>
 
+    <!-- The buttons that switch between views. Hidden while there is only one
+         view: app.js shows it when a second view is added (addView). -->
+    <nav id="views" aria-label="Views" hidden></nav>
+
     <!-- Shown when nobody is logged in in this window. Both start hidden: the
          page asks the server who is logged in, then shows one of the two. -->
     <section id="signed-out" class="account-forms" hidden>
@@ -84,7 +88,10 @@
 
     <p id="status" class="status" role="status"></p>
 
-    <ol id="timeline" class="timeline" aria-label="Posts, newest first"></ol>
+    <!-- One view: the timeline. Another view would be a section next to it. -->
+    <section data-view="timeline">
+      <ol id="timeline" class="timeline" aria-label="Posts, newest first"></ol>
+    </section>
   </main>
 
   <script src="app.js"></script>

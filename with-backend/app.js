@@ -52,9 +52,101 @@ let lastId = 0;
 // Who is logged in in this window: { account_name, display_name }, or null.
 let account = null;
 
-// For each post on screen, its heart button and its count, kept by post id, so
-// a new count from the server can be written straight into the right post.
-const likeParts = {};
+// For each post on the live timeline, kept by post id: its <li> ("item"), its
+// slots, and what each part keeps. The heart part keeps likeButton and
+// likeCount, so a new count from the server can be written straight into the
+// right post. Search results and other lists are not kept here: only the live
+// timeline is kept up to date.
+const postParts = {};
+
+// ---- A post is built from slots and parts ----
+//
+// A slot is a named place inside a post. In order: "head" (the names and the
+// time), "body" (the text), "foot" (the heart), and "menu" (the "⋯" menu).
+// A part is a function that fills slots: part(post, slots, item). The parts
+// run in the order they were added. A feature adds its own part with one
+// addPostPart(...) call, and never changes makePostItem.
+const POST_SLOTS = ["head", "body", "foot"];
+const POST_PARTS = [];
+
+function addPostPart(part) {
+  POST_PARTS.push(part);
+}
+
+// What a button inside a post does, by the name in its data-action. Every
+// button in a post says what it does with data-action, and carries its post's
+// id in data-post-id. The one click handler, clickOnTimeline, calls
+// ACTIONS[name](postId, button). A feature adds ACTIONS.name = itsFunction.
+const ACTIONS = {};
+
+// Build one post, with its empty slots, then let every part fill them.
+// Returns { item, slots, ...what the parts keep }. It does not put the post
+// on the page: placePost does that.
+function makePostItem(post) {
+  const item = document.createElement("li");
+  item.className = "post";
+  item.dataset.postId = post.id;
+
+  // The slots only group the parts. They take no room of their own (see
+  // style.css), so the post looks the same as when the parts sat in it directly.
+  const slots = {};
+  for (const name of POST_SLOTS) {
+    slots[name] = document.createElement("div");
+    slots[name].className = "post-" + name;
+    item.append(slots[name]);
+  }
+  slots.menu = makePostMenu();
+  item.append(slots.menu);
+
+  const parts = { item: item, slots: slots };
+  for (const part of POST_PARTS) {
+    // A part may return what it wants to keep, for example its button.
+    Object.assign(parts, part(post, slots, item));
+  }
+  return parts;
+}
+
+// The "⋯" menu of a post: a <details> that opens a list of buttons. It stays
+// hidden until addMenuItem puts something in it, so a post with an empty
+// menu shows no "⋯" at all.
+function makePostMenu() {
+  const menu = document.createElement("details");
+  menu.className = "post-menu";
+  menu.hidden = true;
+  const summary = document.createElement("summary");
+  summary.setAttribute("aria-label", "More actions for this post");
+  summary.textContent = "\u22ef";
+  const list = document.createElement("ul");
+  menu.append(summary, list);
+  return menu;
+}
+
+// Add one button to a post's "⋯" menu. `action` is a name in ACTIONS.
+function addMenuItem(slots, action, words) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "link-button";
+  button.dataset.action = action;
+  button.dataset.postId = slots.menu.closest(".post").dataset.postId;
+  button.textContent = words;
+  const row = document.createElement("li");
+  row.append(button);
+  slots.menu.querySelector("ul").append(row);
+  slots.menu.hidden = false;
+  return button;
+}
+
+// Put a built post on the page. "top": first in the timeline, so the newest
+// is always first. "bottom": last in the timeline.
+function placePost(item, post, where) {
+  if (where === "top") {
+    timeline.prepend(item);
+  } else if (where === "bottom") {
+    timeline.append(item);
+  } else {
+    throw new Error("placePost does not know where '" + where + "' is.");
+  }
+}
 
 // Put one post at the top of the timeline, so the newest is always first.
 function showPost(post) {
@@ -63,11 +155,38 @@ function showPost(post) {
     return;
   }
   lastId = post.id;
+  postParts[post.id] = makePostItem(post);
+  placePost(postParts[post.id].item, post, "top");
+}
 
-  const item = document.createElement("li");
-  item.className = "post";
+// Take a post off the page, and stop keeping it up to date.
+function removePost(postId) {
+  const parts = postParts[postId];
+  if (parts === undefined) {
+    return;
+  }
+  parts.item.remove();
+  delete postParts[postId];
+}
 
-  // The display name first (Aiko Tanaka), then the account name (@aiko).
+// Build a post again from what the server now says, and swap it in, in the
+// same place. The heart keeps how it looked until the next answer.
+function redrawPost(post) {
+  const old = postParts[post.id];
+  if (old === undefined) {
+    return;
+  }
+  const liked = old.likeButton.getAttribute("aria-pressed") === "true";
+  postParts[post.id] = makePostItem(post);
+  old.item.replaceWith(postParts[post.id].item);
+  showLike(post.id, post.like_count, liked);
+}
+
+// ---- The parts that every post has ----
+
+// The display name first (Aiko Tanaka), then the account name (@aiko).
+// textContent, never innerHTML: a post is shown as words, so it cannot run code on the page.
+addPostPart(function namesPart(post, slots) {
   const author = document.createElement("span");
   author.className = "post-author";
   author.textContent = post.display_name;
@@ -76,22 +195,36 @@ function showPost(post) {
   handle.className = "post-handle";
   handle.textContent = "@" + post.author;
 
+  slots.head.append(author, handle);
+});
+
+// When it was written.
+addPostPart(function timePart(post, slots) {
   const time = document.createElement("span");
   time.className = "post-time";
   time.textContent = post.posted_at;
+  slots.head.append(time);
+});
 
+// What it says.
+addPostPart(function textPart(post, slots) {
   const text = document.createElement("p");
   text.className = "post-text";
   text.textContent = post.text;
+  slots.body.append(text);
+});
 
-  // The heart, and how many people have pressed it. The button carries its own
-  // post id, so one click handler on the timeline can serve every post.
+// The heart, and how many people have pressed it. The button says what it
+// does (data-action="like") and carries its own post id, so one click handler
+// on the timeline can serve every post.
+addPostPart(function heartPart(post, slots) {
   const likeRow = document.createElement("div");
   likeRow.className = "like-row";
 
   const likeButton = document.createElement("button");
   likeButton.type = "button";
   likeButton.className = "like";
+  likeButton.dataset.action = "like";
   likeButton.dataset.postId = post.id;
   likeButton.setAttribute("aria-pressed", "false");
   likeButton.textContent = "\u2665";
@@ -101,25 +234,22 @@ function showPost(post) {
   likeCount.textContent = post.like_count;
 
   likeRow.append(likeButton, likeCount);
-  likeParts[post.id] = { button: likeButton, count: likeCount };
-
-  // textContent, never innerHTML: a post is shown as words, so it cannot run code on the page.
-  item.append(author, handle, time, text, likeRow);
-  timeline.prepend(item);
-}
+  slots.foot.append(likeRow);
+  return { likeButton: likeButton, likeCount: likeCount };
+});
 
 // Show the heart as pressed, and write in the count. The server is the only
 // place that knows both, so this is only ever told what they are.
 function showLike(postId, count, liked) {
-  const parts = likeParts[postId];
+  const parts = postParts[postId];
   if (parts === undefined) {
     return;
   }
-  parts.count.textContent = count;
-  parts.button.classList.toggle("liked", liked);
-  parts.button.setAttribute("aria-pressed", liked ? "true" : "false");
+  parts.likeCount.textContent = count;
+  parts.likeButton.classList.toggle("liked", liked);
+  parts.likeButton.setAttribute("aria-pressed", liked ? "true" : "false");
   // What the button would do if it were pressed now, for a screen reader.
-  parts.button.setAttribute("aria-label", liked ? "Unlike this post" : "Like this post");
+  parts.likeButton.setAttribute("aria-label", liked ? "Unlike this post" : "Like this post");
 }
 
 function showStatus(words) {
@@ -301,7 +431,7 @@ async function checkForNewPosts() {
     // from the cookie: it is empty when nobody is logged in.
     const likesAnswer = await fetch("/likes");
     const likes = await likesAnswer.json();
-    for (const postId in likeParts) {
+    for (const postId in postParts) {
       showLike(postId, likes.counts[postId] || 0, likes.mine.includes(Number(postId)));
     }
     if (statusLine.textContent === CANNOT_REACH) {
@@ -449,7 +579,10 @@ async function sendPost(event) {
 // Press the heart: like the post, or take the like back if it is already
 // pressed. The method says which: POST adds a like, DELETE removes one.
 async function pressHeart(postId) {
-  const parts = likeParts[postId];
+  const parts = postParts[postId];
+  if (parts === undefined) {
+    return;
+  }
 
   // Only a person who is logged in can like. The server checks this again.
   if (account === null) {
@@ -464,7 +597,7 @@ async function pressHeart(postId) {
   }
   parts.busy = true;
 
-  const liked = parts.button.getAttribute("aria-pressed") === "true";
+  const liked = parts.likeButton.getAttribute("aria-pressed") === "true";
   try {
     const response = await fetch("/likes", {
       method: liked ? "DELETE" : "POST",
@@ -534,12 +667,64 @@ function chooseTheme() {
   }
 }
 
-// One handler for the whole timeline, so a post added later works too.
+ACTIONS.like = pressHeart;
+
+// One handler for the whole timeline, so a post added later works too. The
+// button's data-action says which function in ACTIONS to call. Other lists of
+// posts (search results, bookmarks) use this same handler.
 function clickOnTimeline(event) {
-  const button = event.target.closest(".like");
-  if (button !== null) {
-    pressHeart(Number(button.dataset.postId));
+  const button = event.target.closest("[data-action]");
+  if (button === null) {
+    return;
   }
+  const action = ACTIONS[button.dataset.action];
+  if (action !== undefined) {
+    action(Number(button.dataset.postId), button);
+  }
+}
+
+// ---- Views: one part of the page shown at a time ----
+//
+// A view is a <section data-view="name">. The buttons that switch between
+// them are in <nav id="views">, which stays hidden while there is only one
+// view. A feature adds its own view with addView(name, words).
+const viewsNav = document.getElementById("views");
+
+// Show this view, hide the others, and mark its button as the current one.
+function showView(name) {
+  for (const section of document.querySelectorAll("[data-view]")) {
+    section.hidden = section.dataset.view !== name;
+  }
+  for (const button of viewsNav.querySelectorAll("button")) {
+    if (button.dataset.showView === name) {
+      button.setAttribute("aria-current", "page");
+    } else {
+      button.removeAttribute("aria-current");
+    }
+  }
+}
+
+// Add a view: its button, and its section (made here, unless the page
+// already has one). Returns the section, for the feature to fill.
+function addView(name, words) {
+  let section = document.querySelector('[data-view="' + name + '"]');
+  if (section === null) {
+    const views = document.querySelectorAll("[data-view]");
+    section = document.createElement("section");
+    section.dataset.view = name;
+    section.hidden = true;
+    views[views.length - 1].after(section);
+  }
+  const button = document.createElement("button");
+  button.type = "button";
+  button.dataset.showView = name;
+  button.textContent = words;
+  button.addEventListener("click", function () {
+    showView(name);
+  });
+  viewsNav.append(button);
+  viewsNav.hidden = viewsNav.querySelectorAll("button").length < 2;
+  return section;
 }
 
 textBox.addEventListener("input", updateCount);
@@ -551,5 +736,7 @@ signupForm.addEventListener("submit", signUp);
 logoutButton.addEventListener("click", logOut);
 themeSwitch.value = savedTheme();
 themeSwitch.addEventListener("change", chooseTheme);
+addView("timeline", "Timeline");
+showView("timeline");
 askWhoIAm();
 keepChecking();

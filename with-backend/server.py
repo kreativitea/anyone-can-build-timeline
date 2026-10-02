@@ -53,7 +53,10 @@ class TimelineHandler(BaseHTTPRequestHandler):
             except ValueError:
                 self.send_json(400, {"error": "'after' must be a whole number."})
                 return
-            rows = posts_after(self.server.db_path, after)
+            # Who is asking decides which posts they may see (see visible_to).
+            # Anyone may read, so nobody logged in is fine: the viewer is None.
+            viewer = self.user_or_none()
+            rows = posts_after(self.server.db_path, after, viewer["id"] if viewer else None)
             self.send_json(200, posts_to_json(rows))
         elif url.path == "/likes":
             # A like changes no post, so a window asks for the counts separately.
@@ -74,12 +77,12 @@ class TimelineHandler(BaseHTTPRequestHandler):
             except OSError:
                 self.send_json(404, {"error": "The file " + file_name + " is missing."})
         else:
-            self.send_json(404, {"error": "There is nothing at " + url.path})
+            self.send_nothing_here("GET", url.path)
 
     def do_POST(self):
         path = urlparse(self.path).path
         if path not in ("/posts", "/likes", "/accounts", "/sessions"):
-            self.send_json(404, {"error": "There is nothing to send to " + path})
+            self.send_nothing_here("POST", path)
             return
         data = self.read_json()
         if data is None:
@@ -102,8 +105,7 @@ class TimelineHandler(BaseHTTPRequestHandler):
             self.send_json(200, {}, cookie=session_cookie(""))
             return
         if path != "/likes":
-            self.send_json(404, {"error": "You can only take back a like at /likes, "
-                                          "or log out at /sessions"})
+            self.send_nothing_here("DELETE", path)
             return
         data = self.read_json()
         if data is None:
@@ -130,6 +132,16 @@ class TimelineHandler(BaseHTTPRequestHandler):
             return None
         try:
             length = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            length = None   # not a number: refused as "not JSON" just below
+        # Too big: refused before it is read, so a huge request cannot fill the
+        # server's memory. The size comes from the Content-Length header.
+        if length is not None and length > MAX_REQUEST_BYTES:
+            self.send_json(413, {"error": "The request is too big."})
+            return None
+        try:
+            if length is None:
+                raise ValueError("Content-Length is not a number")
             data = json.loads(self.rfile.read(length))
         except ValueError:
             self.send_json(400, {"error": "The request must be JSON."})
@@ -205,6 +217,10 @@ class TimelineHandler(BaseHTTPRequestHandler):
             return
         self.send_json(201, like_to_json(post_id, like_count))
 
+    def send_nothing_here(self, method, path):
+        """404, in one sentence for every method, so it stays true when routes are added."""
+        self.send_json(404, {"error": f"There is nothing to {method} at {path}."})
+
     def send_json(self, status, data, cookie=None):
         body = json.dumps(data).encode("utf-8")
         self.send_answer(status, "application/json; charset=utf-8", body, cookie)
@@ -241,6 +257,11 @@ MAX_AUTHOR = 40
 MAX_DISPLAY_NAME = 50
 MIN_PASSWORD = 8
 MAX_PASSWORD = 200
+
+# The largest request body the server will read: 4 MB, in bytes. Enough for a
+# 2 MB picture written as text (base64 makes it about a third bigger), with room
+# to spare. A bigger request is refused with 413 before it is read.
+MAX_REQUEST_BYTES = 4 * 1024 * 1024
 
 # How many times the password is hashed. More is slower for an attacker who
 # has copied the database and is guessing, and still fast enough for one
@@ -315,6 +336,8 @@ def create_tables(db_path):
     version = connection.execute("PRAGMA user_version").fetchone()[0]
     if version < 1:
         upgrade_to_accounts(connection)
+    if version < 2:
+        upgrade_to_groundwork(connection)
     connection.close()
 
 
@@ -353,6 +376,106 @@ def upgrade_to_accounts(connection):
         connection.close()
         raise SystemExit("timeline.db has two users whose names differ only in capital "
                          "letters. Rename one, or run `make reset`, then start again.")
+
+
+def rebuild_table(connection, table, change_sql, user_version=None):
+    """Make `table` again from its own CREATE TABLE text, changed by `change_sql`.
+
+    SQLite cannot change some things in a table that already exists (for example,
+    add AUTOINCREMENT). The safe way is to make a new table and move the rows:
+      1. read the table's CREATE TABLE text, and its indexes and triggers;
+      2. change_sql(text) returns the new text (change_sql is a function);
+      3. make the new table, copy every row, drop the old table, and give the
+         new one the old name;
+      4. make the indexes and triggers again.
+    It starts from the table's own text, so a column, an index or a trigger
+    that another upgrade added is kept.
+
+    All of it is one transaction (a group of changes that all happen, or none
+    do). If user_version is given, the new version number is saved in the same
+    transaction. Foreign keys are turned off while the table is briefly gone,
+    then checked by hand before anything is saved.
+    """
+    if connection.in_transaction:
+        # A mistake in the code, not a user's broken rule: foreign keys can
+        # only be turned off outside a transaction.
+        raise ValueError("rebuild_table must be called outside a transaction.")
+    # Before BEGIN: inside a transaction SQLite ignores this.
+    connection.execute("PRAGMA foreign_keys = OFF")
+    try:
+        connection.execute("BEGIN")
+        try:
+            row = connection.execute("SELECT sql FROM sqlite_master "
+                                     "WHERE type = 'table' AND name = ?", (table,)).fetchone()
+            if row is None:
+                raise SystemExit(f"timeline.db has no {table} table to rebuild. "
+                                 "Run `make reset`, then start again.")
+            old_sql = row[0]
+            others = [r[0] for r in connection.execute(
+                "SELECT sql FROM sqlite_master WHERE type IN ('index', 'trigger') "
+                "AND tbl_name = ? AND sql IS NOT NULL ORDER BY type, name", (table,))]
+            new_sql = change_sql(old_sql)
+            if new_sql != old_sql:
+                # The new table is made under another name first: <table>_new.
+                name = re.escape(table)
+                start = re.compile(r'^CREATE TABLE\s+(?:"' + name + '"|' + name + r')\s*\(',
+                                   re.IGNORECASE)
+                if not start.match(new_sql):
+                    raise SystemExit(f"timeline.db has a {table} table this upgrade does "
+                                     "not know. Run `make reset`, then start again.")
+                new_name = table + "_new"
+                connection.execute(start.sub(f"CREATE TABLE {new_name} (", new_sql, count=1))
+                # Copy by the old table's column names, so every value goes to
+                # the column of the same name, and every id is kept. (Rows are
+                # read by number here, [0] and [1], so this works on any
+                # connection. In PRAGMA table_info, [1] is the column's name.)
+                columns = ", ".join('"' + c[1] + '"' for c in
+                                    connection.execute(f'PRAGMA table_info("{table}")'))
+                connection.execute(f'INSERT INTO {new_name} ({columns}) '
+                                   f'SELECT {columns} FROM "{table}"')
+                connection.execute(f'DROP TABLE "{table}"')
+                connection.execute(f'ALTER TABLE {new_name} RENAME TO "{table}"')
+                for sql in others:
+                    connection.execute(sql)
+            # Foreign keys were off, so check by hand that every row that
+            # points at another row still points at a real one.
+            if connection.execute("PRAGMA foreign_key_check").fetchall():
+                raise SystemExit(f"timeline.db has rows that point at nothing after "
+                                 f"rebuilding {table}. Nothing was changed.")
+            if user_version is not None:
+                connection.execute(f"PRAGMA user_version = {int(user_version)}")
+            connection.commit()
+        except sqlite3.Error as problem:
+            connection.rollback()
+            raise SystemExit(f"timeline.db could not be brought up to date ({table}: "
+                             f"{problem}). Nothing was changed.")
+        except BaseException:
+            connection.rollback()   # nothing is half done
+            raise
+    finally:
+        connection.execute("PRAGMA foreign_keys = ON")
+
+
+def upgrade_to_groundwork(connection):
+    """Version 2: a post id is never given out twice. Every row is kept.
+
+    Without AUTOINCREMENT, SQLite gives a new post the largest id plus one. If
+    the newest post were deleted, the next post would get its id again, and a
+    window that has already seen that id would never ask for the new post.
+    With AUTOINCREMENT, SQLite remembers the largest id it ever gave (in its own
+    table, sqlite_sequence) and never gives it again. A table that exists
+    cannot be given AUTOINCREMENT, so posts is rebuilt.
+    """
+    def add_autoincrement(sql):
+        if "AUTOINCREMENT" in sql.upper():
+            return sql
+        start = re.compile(r"\(\s*id\s+INTEGER\s+PRIMARY\s+KEY\s*,", re.IGNORECASE)
+        if not start.search(sql):
+            raise SystemExit("timeline.db has a posts table this upgrade does not know. "
+                             "Run `make reset`, then start again.")
+        return start.sub("(id INTEGER PRIMARY KEY AUTOINCREMENT,", sql, count=1)
+
+    rebuild_table(connection, "posts", add_autoincrement, user_version=2)
 
 
 # Each post, with its author's two names looked up in users, and how many people
@@ -546,16 +669,51 @@ def log_out(db_path, token):
     connection.close()
 
 
+# The extra columns insert_post may be given, besides the author and the text.
+# Empty for now. A feature that adds a column to posts adds its name here, in
+# one line (for example "place" or "parent_id"). A column name never comes from
+# a request: only a name on this list can reach the SQL.
+POST_EXTRA_COLUMNS = ()
+
+
+def insert_post(connection, user_id, text, **more):
+    """Add one post, and return its new id. The only place that adds a post.
+
+    `more` is extra columns, by name, each one on POST_EXTRA_COLUMNS. It does
+    not commit: the caller does, so a feature can add rows of its own in the
+    same transaction.
+    """
+    for name in more:
+        if name not in POST_EXTRA_COLUMNS:
+            # A mistake in the code, not a user's broken rule.
+            raise ValueError(f"insert_post does not know the column {name!r}. "
+                             "Add it to POST_EXTRA_COLUMNS.")
+    values = {"author_id": user_id, "text": text, "posted_at": time.strftime("%H:%M")}
+    values.update(more)
+    columns = ", ".join(values)
+    marks = ", ".join("?" for _ in values)
+    cursor = connection.execute(f"INSERT INTO posts ({columns}) VALUES ({marks})",
+                                list(values.values()))
+    return cursor.lastrowid
+
+
+def post_by_id(connection, post_id):
+    """One post, as GET /posts shows it, or None. With no visibility filter.
+
+    Only for the person who just wrote it (see save_post). Every list of posts
+    goes through select_posts instead.
+    """
+    return connection.execute(POSTS_WITH_AUTHORS + " WHERE posts.id = ?",
+                              (post_id,)).fetchone()
+
+
 def save_post(db_path, user_id, text):
     """Check the rules, save the post by this user, and return the saved row."""
     text = check_text(text)
     connection = connect(db_path)
-    cursor = connection.execute(
-        "INSERT INTO posts (author_id, text, posted_at) VALUES (?, ?, ?)",
-        (user_id, text, time.strftime("%H:%M")))
+    post_id = insert_post(connection, user_id, text)
     connection.commit()
-    row = connection.execute(POSTS_WITH_AUTHORS + " WHERE posts.id = ?",
-                             (cursor.lastrowid,)).fetchone()
+    row = post_by_id(connection, post_id)
     connection.close()
     return row
 
@@ -637,11 +795,39 @@ def likes_for(db_path, user_id):
     return counts, mine
 
 
-def posts_after(db_path, after):
-    """Return every post with an id larger than `after`, oldest first."""
+def visible_to(viewer_id):
+    """Which posts this viewer may see, as (sql, params): one part of a WHERE.
+
+    viewer_id is None for a window that is not logged in. Today every post is
+    visible to everyone. A feature that hides posts (block, report) adds its
+    own condition here, joined with AND, and then every list of posts obeys it.
+    """
+    return "1 = 1", []
+
+
+def select_posts(connection, conditions, params, viewer_id, order, limit=None):
+    """Every post that matches all the conditions and that this viewer may see.
+
+    The only place that reads a list of posts, so visible_to always applies.
+    `conditions` is a list of SQL pieces with ? marks, and `params` their
+    values, in order. `order` is the ORDER BY text, for example "posts.id".
+    Both come from the code, never from a request. Everything is decided in
+    the SQL, so a LIMIT of 20 really gives 20 posts.
+    """
+    visible_sql, visible_params = visible_to(viewer_id)
+    where = " AND ".join("(" + condition + ")" for condition in list(conditions) + [visible_sql])
+    sql = POSTS_WITH_AUTHORS + " WHERE " + where + " ORDER BY " + order
+    values = list(params) + list(visible_params)
+    if limit is not None:
+        sql += " LIMIT ?"
+        values.append(int(limit))
+    return connection.execute(sql, values).fetchall()
+
+
+def posts_after(db_path, after, viewer_id=None):
+    """Return every post with an id larger than `after` that this viewer may see, oldest first."""
     connection = connect(db_path)
-    rows = connection.execute(POSTS_WITH_AUTHORS + " WHERE posts.id > ? ORDER BY posts.id",
-                              (after,)).fetchall()
+    rows = select_posts(connection, ["posts.id > ?"], [after], viewer_id, "posts.id")
     connection.close()
     return rows
 

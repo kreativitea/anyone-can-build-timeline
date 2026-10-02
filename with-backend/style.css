@@ -283,3 +283,49 @@ button {
   outline: 3px solid var(--author);
   outline-offset: 2px;
 }
+
+/* groundwork: the shared pieces that features build on. */
+
+/* The slots inside a post (head, body, foot). They only group the parts for
+   the code, and take no room of their own, so a post looks exactly as it did
+   when the parts sat in it directly. */
+.post-head,
+.post-body,
+.post-foot {
+  display: contents;
+}
+
+/* The "⋯" menu on a post. It is shown only when it has something in it. */
+.post-menu {
+  margin-top: 10px;
+}
+
+.post-menu summary {
+  width: fit-content;
+  color: var(--quiet);
+  cursor: pointer;
+  list-style: none;
+}
+
+.post-menu summary::-webkit-details-marker {
+  display: none;
+}
+
+.post-menu ul {
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* The buttons that switch between views. Shown only when there are two or more. */
+#views {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+#views button[aria-current="page"] {
+  outline: 3px solid var(--author);
+  outline-offset: 2px;
+}

@@ -69,6 +69,59 @@ The database knows its own version (`PRAGMA user_version`). An older `timeline.d
 accounts is upgraded when the server starts, and keeps every row. Its old users have no password:
 the first person to sign up with an old name claims it, and its old posts.
 
+## The shared pieces (groundwork)
+
+These pieces exist so that a feature adds a few lines in its own place, instead of changing the
+same functions as every other feature. Use them; do not go around them.
+
+**The page (`with-backend/app.js`).**
+
+- A post is built by `makePostItem(post)`. It makes one `<li class="post">` with four **slots**
+  (named places inside the post), in this order: `head` (names and time), `body` (the text),
+  `foot` (the heart) and `menu` (the "⋯" menu). Then it calls each **part** in `POST_PARTS`, in
+  order: `part(post, slots, item)`. A part fills slots, and may return what it wants to keep. To add
+  something to every post, write a part and call `addPostPart(yourPart)`. Never edit
+  `makePostItem`.
+- `placePost(item, post, where)` puts a built post on the page: `"top"` or `"bottom"`.
+  `showPost` builds a post and puts it at the top.
+- `postParts[id]` keeps, for each post on the live timeline, its `item`, its `slots`, and what the
+  parts kept (the heart keeps `likeButton` and `likeCount`). `removePost(id)` takes a post off the
+  page. `redrawPost(post)` builds it again and swaps it in, in the same place.
+- Every button in a post says what it does with `data-action` (the heart is
+  `data-action="like"`), and carries `data-post-id`. The one click handler, `clickOnTimeline`,
+  calls `ACTIONS[action](postId, button)`. To add a button, add `ACTIONS.yourAction = yourFunction`.
+  Never edit `clickOnTimeline`.
+- `addMenuItem(slots, action, words)` adds a button to a post's "⋯" menu. A menu with nothing in it
+  is hidden, so today no post shows "⋯".
+- A **view** is a `<section data-view="name">`. `addView(name, words)` adds one, with its button
+  in `<nav id="views">`; `showView(name)` shows it and hides the others. The nav stays hidden while
+  there is only one view (the timeline).
+- Build the page with `textContent`, never `innerHTML`.
+
+**The model (`with-backend/server.py`).**
+
+- **Every list of posts goes through `select_posts`, so `visible_to` always applies.**
+  `visible_to(viewer_id)` says which posts this viewer may see, as a piece of SQL (today: all of
+  them). `select_posts(connection, conditions, params, viewer_id, order, limit=None)` adds it to
+  every query. `posts_after` uses it. `post_by_id` reads one post with no filter, only for the person
+  who just wrote it. A test fails if `POSTS_WITH_AUTHORS` is used anywhere else.
+- `insert_post(connection, user_id, text, **more)` is the only place that adds a post. An extra
+  column must be named in `POST_EXTRA_COLUMNS`; any other name raises `ValueError`. A column name
+  never comes from a request.
+- `rebuild_table(connection, table, change_sql, user_version=None)` changes a table that SQLite
+  cannot change in place. `change_sql` is a function: it gets the table's `CREATE TABLE` text and
+  returns the new text. Every row, index and trigger is kept. It is all one transaction, foreign
+  keys are checked before it is saved, and if anything is wrong nothing changes.
+- **Post ids are never reused.** `posts.id` is `INTEGER PRIMARY KEY AUTOINCREMENT`, so a deleted
+  post's id is never given to a new post. `upgrade_to_groundwork` (database version 2) made this
+  change with `rebuild_table`.
+
+**The controller.**
+
+- A request body bigger than `MAX_REQUEST_BYTES` (4 MB) gets `413` before it is read.
+- A path the server does not know gets `404` with one sentence: "There is nothing to {method} at
+  {path}."
+
 ## How to run it
 
 - Page-only: open `page-only/index.html` in a browser. Nothing to start.
