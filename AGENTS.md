@@ -52,7 +52,8 @@ The three parts of `server.py`:
   `utc_text`, `use_allowance`, `forget_attempts`, `clock`, `check_query`, `escape_like`, `tags_in`,
   `has_tag`, `search_posts`, `picture_kind`, `check_picture`, `check_alt_text`, `picture_for`,
   `not_blocked_sql`, `find_account`, `add_block`, `remove_block`, `blocks_for`,
-  `check_not_blocked_by_author`, and `create_tables` with its upgrades):
+  `check_not_blocked_by_author`, `check_parent_id`, `check_reply_parent`, `save_reply`,
+  `has_replies`, `visible_replies`, and `create_tables` with its upgrades):
   the rules, and the database, in eight tables:
   - `users`: each person once. `name` is the account name (unique, capitals ignored),
     `display_name` is the name shown, and `password_salt`, `password_hash`, `password_rounds` hold
@@ -60,7 +61,8 @@ The three parts of `server.py`:
   - `posts`: each post points at its author by `author_id`. `posted_at` is the time in UTC; a post
     from before timestamps has only `old_clock_time` (`HH:MM`) instead. `place` is where the
     writer said they were ("Osaka"), or NULL for no place (never `''`). A place is a detail of one
-    post, so it is a column on `posts`, never on `users`.
+    post, so it is a column on `posts`, never on `users`. A reply points at the post it answers by
+    `parent_id` (NULL for a normal post).
   - `likes`: one row for each person who liked each post.
   - `sessions`: one row for each logged-in window. It keeps only a hash of the token, the user's id,
     and when it ends. Logging out deletes the row.
@@ -199,9 +201,8 @@ list of posts gets this for free by using `select_posts`. A block is never check
 page: the server leaves the posts out.
 
 - A blocked person can still read the blocker's posts (reading is open to everyone), but cannot
-  like them: `add_like` calls `check_not_blocked_by_author(connection, post_id, user_id)`. A new
-  way to answer a post (replies) adds one line to `BLOCKED_CODES` (`"reply": "reply_blocked"`)
-  and calls it with `what="reply"`.
+  like them: `add_like` calls `check_not_blocked_by_author(connection, post_id, user_id)`, and
+  cannot reply to them: `save_reply` calls it with `what="reply"` (`BLOCKED_CODES`).
 - Like counts still include blocked people. `who_liked` and `like_summaries` leave the blocked
   people's *names* out for the person who blocked them; the count stays the same.
 - `find_account` only reads: blocking a name that does not exist never adds a user.
@@ -291,6 +292,45 @@ its text.
   and any GPS place are not sent. GIFs are sent as they are. The server still checks everything.
 - `upgrade_to_pictures` (database version 7) added the table.
 - Never `select *` from `pictures` in a terminal: it prints the raw bytes.
+
+## Replies
+
+A **reply** is a post with a `parent_id`: the id of the post it answers. It is sent through
+`POST /posts` with `parent_id` (missing or `null` means a normal post). The controller only chooses:
+no `parent_id`, `save_post`; a `parent_id`, `save_reply`.
+
+- `save_reply` checks the text, then the post it answers (`check_parent_id`,
+  `check_reply_parent`: it exists, it is not a reply, its author has not blocked you), then saves
+  through `save_post`, so a reply follows the same rules (text, place, picture) and is counted by
+  the same rate limit as a post. Codes: `reply_parent_id_missing`, `post_missing`,
+  `reply_to_reply`, `reply_blocked`.
+- **One level only.** A reply to a reply is refused by `save_reply`, and by the database's trigger
+  `replies_are_one_level`, even if the code is got around. Replying to your own post is allowed.
+- `parent_id` is a foreign key to `posts(id)`: the database refuses a reply to a post that does not
+  exist, and refuses deleting a post that has replies. **`has_replies(connection, post_id)`** says
+  whether a post has any; ask it before deleting a post. Nothing ever changes `parent_id`.
+- **A reply count is never kept.** Each post comes with `reply_count`, counted from the rows, and
+  `newest_reply_id`, the newest reply in that count. Both count only the replies the viewer may
+  see: `POSTS_WITH_AUTHORS` has `VISIBLE_REPLIES` (`1 = 1`) in them, and `select_posts` puts
+  `visible_replies(viewer_id)` there, made from `visible_to`. So a new condition in `visible_to`
+  applies to the counts too, with nothing more to do.
+- Each post also comes with `parent_author`, the account name of the post it answers, looked up in
+  `users`, never copied into `posts`.
+- **The page.** A reply goes under its post: `placePost(item, post, "under-parent")`, in a
+  `<li class="reply-thread">` just after the post (so `redrawPost` keeps it, and `removePost` takes
+  it away with the post). `placePost` sends every reply whose post is on the timeline there, and
+  `adoptReplies` moves replies that came first (in an older page) under their post when it
+  arrives. In `receiveNewPosts`, a reply to a post on the page goes under it at once, and
+  `countsAsNewPost` keeps it out of "3 new posts". The page adds one to a count only for a reply
+  newer than `newest_reply_id`. Reply is `ACTIONS.reply` (`replyPart`, beside the heart). The reply
+  is written in the main post box, under "Replying to @aiko · Cancel" (`#replying-to`). A draft
+  remembers the post it answers: it is kept as JSON `{"v": 2, "text", "reply_to"}`, and an older
+  plain-text draft still loads (`readDraft`). The words are the `reply_` keys, `replying_to` and
+  `replies_label` in `words.js`.
+- **The hook for `reply-email`** is `TimelineHandler.after_reply_saved(row)`. `take_post` calls it
+  only for a reply, after the `201` answer has gone. It does nothing today.
+- `upgrade_to_replies` (database version 9) added the column, the index `posts_by_parent` and the
+  trigger.
 
 ## How to run it
 

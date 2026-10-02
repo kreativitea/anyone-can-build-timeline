@@ -592,3 +592,39 @@ time.post-time {
 .blocked-list .unblock {
   margin-left: 12px;
 }
+
+/* replies */
+/* The Reply button and "2 replies", beside the heart. */
+.reply-button {
+  margin-left: 12px;
+}
+
+.reply-count {
+  color: var(--quiet);
+}
+
+/* "Replying to @aiko", above the text of a reply. */
+.replying-to {
+  margin: 4px 0 0;
+  color: var(--quiet);
+  font-size: 18px;
+}
+
+/* The replies of a post, just under it: moved in, with a line on the left. */
+.reply-thread {
+  margin: -4px 0 12px 28px;
+}
+
+.replies {
+  margin: 0;
+  padding: 0 0 0 16px;
+  border-left: 3px solid var(--border);
+  list-style: none;
+}
+
+/* "Replying to @aiko · Cancel", above the post box. */
+#replying-to {
+  margin: 0 0 6px;
+  color: var(--quiet);
+  overflow-wrap: anywhere;
+}

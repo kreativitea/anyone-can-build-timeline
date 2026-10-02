@@ -461,4 +461,39 @@ const WORDS = {
   unblock_done: {
     en: "You unblocked @{name}.",
   },
+  // replies: refusals
+  reply_parent_id_missing: {
+    en: "The reply must say which post it answers.",
+  },
+  reply_to_reply: {
+    en: "You can only reply to a post, not to a reply.",
+  },
+  reply_blocked: {
+    en: "You cannot reply to this post.",
+  },
+  // replies: the words of the page
+  reply_button: {
+    en: "Reply",
+  },
+  reply_button_label: {
+    en: "Reply to @{name}",
+  },
+  replying_to: {
+    en: "Replying to @{name}",
+  },
+  reply_cancel: {
+    en: "Cancel",
+  },
+  reply_count_one: {
+    en: "{count} reply",
+  },
+  reply_count_other: {
+    en: "{count} replies",
+  },
+  replies_label: {
+    en: "Replies to @{name}",
+  },
+  reply_log_in: {
+    en: "Please log in to reply.",
+  },
 };

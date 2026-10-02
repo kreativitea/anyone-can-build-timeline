@@ -706,6 +706,7 @@ class ModelTests(unittest.TestCase):
                          [(1, "first", "sleepy", None)])
         self.assertEqual(self.rows("SELECT type, name FROM sqlite_master "
                                    "WHERE tbl_name = 'posts' AND type IN ('index', 'trigger') "
+                                   "AND name IN ('log_each_post', 'posts_by_author') "
                                    "ORDER BY name"),
                          [("trigger", "log_each_post"), ("index", "posts_by_author")])
         server.save_post(self.db_path, aiko, "second")   # the trigger still works
@@ -1531,10 +1532,12 @@ class ModelTests(unittest.TestCase):
         folder = tempfile.TemporaryDirectory()
         self.addCleanup(folder.cleanup)
         self.db_path = os.path.join(folder.name, "old.db")
-        # Every later upgrade is held back too (pictures, block), so the file stops before place.
+        # Every later upgrade is held back too (pictures, block, replies), so the file
+        # stops before place.
         with mock.patch.object(server, "upgrade_to_place", lambda connection: None), \
                 mock.patch.object(server, "upgrade_to_pictures", lambda connection: None), \
-                mock.patch.object(server, "upgrade_to_block", lambda connection: None):
+                mock.patch.object(server, "upgrade_to_block", lambda connection: None), \
+                mock.patch.object(server, "upgrade_to_replies", lambda connection: None):
             server.create_tables(self.db_path)
         old_version = self.rows("PRAGMA user_version")[0][0]
         self.assertLess(old_version, server.LATEST_VERSION)
@@ -1556,8 +1559,9 @@ class ModelTests(unittest.TestCase):
         server.create_tables(self.db_path)
         after = {table: self.rows("SELECT * FROM " + table + " ORDER BY 1, 2")
                  for table in tables}
-        # Every old post is kept, with place NULL at the end.
-        self.assertEqual(after["posts"], [row + (None,) for row in before["posts"]])
+        # Every old post is kept, with place NULL at the end (and then replies'
+        # parent_id, NULL too).
+        self.assertEqual(after["posts"], [row + (None, None) for row in before["posts"]])
         for table in ("users", "likes", "sessions"):
             self.assertEqual(after[table], before[table])
         self.assertEqual(self.rows("PRAGMA user_version"), [(server.LATEST_VERSION,)])
@@ -2132,8 +2136,8 @@ class ModelTests(unittest.TestCase):
         server.add_like(self.db_path, ben, post_id)
         # The database as it was one version before: no blocks table.
         connection = sqlite3.connect(self.db_path)
-        connection.executescript("DROP TABLE blocks; PRAGMA user_version = %d;"
-                                 % (server.LATEST_VERSION - 1))
+        # (block is version 8; replies, version 9, runs again harmlessly.)
+        connection.executescript("DROP TABLE blocks; PRAGMA user_version = 7;")
         connection.close()
         tables = ("users", "posts", "likes", "sessions", "attempts")
         before = {table: self.rows("SELECT * FROM " + table + " ORDER BY 1, 2")
@@ -2183,6 +2187,177 @@ class ModelTests(unittest.TestCase):
                     action()
                 self.assertEqual(caught.exception.code, code)
 
+
+    # -- replies: a post that answers another post --
+
+    def reply_by(self, user_id, parent_id, text="an answer"):
+        return server.save_reply(self.db_path, user_id, text, parent_id, now=SOME_MOMENT)
+
+    def test_a_reply_is_saved_with_its_parent_and_comes_back_with_the_parent_s_name(self):
+        use_fake_clock(self)
+        aiko = self.sign_up("aiko")
+        ken = self.sign_up("ken")
+        post = server.save_post(self.db_path, aiko, "lunch?", now=SOME_MOMENT)
+        reply = self.reply_by(ken, post["id"], "yes!")
+        self.assertEqual((reply["parent_id"], reply["parent_author"], reply["author"]),
+                         (post["id"], "aiko", "ken"))
+        self.assertEqual(self.rows("SELECT id, author_id, parent_id FROM posts ORDER BY id"),
+                         [(1, aiko, None), (2, ken, 1)])
+        posts = server.posts_to_json(server.posts_after(self.db_path, 0))
+        self.assertEqual([(p["id"], p["parent_id"], p["parent_author"]) for p in posts],
+                         [(1, None, None), (2, 1, "aiko")])
+        # The count and the newest reply counted, from the rows.
+        self.assertEqual([(p["reply_count"], p["newest_reply_id"]) for p in posts],
+                         [(1, 2), (0, None)])
+
+    def test_a_reply_to_a_post_that_does_not_exist_is_refused(self):
+        aiko = self.sign_up("aiko")
+        with self.assertRaisesRegex(server.RuleBroken, "That post does not exist."):
+            self.reply_by(aiko, 99)
+        self.assertEqual(self.rows("SELECT * FROM posts"), [])
+
+    def test_a_reply_to_a_reply_is_refused_by_the_rule_and_by_the_database(self):
+        use_fake_clock(self)
+        aiko = self.sign_up("aiko")
+        post = server.save_post(self.db_path, aiko, "a post")
+        reply = self.reply_by(aiko, post["id"])
+        with self.assertRaisesRegex(server.RuleBroken, "only reply to a post, not to a reply"):
+            self.reply_by(aiko, reply["id"])
+        # Even written straight in SQL, past every rule, the trigger refuses it.
+        connection = server.connect(self.db_path)
+        with self.assertRaises(sqlite3.IntegrityError):
+            connection.execute("INSERT INTO posts (author_id, text, posted_at, parent_id) "
+                               "VALUES (?, 'x', '2026-10-02T07:42:10Z', ?)", (aiko, reply["id"]))
+        connection.close()
+        self.assertEqual(len(self.rows("SELECT * FROM posts")), 2)
+
+    def test_a_parent_id_that_is_not_a_post_id_is_refused(self):
+        aiko = self.sign_up("aiko")
+        server.save_post(self.db_path, aiko, "a post")
+        for wrong in ("abc", [], {}, True, 1.5, -1, "", "1; DROP TABLE posts", 10 ** 30):
+            with self.subTest(parent_id=wrong):
+                with self.assertRaisesRegex(server.RuleBroken, "which post it answers"):
+                    self.reply_by(aiko, wrong)
+        self.assertEqual(server.check_parent_id("1"), 1)
+        self.assertEqual(len(self.rows("SELECT * FROM posts")), 1)
+
+    def test_you_may_reply_to_your_own_post(self):
+        aiko = self.sign_up("aiko")
+        post = server.save_post(self.db_path, aiko, "a post")
+        self.assertEqual(self.reply_by(aiko, post["id"])["parent_author"], "aiko")
+
+    def test_a_reply_follows_the_text_rules(self):
+        aiko = self.sign_up("aiko")
+        post = server.save_post(self.db_path, aiko, "a post")
+        for text in ("", "   ", "x" * (server.MAX_TEXT + 1)):
+            with self.subTest(length=len(text)):
+                with self.assertRaises(server.RuleBroken):
+                    self.reply_by(aiko, post["id"], text)
+        self.assertEqual(len(self.rows("SELECT * FROM posts")), 1)
+
+    def test_the_reply_count_is_the_number_of_rows_and_is_never_kept(self):
+        use_fake_clock(self)
+        aiko = self.sign_up("aiko")
+        ken = self.sign_up("ken")
+        post = server.save_post(self.db_path, aiko, "a post")
+        self.reply_by(ken, post["id"])
+        self.reply_by(aiko, post["id"])
+        self.assertEqual(self.rows("SELECT COUNT(*) FROM posts WHERE parent_id = ?",
+                                   (post["id"],)), [(2,)])
+        self.assertEqual(server.posts_after(self.db_path, 0)[0]["reply_count"], 2)
+        columns = [row[1] for row in self.rows("PRAGMA table_info(posts)")]
+        self.assertFalse([c for c in columns if "count" in c])
+
+    def test_the_database_refuses_to_delete_a_post_that_has_a_reply(self):
+        # The contract for edit-delete: it asks has_replies first.
+        aiko = self.sign_up("aiko")
+        post = server.save_post(self.db_path, aiko, "a post")
+        lonely = server.save_post(self.db_path, aiko, "nobody answers")
+        self.reply_by(aiko, post["id"])
+        connection = server.connect(self.db_path)
+        self.assertTrue(server.has_replies(connection, post["id"]))
+        self.assertFalse(server.has_replies(connection, lonely["id"]))
+        self.assertFalse(server.has_replies(connection, 99))
+        with self.assertRaises(sqlite3.IntegrityError):
+            connection.execute("DELETE FROM posts WHERE id = ?", (post["id"],))
+        connection.close()
+        self.assertEqual(len(self.rows("SELECT * FROM posts")), 3)
+
+    def test_a_reply_is_counted_by_the_post_rate_limit(self):
+        clock = use_fake_clock(self)
+        aiko = self.sign_up("aiko")
+        post = server.save_post(self.db_path, aiko, "a post")
+        # A refused reply is not counted.
+        with self.assertRaises(server.RuleBroken):
+            self.reply_by(aiko, 99)
+        for _ in range(4):
+            self.reply_by(aiko, post["id"])
+        with self.assertRaises(server.TooFast):
+            self.reply_by(aiko, post["id"])
+        self.assertEqual(len(self.rows("SELECT * FROM posts")), 5)
+        clock.move(61)
+        self.reply_by(aiko, post["id"])
+
+    def test_the_replies_upgrade_keeps_every_post_with_no_parent(self):
+        users, posts, likes = self.use_an_old_database()
+        self.assertEqual(self.rows("SELECT id, author_id, text, old_clock_time, parent_id "
+                                   "FROM posts ORDER BY id"),
+                         [row + (None,) for row in posts])
+        self.assertEqual(self.rows("SELECT * FROM likes ORDER BY post_id, user_id"), likes)
+        self.assertEqual(self.rows("PRAGMA user_version"), [(server.LATEST_VERSION,)])
+        self.assertEqual(self.rows("PRAGMA foreign_key_check"), [])
+        self.assertEqual(self.rows("SELECT type, name FROM sqlite_master "
+                                   "WHERE name IN ('posts_by_parent', 'replies_are_one_level') "
+                                   "ORDER BY name"),
+                         [("index", "posts_by_parent"), ("trigger", "replies_are_one_level")])
+        server.create_tables(self.db_path)   # twice is harmless
+        self.assertEqual(len(self.rows("SELECT * FROM posts")), 3)
+
+    def test_rebuilding_posts_keeps_the_one_level_rule(self):
+        aiko = self.sign_up("aiko")
+        post = server.save_post(self.db_path, aiko, "a post")
+        reply = self.reply_by(aiko, post["id"])
+        connection = server.connect(self.db_path)
+        server.rebuild_table(connection, "posts", lambda sql: sql[:-1] + ", note TEXT)")
+        connection.close()
+        with self.assertRaisesRegex(server.RuleBroken, "not to a reply"):
+            self.reply_by(aiko, reply["id"])
+        connection = server.connect(self.db_path)
+        with self.assertRaises(sqlite3.IntegrityError):
+            server.insert_post(connection, aiko, "x", parent_id=reply["id"])
+        connection.close()
+
+    def test_a_blocked_person_cannot_reply_and_their_replies_are_not_counted(self):
+        use_fake_clock(self)
+        aiko, ben, carol = self.sign_up("aiko"), self.sign_up("ben"), self.sign_up("carol")
+        post = server.save_post(self.db_path, aiko, "a post")
+        self.reply_by(ben, post["id"])
+        self.reply_by(carol, post["id"])
+        server.add_block(self.db_path, aiko, "ben")
+        # Ben can no longer answer Aiko's posts.
+        with self.assertRaises(server.RuleBroken) as caught:
+            self.reply_by(ben, post["id"])
+        self.assertEqual(caught.exception.code, "reply_blocked")
+        # Aiko does not see Ben's reply, so it is not in her count. Everyone
+        # else (Carol, or nobody logged in) still counts both.
+        for viewer, count, newest in ((aiko, 1, 3), (carol, 2, 3), (None, 2, 3)):
+            with self.subTest(viewer=viewer):
+                first = server.posts_after(self.db_path, 0, viewer)[0]
+                self.assertEqual((first["reply_count"], first["newest_reply_id"]),
+                                 (count, newest))
+        server.add_block(self.db_path, aiko, "carol")
+        first = server.posts_after(self.db_path, 0, aiko)[0]
+        self.assertEqual((first["reply_count"], first["newest_reply_id"]), (0, None))
+        # The rows are all still there: a block hides, it never deletes.
+        self.assertEqual(self.rows("SELECT COUNT(*) FROM posts WHERE parent_id = 1"), [(2,)])
+
+    def test_a_reply_may_say_where_it_was_written(self):
+        aiko = self.sign_up("aiko")
+        post = server.save_post(self.db_path, aiko, "a post")
+        reply = server.save_reply(self.db_path, aiko, "from Kyoto", post["id"], place="Kyoto")
+        self.assertEqual((reply["place"], reply["parent_id"]), ("Kyoto", post["id"]))
+        with self.assertRaises(server.RuleBroken):
+            server.save_reply(self.db_path, aiko, "x", post["id"], place="x" * 41)
 
 
 class RealServerTest(unittest.TestCase):
@@ -2458,7 +2633,8 @@ class RealServerTest(unittest.TestCase):
         self.assertEqual(set(answer["posts"][0]), set(server.post_to_json(
             {key: None for key in ("id", "author", "display_name", "text", "posted_at",
                                    "old_clock_time", "like_count", "place",
-                                   "picture_alt")})))
+                                   "picture_alt", "parent_id", "parent_author",
+                                   "reply_count", "newest_reply_id")})))
 
     def test_a_search_with_no_words_gets_400_and_a_reason(self):
         for path in ("/search", "/search?q=", "/search?q=%20%20",
@@ -2769,6 +2945,64 @@ class RealServerTest(unittest.TestCase):
             self.assertEqual(answer.status, 200)
         self.assertEqual([p["author"] for p in self.get("/posts?after=0")], ["ben"])
         self.assertEqual(self.get("/blocks"), {"blocked": []})
+
+    # -- replies --
+
+    def test_a_reply_gets_201_with_its_parent(self):
+        self.sign_up().close()
+        self.send("/posts", {"text": "hello"}).close()
+        with self.send("/posts", {"text": "hi back", "parent_id": 1}) as answer:
+            self.assertEqual(answer.status, 201)
+            reply = json.loads(answer.read())
+        self.assertEqual((reply["parent_id"], reply["parent_author"]), (1, "aiko"))
+        posts = self.get("/posts?after=0")
+        self.assertEqual([(p["id"], p["parent_id"], p["reply_count"]) for p in posts],
+                         [(1, None, 1), (2, 1, 0)])
+        # null is a normal post.
+        with self.send("/posts", {"text": "plain", "parent_id": None}) as answer:
+            self.assertIsNone(json.loads(answer.read())["parent_id"])
+
+    def test_a_reply_without_a_cookie_gets_401_and_no_row(self):
+        self.sign_up().close()
+        self.send("/posts", {"text": "hello"}).close()
+        self.window = urllib.request.build_opener()   # a window with no cookie
+        code, reason = self.refused("/posts", {"text": "hi", "parent_id": 1})
+        self.assertEqual(code, 401)
+        self.assertEqual(len(self.get("/posts?after=0")), 1)
+
+    def test_a_reply_to_nothing_or_to_a_word_gets_400(self):
+        self.sign_up().close()
+        code, reason = self.refused("/posts", {"text": "hi", "parent_id": 9999})
+        self.assertEqual((code, reason), (400, "That post does not exist."))
+        code, reason = self.refused("/posts", {"text": "hi", "parent_id": "abc"})
+        self.assertEqual((code, reason), (400, "The reply must say which post it answers."))
+        self.assertEqual(self.get("/posts?after=0"), [])
+
+    def test_the_reply_email_hook_runs_once_for_a_reply_after_the_answer(self):
+        seen = []
+
+        def hook(handler, row):
+            seen.append((row["id"], row["parent_id"], row["parent_author"]))
+
+        with mock.patch.object(server.TimelineHandler, "after_reply_saved", hook):
+            self.sign_up().close()
+            self.send("/posts", {"text": "hello"}).close()
+            self.assertEqual(seen, [])   # not for a normal post
+            self.send("/posts", {"text": "hi", "parent_id": 1}).close()
+            with self.assertRaises(urllib.error.HTTPError) as caught:
+                self.send("/posts", {"text": "hi", "parent_id": 2})   # refused
+            caught.exception.close()
+        self.assertEqual(seen, [(2, 1, "aiko")])
+
+    def test_a_refused_reply_names_its_code(self):
+        self.sign_up().close()
+        self.send("/posts", {"text": "hello"}).close()
+        self.send("/posts", {"text": "hi", "parent_id": 1}).close()
+        with self.assertRaises(urllib.error.HTTPError) as caught:
+            self.send("/posts", {"text": "hi", "parent_id": 2})
+        answer = json.loads(caught.exception.read())
+        caught.exception.close()
+        self.assertEqual((caught.exception.code, answer["code"]), (400, "reply_to_reply"))
 
 
 class JourneyTest(unittest.TestCase):
@@ -3459,6 +3693,73 @@ class JourneyTest(unittest.TestCase):
         # 8. Now Ben may like Aiko's post again.
         self.assertEqual(self.page_presses_heart(ben, aikos, False)[0], 201)
         self.assertEqual(self.rows("SELECT post_id, user_id FROM likes"), [(aikos, 2)])
+
+    def test_the_whole_journey_of_a_reply(self):
+        use_fake_clock(self)
+        aiko = self.open_window()
+        ken = self.open_window()
+        self.page_signs_up(aiko, "aiko", "Aiko Tanaka")
+        self.page_signs_up(ken, "ken", "Ken Mori")
+
+        # 1. Aiko posts. Ken replies (sendPost, with parent_id). The row points
+        #    at Aiko's post, and its author is Ken.
+        status, post = self.page_posts(aiko, "Who is coming to the festival?")
+        status, reply = self.page_sends(ken, "/posts", {"text": "Me!",
+                                                        "parent_id": post["id"]}, "POST")
+        self.assertEqual((status, reply["parent_author"]), (201, "aiko"))
+        self.assertEqual(self.rows("SELECT id, author_id, parent_id FROM posts ORDER BY id"),
+                         [(1, 1, None), (2, 2, 1)])
+        # checkForNewPosts: the reply comes after its post, and the post counts it.
+        posts = self.page_asks_for_new_posts(aiko)
+        self.assertEqual([(p["id"], p["parent_id"]) for p in posts], [(1, None), (2, 1)])
+        self.assertEqual((posts[0]["reply_count"], posts[0]["newest_reply_id"]), (1, 2))
+
+        # 2. Ken writes "author": "aiko" into a reply. It is still Ken's.
+        status, reply = self.page_sends(ken, "/posts", {"text": "really me", "author": "aiko",
+                                                        "parent_id": 1}, "POST")
+        self.assertEqual(reply["author"], "ken")
+        self.assertEqual(self.rows("SELECT author_id FROM posts WHERE id = 3"), [(2,)])
+
+        # 3. Aiko replies to her own post: allowed. Ken replies to his reply: 400, no row.
+        status, own = self.page_sends(aiko, "/posts", {"text": "Great",
+                                                       "parent_id": 1}, "POST")
+        self.assertEqual(status, 201)
+        code, reason = self.is_refused(self.page_sends, ken, "/posts",
+                                       {"text": "and me again", "parent_id": 2}, "POST")
+        self.assertEqual((code, reason), (400, "You can only reply to a post, not to a reply."))
+        self.assertEqual(self.rows("SELECT COUNT(*) FROM posts"), [(4,)])
+
+        # 4. Aiko likes Ken's reply: one row in likes, as for any post.
+        status, like = self.page_presses_heart(aiko, 2, False)
+        self.assertEqual(like, {"post_id": 2, "like_count": 1})
+        self.assertEqual(self.rows("SELECT post_id, user_id FROM likes"), [(2, 1)])
+
+        # 5. A window that has seen post 1 asks for newer posts: it gets only the
+        #    new replies, each newer than the newest reply it was told about.
+        newer = self.page_asks_for_new_posts(ken, 2)
+        self.assertEqual([p["id"] for p in newer], [3, 4])
+        self.assertTrue(all(p["id"] > posts[0]["newest_reply_id"] for p in newer))
+
+        # 6. The count in the rows equals the replies GET /posts gives, and the
+        #    count the server sends.
+        everything = self.page_asks_for_new_posts(aiko)
+        replies = [p for p in everything if p["parent_id"] == 1]
+        self.assertEqual(self.rows("SELECT COUNT(*) FROM posts WHERE parent_id = 1"),
+                         [(len(replies),)])
+        self.assertEqual(everything[0]["reply_count"], len(replies))
+        self.assertEqual(everything[0]["newest_reply_id"], 4)
+
+        # 7. Aiko blocks Ken. He cannot reply to her post any more, and she no
+        #    longer counts his replies; nobody else's count changes.
+        self.page_sends(aiko, "/blocks", {"account_name": "ken"}, "POST")
+        code, reason = self.is_refused(self.page_sends, ken, "/posts",
+                                       {"text": "hello?", "parent_id": 1}, "POST")
+        self.assertEqual((code, reason), (400, "You cannot reply to this post."))
+        mine = self.page_asks_for_new_posts(aiko)
+        self.assertEqual([p["id"] for p in mine], [1, 4])
+        self.assertEqual((mine[0]["reply_count"], mine[0]["newest_reply_id"]), (1, 4))
+        self.assertEqual(self.page_asks_for_new_posts(self.open_window())[0]["reply_count"], 3)
+        self.assertEqual(self.rows("SELECT COUNT(*) FROM posts WHERE parent_id = 1"), [(3,)])
 
 
 class BookmarkJourneyTest(unittest.TestCase):
@@ -4285,8 +4586,9 @@ class PageAndServerAgreeTest(unittest.TestCase):
 
     def test_the_page_sends_the_picture_with_the_post(self):
         send = functions_in(self.page_code)["sendPost"]   # an async function
+        # (replies adds parent_id after these.)
         self.assertIn("JSON.stringify({ text: text, place: place, picture: picture, "
-                      "picture_alt: pictureAlt })",
+                      "picture_alt: pictureAlt,",
                       send)
         self.assertIn("pictureProblem(", send)
         self.assertIn("clearPictureBoxes()", send)
@@ -4372,6 +4674,60 @@ class PageAndServerAgreeTest(unittest.TestCase):
             html = page_file.read()
         self.assertIn('id="blocked-section"', html)
         self.assertIn('id="blocked-list"', html)
+
+    # -- replies --
+
+    def test_the_page_sends_parent_id_and_reads_the_reply_names(self):
+        send = functions_in(self.page_code)["sendPost"]
+        self.assertIn("parent_id: replyingTo === null ? null : replyingTo.id", send)
+        row = {"id": 2, "author": "ken", "display_name": "Ken", "text": "x", "posted_at": None,
+               "old_clock_time": "09:00", "like_count": 0, "place": None, "picture_alt": None,
+               "parent_id": 1, "parent_author": "aiko", "reply_count": 0,
+               "newest_reply_id": None}
+        sent = server.post_to_json(row)
+        for name in ("parent_id", "parent_author", "reply_count", "newest_reply_id"):
+            with self.subTest(name=name):
+                self.assertIn(name, sent)
+                self.assertIn("post." + name, self.page_code)
+
+    def test_a_reply_goes_under_its_post_through_the_shared_pieces(self):
+        functions = functions_in(self.page_code)
+        self.assertIn('"under-parent"', functions["placePost"])
+        self.assertIn("placeUnderParent(item, post)", functions["placePost"])
+        self.assertIn("addPostPart(function replyPart(", self.page_code)
+        self.assertIn("ACTIONS.reply = startReply;", self.page_code)
+        # The page never counts the replies it shows: it starts from the server's count.
+        self.assertIn("post.reply_count", self.page_code)
+        self.assertNotIn("list.children.length + ", self.page_code)
+        # A post taken off the page takes its replies with it, and replies that
+        # came before their post (an older page) move under it.
+        self.assertIn("removeReplyThread(postId, parts)", functions["removePost"])
+        self.assertIn("adoptReplies(post)", functions["placePost"])
+
+    def test_a_reply_is_not_a_new_post_and_goes_under_its_post_at_once(self):
+        functions = functions_in(self.page_code)
+        receive = functions["receiveNewPosts"]
+        self.assertLess(receive.index('putPost(post, "under-parent")'),
+                        receive.index("waitingPosts.push(post)"))
+        self.assertIn("waitingPosts.filter(countsAsNewPost).length",
+                      functions["updateNewPostsButton"])
+        self.assertIn("!hasParentOnTimeline(post)", functions["countsAsNewPost"])
+
+    def test_the_reply_words_change_with_the_language(self):
+        self.assertIn("whenLanguageChanges(function redrawReplyWords()", self.page_code)
+        self.assertIn('sayCount("reply_count", count)', self.page_code)
+        for code in ("reply_parent_id_missing", "reply_to_reply", "reply_blocked"):
+            self.assertIn(code, server.PROBLEMS)
+        self.assertEqual(server.BLOCKED_CODES["reply"], "reply_blocked")
+
+    def test_the_replying_to_line_is_in_the_post_form(self):
+        with open(os.path.join(HERE, "index.html"), encoding="utf-8") as page_file:
+            html = page_file.read()
+        form = html[html.index('<form id="post-form">'):]
+        form = form[:form.index("</form>")]
+        for part in ('id="replying-to" hidden', 'id="replying-to-words"', 'id="cancel-reply"'):
+            self.assertIn(part, form)
+        self.assertIn('cancelReplyButton.addEventListener("click", cancelReply)', self.page_code)
 
 
 class ColoursTest(unittest.TestCase):
@@ -4540,6 +4896,20 @@ class PageDraftTest(unittest.TestCase):
         for inside in re.findall(r"JSON\.stringify\((.*?)\)", self.page_code):
             with self.subTest(sent=inside):
                 self.assertNotIn("draft", inside.lower())
+
+    def test_a_draft_remembers_the_post_it_replies_to(self):
+        save = self.functions["saveDraft"]
+        self.assertIn("reply_to: replyingTo", save)
+        self.assertIn('textBox.value.trim() === "" && replyingTo === null', save)
+        self.assertIn("readDraft(", self.functions["loadDraft"])
+        self.assertIn("showReplyingTo(draft.replyTo)", self.functions["showDraft"])
+        self.assertIn("stopReplying()", self.functions["hideDraft"])
+
+    def test_an_old_plain_text_draft_still_loads(self):
+        read = self.functions["readDraft"]
+        self.assertIn("found.v === 2", read)
+        self.assertIn("return { text: kept, replyTo: null };", read)
+        self.assertIn("catch", read)
 
 
 if __name__ == "__main__":

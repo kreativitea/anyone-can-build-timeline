@@ -104,6 +104,12 @@
       </details>
 
       <form id="post-form">
+        <!-- replies: shown while writing a reply. app.js writes "Replying to @aiko". -->
+        <p id="replying-to" hidden>
+          <span id="replying-to-words"></span> ·
+          <button type="button" id="cancel-reply" class="link-button"
+                  data-words="reply_cancel">Cancel</button>
+        </p>
         <label for="text" data-words="post_prompt">What is happening?</label>
         <textarea id="text" rows="3" placeholder="What is happening?"
                   data-words-placeholder="post_prompt"></textarea>

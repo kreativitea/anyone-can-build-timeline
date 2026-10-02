@@ -151,6 +151,8 @@ signing up, posting, liking and unliking, with the database file opened and read
    and choose **Block**: their posts disappear, from search too. In the second window, press the
    heart on the first person's post: the server says *"You cannot like this post."* Back in the
    first window, open **Blocked accounts** and press **Unblock**: their posts come back.
+10. **Reply to a post.** Press **Reply** under a post in one window, write, and press **Post**.
+    Watch the reply appear under the post in another window, and the post say "1 reply".
 
 Each feature changes a different set of parts.
 

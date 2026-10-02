@@ -47,6 +47,10 @@ const statusLine = document.getElementById("status");
 const timeline = document.getElementById("timeline");
 const postForm = document.getElementById("post-form");
 const placeBox = document.getElementById("place");
+// replies: the "Replying to @aiko · Cancel" line above the post box.
+const replyingToLine = document.getElementById("replying-to");
+const replyingToWords = document.getElementById("replying-to-words");
+const cancelReplyButton = document.getElementById("cancel-reply");
 
 // The key for the Colours choice in localStorage. The same key as the small
 // script in index.html, which uses it before the page is drawn.
@@ -301,15 +305,25 @@ function addMenuItem(slots, action, key) {
 }
 
 // Put a built post on the page. "top": first in the timeline, so the newest
-// is always first. "bottom": last in the timeline.
+// is always first. "bottom": last in the timeline. "under-parent": a reply,
+// under the post it answers (replies). A reply whose post is on the timeline
+// always goes there, wherever it was asked to go.
 function placePost(item, post, where) {
+  if (hasParentOnTimeline(post)) {
+    where = "under-parent";
+  } else if (where === "under-parent") {
+    where = "top";   // its post is not on this page: show it like a new post
+  }
   if (where === "top") {
     timeline.prepend(item);
   } else if (where === "bottom") {
     timeline.append(item);
+  } else if (where === "under-parent") {
+    placeUnderParent(item, post);
   } else {
     throw new Error("placePost does not know where '" + where + "' is.");
   }
+  adoptReplies(post);   // replies that arrived before their post move under it
 }
 
 // Put one post at the top of the timeline, so the newest is always first.
@@ -330,6 +344,7 @@ function removePost(postId) {
     return;
   }
   parts.item.remove();
+  removeReplyThread(postId, parts);   // replies: its replies go with it
   delete postParts[postId];
 }
 
@@ -825,27 +840,52 @@ function draftKey(who) {
   return DRAFT_KEY_START + who.account_name.toLowerCase();
 }
 
-// This account's draft, or "" if there is none or storage is blocked.
+// This account's draft, as { text, replyTo }. text is "" and replyTo is null
+// if there is none, or storage is blocked.
 function loadDraft(who) {
+  let kept = "";
   try {
-    return localStorage.getItem(draftKey(who)) || "";
+    kept = localStorage.getItem(draftKey(who)) || "";
   } catch (error) {
-    return "";
+    kept = "";
   }
+  return readDraft(kept);
 }
 
-// Keep what is in the box now, for the person logged in. An empty box (or
-// only spaces) removes the draft instead. A draft over the limit is still
-// kept: the person may be cutting it down.
+// replies: a draft also remembers the post it answers. It is kept as JSON
+// text: {"v": 2, "text": "...", "reply_to": {"id": 7, "author": "aiko"}}
+// (reply_to is null for a normal post). A draft kept before replies is just
+// the words themselves, so anything else is read as plain words.
+function readDraft(kept) {
+  try {
+    const found = JSON.parse(kept);
+    if (found !== null && typeof found === "object" && found.v === 2
+        && typeof found.text === "string") {
+      const to = found.reply_to;
+      const replyTo = to && Number.isInteger(to.id) && typeof to.author === "string"
+        ? { id: to.id, author: to.author } : null;
+      return { text: found.text, replyTo: replyTo };
+    }
+  } catch (error) {
+    // Not JSON: a draft from before replies.
+  }
+  return { text: kept, replyTo: null };
+}
+
+// Keep what is in the box now, and the post it answers, for the person
+// logged in. An empty box (or only spaces) that is not a reply removes the
+// draft instead. A draft over the limit is still kept: the person may be
+// cutting it down.
 function saveDraft() {
   if (account === null) {
     return;
   }
   try {
-    if (textBox.value.trim() === "") {
+    if (textBox.value.trim() === "" && replyingTo === null) {
       localStorage.removeItem(draftKey(account));
     } else {
-      localStorage.setItem(draftKey(account), textBox.value);
+      const kept = { v: 2, text: textBox.value, reply_to: replyingTo };
+      localStorage.setItem(draftKey(account), JSON.stringify(kept));
     }
   } catch (error) {
     // Storage is blocked or full. The draft is not kept; nothing else changes.
@@ -867,9 +907,15 @@ function forgetDraft() {
 // Put this account's draft in the box, or empty the box if there is none.
 function showDraft(who) {
   const draft = loadDraft(who);
-  textBox.value = draft;
+  textBox.value = draft.text;
   updateCount();
-  if (draft !== "") {
+  // replies: "Replying to @aiko" comes back too.
+  if (draft.replyTo !== null) {
+    showReplyingTo(draft.replyTo);
+  } else {
+    stopReplying();
+  }
+  if (draft.text !== "" || draft.replyTo !== null) {
     showStatus("draft_back");
   }
 }
@@ -877,6 +923,7 @@ function showDraft(who) {
 // Empty the box while nobody is logged in. The draft stays in storage.
 function hideDraft() {
   textBox.value = "";
+  stopReplying();
   updateCount();
 }
 
@@ -1043,6 +1090,227 @@ addPostPart(function expandablePart(post, slots) {
 });
 
 ACTIONS.expand = toggleExpanded;
+
+// ---- replies: a post that answers another post ----
+//
+// A reply is a post with a parent_id: the id of the post it answers. Only one
+// level: only a post that is not a reply has a Reply button. A reply sits
+// under its post, oldest reply first, so it reads like a conversation. It
+// says "Replying to @aiko", and has a heart like any post.
+//
+// The replies of a post are kept in their own <li class="reply-thread"> just
+// after the post, not inside it. So when a post is built again (redrawPost),
+// its replies stay where they are. When a post is taken off the page
+// (removePost), its thread goes too.
+//
+// Older pages come newest first (timeline-flow), so a reply can arrive before
+// its post. It is shown on its own until its post arrives, then moves under
+// it (adoptReplies).
+//
+// The number of replies comes from the server (reply_count), counted from
+// the rows the reader may see, like the like count. The server also says
+// which was the newest reply it counted (newest_reply_id). A reply that
+// arrives later, with a larger id, was not counted yet, so the page adds one
+// for it. The page never counts the replies it shows: some may not be loaded.
+//
+// You write a reply in the main post box. Reply puts "Replying to @aiko ·
+// Cancel" above the box. The words are in words.js (reply_..., replying_to,
+// replies_label).
+
+// The post this window is writing a reply to: { id, author }, or null.
+let replyingTo = null;
+
+// For each post on the timeline whose replies are shown: the <ol> they are in.
+const replyLists = {};
+
+// Is this post a reply?
+function isReply(post) {
+  return post.parent_id !== null && post.parent_id !== undefined;
+}
+
+// Is this post a reply whose post is on the live timeline?
+function hasParentOnTimeline(post) {
+  return isReply(post) && postParts[post.parent_id] !== undefined;
+}
+
+// A reply says which post it answers: "Replying to @aiko", above its text.
+// A post that is not a reply gets a Reply button and its reply count, beside the heart.
+addPostPart(function replyPart(post, slots) {
+  if (isReply(post)) {
+    const line = document.createElement("p");
+    line.className = "replying-to";
+    line.dataset.parentAuthor = post.parent_author;
+    line.textContent = say("replying_to", { name: post.parent_author });
+    slots.body.prepend(line);
+    return { parentId: post.parent_id };
+  }
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "link-button reply-button";
+  button.dataset.action = "reply";
+  button.dataset.postId = post.id;
+  button.dataset.author = post.author;
+  button.dataset.words = "reply_button";
+  button.textContent = say("reply_button");
+  button.setAttribute("aria-label", say("reply_button_label", { name: post.author }));
+
+  const count = document.createElement("span");
+  count.className = "reply-count";
+  writeReplyCount(count, post.reply_count || 0);
+
+  // Beside the heart, if there is one.
+  const row = slots.foot.querySelector(".like-row") || slots.foot;
+  row.append(button, count);
+  return {
+    replyCount: count,
+    replyTotal: post.reply_count || 0,
+    newestReplyId: post.newest_reply_id || 0,
+  };
+});
+
+// Write "2 replies" into the count. Nothing is shown for 0.
+function writeReplyCount(element, count) {
+  element.dataset.count = count;
+  element.textContent = count > 0 ? sayCount("reply_count", count) : "";
+  element.hidden = count === 0;
+}
+
+// Show a post's reply count as it is now.
+function showReplyCount(postId) {
+  const parts = postParts[postId];
+  if (parts === undefined || parts.replyCount === undefined) {
+    return;
+  }
+  writeReplyCount(parts.replyCount, parts.replyTotal);
+}
+
+// Put a reply under its post, among the replies already there, oldest first.
+// The list of replies is made the first time it is needed, just after the post.
+function placeUnderParent(item, post) {
+  const parent = postParts[post.parent_id];
+  let list = replyLists[post.parent_id];
+  if (list === undefined || !list.isConnected) {
+    const thread = document.createElement("li");
+    thread.className = "reply-thread";
+    list = document.createElement("ol");
+    list.className = "replies";
+    list.dataset.parentAuthor = post.parent_author;
+    list.setAttribute("aria-label", say("replies_label", { name: post.parent_author }));
+    thread.append(list);
+    parent.item.after(thread);
+    replyLists[post.parent_id] = list;
+  }
+  // Before the first reply with a larger id, so the oldest stays first.
+  const later = Array.from(list.children).find(function (other) {
+    return Number(other.dataset.postId) > post.id;
+  });
+  list.insertBefore(item, later || null);
+  // A reply newer than the newest one the server counted is new: add one.
+  if (parent.newestReplyId !== undefined && post.id > parent.newestReplyId) {
+    parent.newestReplyId = post.id;
+    parent.replyTotal = parent.replyTotal + 1;
+    showReplyCount(post.parent_id);
+  }
+}
+
+// A post was just put on the page. Any of its replies already shown on their
+// own (they came in an older page first) move under it. They are already in
+// its reply count, so nothing is added.
+function adoptReplies(post) {
+  if (isReply(post)) {
+    return;
+  }
+  for (const id of Object.keys(postParts)) {
+    const parts = postParts[id];
+    if (parts.parentId === post.id && !parts.item.parentElement.classList.contains("replies")) {
+      placeUnderParent(parts.item, {
+        id: Number(id), parent_id: post.id, parent_author: post.author,
+      });
+    }
+  }
+}
+
+// removePost took a post off the page. If it had replies under it, they go
+// too. If it was the last reply in a list, the empty list goes.
+function removeReplyThread(postId, parts) {
+  const list = replyLists[postId];
+  if (list !== undefined) {
+    for (const item of list.querySelectorAll("li.post")) {
+      delete postParts[item.dataset.postId];
+    }
+    list.closest(".reply-thread").remove();
+    delete replyLists[postId];
+  }
+  const parentList = replyLists[parts.parentId];
+  if (parentList !== undefined && parentList.children.length === 0) {
+    parentList.closest(".reply-thread").remove();
+    delete replyLists[parts.parentId];
+  }
+}
+
+// Does this waiting post count in "3 new posts"? Not a reply that will go
+// under a post already on the page, or under a post that is waiting too.
+function countsAsNewPost(post) {
+  if (!isReply(post)) {
+    return true;
+  }
+  return !hasParentOnTimeline(post)
+    && !waitingPosts.some(function (other) { return other.id === post.parent_id; });
+}
+
+// Show "Replying to @aiko · Cancel" above the box, and remember which post.
+function showReplyingTo(target) {
+  replyingTo = { id: target.id, author: target.author };
+  replyingToWords.textContent = say("replying_to", { name: target.author });
+  replyingToLine.hidden = false;
+}
+
+// Stop writing a reply: the next post is a normal post again.
+function stopReplying() {
+  replyingTo = null;
+  replyingToWords.textContent = "";
+  replyingToLine.hidden = true;
+}
+
+// Reply was pressed. The server checks again that this post may be answered.
+function startReply(postId, button) {
+  if (account === null) {
+    showStatus("reply_log_in");
+    return;
+  }
+  showReplyingTo({ id: postId, author: button.dataset.author });
+  saveDraft();   // the draft remembers which post it answers
+  textBox.scrollIntoView({ block: "center" });
+  textBox.focus();
+}
+
+// Cancel was pressed: keep the words, but they are no longer a reply.
+function cancelReply() {
+  stopReplying();
+  saveDraft();
+  textBox.focus();
+}
+
+ACTIONS.reply = startReply;
+
+// The words with values of their own, again in the language now shown.
+whenLanguageChanges(function redrawReplyWords() {
+  for (const line of document.querySelectorAll(".replying-to")) {
+    line.textContent = say("replying_to", { name: line.dataset.parentAuthor });
+  }
+  for (const button of document.querySelectorAll(".reply-button")) {
+    button.setAttribute("aria-label", say("reply_button_label", { name: button.dataset.author }));
+  }
+  for (const count of document.querySelectorAll(".reply-count")) {
+    writeReplyCount(count, Number(count.dataset.count));
+  }
+  for (const list of document.querySelectorAll(".replies")) {
+    list.setAttribute("aria-label", say("replies_label", { name: list.dataset.parentAuthor }));
+  }
+  if (replyingTo !== null) {
+    showReplyingTo(replyingTo);
+  }
+});
 
 // ---- pictures: one picture on a post, with a description ----
 //
@@ -1246,6 +1514,11 @@ function receiveNewPosts(posts) {
       continue;
     }
     lastId = post.id;
+    // replies: a reply to a post already on the timeline goes under it at once.
+    if (hasParentOnTimeline(post)) {
+      putPost(post, "under-parent");
+      continue;
+    }
     waitingPosts.push(post);
   }
   if (readerIsAtTop()) {
@@ -1266,7 +1539,8 @@ function showWaitingPosts() {
 
 // Hidden when nothing waits; otherwise "1 new post" or "3 new posts".
 function updateNewPostsButton() {
-  const count = waitingPosts.length;
+  // replies: a reply that will go under a post is not a new post.
+  const count = waitingPosts.filter(countsAsNewPost).length;
   newPostsButton.hidden = count === 0;
   if (count > 0) {
     newPostsButton.textContent = sayCount("new_posts", count);
@@ -1555,7 +1829,9 @@ async function sendPost(event) {
     const response = await fetch("/posts", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text: text, place: place, picture: picture, picture_alt: pictureAlt }),
+      // replies: parent_id is the post this answers, or null for a normal post.
+      body: JSON.stringify({ text: text, place: place, picture: picture, picture_alt: pictureAlt,
+        parent_id: replyingTo === null ? null : replyingTo.id }),
     });
     const answer = await response.json();
     if (response.status === 401) {
@@ -1575,6 +1851,7 @@ async function sendPost(event) {
     showStatus("");
     textBox.value = "";
     clearPictureBoxes();
+    stopReplying();
     forgetDraft();
     updateCount();
     // The place box is not emptied: the same place is likely next time.
@@ -2238,7 +2515,9 @@ ACTIONS.block = pressBlock;
 // is asked for again, so the blocked person's name leaves it too (who-liked).
 function hidePostsBy(name) {
   for (const postId of Object.keys(postParts)) {
-    if (sameAccount(postParts[postId].item.dataset.author, name)) {
+    // A reply may already be gone with its post (replies: removePost).
+    if (postParts[postId] !== undefined
+        && sameAccount(postParts[postId].item.dataset.author, name)) {
       removePost(postId);
     }
   }
@@ -2380,6 +2659,7 @@ textBox.addEventListener("input", saveDraft);
 timeline.addEventListener("click", clickOnTimeline);
 blockedList.addEventListener("click", clickOnBlockedList);
 postForm.addEventListener("submit", sendPost);
+cancelReplyButton.addEventListener("click", cancelReply);
 loginForm.addEventListener("submit", logIn);
 signupForm.addEventListener("submit", signUp);
 logoutButton.addEventListener("click", logOut);

@@ -268,14 +268,31 @@ class TimelineHandler(BaseHTTPRequestHandler):
         try:
             # A picture and its description are optional (pictures): the model
             # decides what to do when one, both or neither is sent.
-            row = save_post(self.server.db_path, user["id"], data.get("text"),
-                            place=data.get("place"), picture=data.get("picture"),
-                            picture_alt=data.get("picture_alt"))
+            more = {"place": data.get("place"), "picture": data.get("picture"),
+                    "picture_alt": data.get("picture_alt")}
+            # replies: with a parent_id it is a reply. This only chooses which
+            # model function to call; the rules are in the model.
+            if data.get("parent_id") is None:
+                row = save_post(self.server.db_path, user["id"], data.get("text"), **more)
+            else:
+                row = save_reply(self.server.db_path, user["id"], data.get("text"),
+                                 data.get("parent_id"), **more)
         except RuleBroken as problem:
             self.send_problem(400, problem)
             return
         self.send_json(201, post_to_json(row))
         print(post_to_log_line(row), flush=True)   # one line in the terminal for each new post
+        if row["parent_id"] is not None:
+            self.after_reply_saved(row)
+
+    def after_reply_saved(self, row):
+        """replies: called after a reply is saved AND its 201 answer has gone.
+
+        The place for reply-email: it adds its lines here, with the saved row
+        (it has id, author, parent_id and parent_author). The answer has already
+        been sent, so nothing done here can slow a reply or turn it into an error.
+        Today it does nothing.
+        """
 
     def take_like(self, data):
         user = self.signed_in_user()
@@ -656,6 +673,10 @@ PROBLEMS = {
     "block_already": "You have already blocked @{name}.",
     "block_not_there": "You have not blocked @{name}.",
     "like_blocked": "You cannot like this post.",
+    # replies
+    "reply_parent_id_missing": "The reply must say which post it answers.",
+    "reply_to_reply": "You can only reply to a post, not to a reply.",
+    "reply_blocked": "You cannot reply to this post.",
 }
 
 # One code for a wrong name and for a wrong password, so a stranger cannot use
@@ -727,7 +748,7 @@ def connect(db_path):
 
 # The newest version of the database: the number the last upgrade below sets.
 # Each new upgrade raises it by one, and the tests read it from here.
-LATEST_VERSION = 8
+LATEST_VERSION = 9
 
 
 def create_tables(db_path):
@@ -776,6 +797,8 @@ def create_tables(db_path):
         upgrade_to_pictures(connection)
     if version < 8:
         upgrade_to_block(connection)
+    if version < 9:
+        upgrade_to_replies(connection)
     connection.close()
 
 
@@ -1084,6 +1107,42 @@ def upgrade_to_block(connection):
     connection.commit()
 
 
+def upgrade_to_replies(connection):
+    """Version 9: a post can answer another post. Every row is kept.
+
+    posts.parent_id is the id of the post a reply answers, just as author_id
+    points at a user. A normal post, and every old post, has NULL there, so no
+    old row changes. Adding a column with an empty value needs no rebuild.
+
+    - REFERENCES posts(id) is a foreign key: the database refuses a reply to a
+      post that does not exist, and refuses deleting a post that has replies.
+    - posts_by_parent is an index (a sorted list the database keeps), so finding
+      the replies of one post is fast.
+    - replies_are_one_level is a trigger: a rule the database runs by itself
+      before each new post. It refuses a reply to a reply, even if the check in
+      save_reply is got around.
+    A reply count is never kept: it is counted from the rows each time.
+    """
+    connection.execute("BEGIN")
+    try:
+        # Only if it is not there yet, so running this twice is harmless.
+        columns = [c["name"] for c in connection.execute("PRAGMA table_info(posts)")]
+        if "parent_id" not in columns:
+            connection.execute("ALTER TABLE posts ADD COLUMN parent_id INTEGER "
+                               "REFERENCES posts(id)")
+        connection.execute("CREATE INDEX IF NOT EXISTS posts_by_parent ON posts (parent_id)")
+        connection.execute("CREATE TRIGGER IF NOT EXISTS replies_are_one_level "
+                           "BEFORE INSERT ON posts "
+                           "WHEN NEW.parent_id IS NOT NULL "
+                           "AND (SELECT parent_id FROM posts WHERE id = NEW.parent_id) IS NOT NULL "
+                           "BEGIN SELECT RAISE(ABORT, 'A reply cannot be answered.'); END")
+        connection.execute("PRAGMA user_version = 9")
+        connection.commit()
+    except BaseException:
+        connection.rollback()   # nothing is half done
+        raise
+
+
 # Each post, with its author's two names looked up in users, and how many people
 # have liked it. The view reads row["author"], row["display_name"] and row["like_count"].
 # picture_alt is the description of the post's picture, or NULL when it has none
@@ -1093,8 +1152,30 @@ POSTS_WITH_AUTHORS = ("SELECT posts.id, users.name AS author, users.display_name
                       "(SELECT COUNT(*) FROM likes WHERE likes.post_id = posts.id) "
                       "AS like_count, "
                       "(SELECT alt_text FROM pictures WHERE pictures.post_id = posts.id) "
-                      "AS picture_alt "
+                      "AS picture_alt, "
+                      # replies (see VISIBLE_REPLIES below)
+                      "posts.parent_id, "
+                      "(SELECT parent_users.name FROM posts AS parents "
+                      "JOIN users AS parent_users ON parent_users.id = parents.author_id "
+                      "WHERE parents.id = posts.parent_id) AS parent_author, "
+                      "(SELECT COUNT(*) FROM posts AS answers WHERE answers.parent_id = posts.id "
+                      "AND /* visible replies */ 1 = 1) AS reply_count, "
+                      "(SELECT MAX(answers.id) FROM posts AS answers "
+                      "WHERE answers.parent_id = posts.id "
+                      "AND /* visible replies */ 1 = 1) AS newest_reply_id "
                       "FROM posts JOIN users ON users.id = posts.author_id")
+
+# replies: parent_id is the post a reply answers (NULL for a normal post), and
+# parent_author that post's account name, looked up in users, never copied into
+# posts. reply_count is how many replies the post has, counted from the rows,
+# never kept; newest_reply_id is the largest reply id in that count, so the page
+# knows which replies it has already counted.
+#
+# Only the replies the viewer may see are counted: select_posts puts the
+# viewer's visible_to condition in place of VISIBLE_REPLIES (visible_replies).
+# As it is written here, VISIBLE_REPLIES is "1 = 1", so the text still works on
+# its own (post_by_id uses it so, for the writer of a new post): every reply.
+VISIBLE_REPLIES = "/* visible replies */ 1 = 1"
 
 
 def check_name(name):
@@ -1417,7 +1498,7 @@ def log_out(db_path, token):
 # example "place" or "parent_id"). A column name never comes from a request:
 # only a name on this list can reach the SQL. old_clock_time is not on it:
 # only the timestamps upgrade ever writes it.
-POST_EXTRA_COLUMNS = ("posted_at", "place")
+POST_EXTRA_COLUMNS = ("posted_at", "place", "parent_id")
 
 
 # A time is saved as text in UTC (the one clock the whole world agrees on), to
@@ -1478,7 +1559,8 @@ def post_by_id(connection, post_id):
                               (post_id,)).fetchone()
 
 
-def save_post(db_path, user_id, text, now=None, place=None, picture=None, picture_alt=None):
+def save_post(db_path, user_id, text, now=None, place=None, picture=None, picture_alt=None,
+              parent_id=None):
     """Check the rules, save the post by this user, and return the saved row.
 
     The time comes from the server's clock (utc_now), never from the request.
@@ -1488,6 +1570,9 @@ def save_post(db_path, user_id, text, now=None, place=None, picture=None, pictur
     Both are left out (None) for a post with no picture. Every rule is checked
     first; then the post and its picture are saved in one transaction, so a
     broken rule saves nothing, and a post with a picture still counts as one post.
+
+    parent_id is given only by save_reply, after its own rules (replies). A
+    reply is a post, so it is counted by the same rate limit.
     """
     text = check_text(text)
     place = check_place(place)
@@ -1502,7 +1587,13 @@ def save_post(db_path, user_id, text, now=None, place=None, picture=None, pictur
 
     use_allowance(db_path, "post", str(user_id))   # after the rules: an empty post is not counted
     connection = connect(db_path)
-    post_id = insert_post(connection, user_id, text, posted_at=utc_text(now), place=place)
+    reply = {} if parent_id is None else {"parent_id": parent_id}   # replies
+    try:
+        post_id = insert_post(connection, user_id, text, posted_at=utc_text(now), place=place,
+                              **reply)
+    except sqlite3.IntegrityError:
+        connection.close()   # replies: the database refused it; save_reply says why
+        raise
     if kind is not None:
         connection.execute("INSERT INTO pictures (post_id, kind, alt_text, bytes) "
                            "VALUES (?, ?, ?, ?)", (post_id, kind, picture_alt, data))
@@ -1510,6 +1601,92 @@ def save_post(db_path, user_id, text, now=None, place=None, picture=None, pictur
     row = post_by_id(connection, post_id)
     connection.close()
     return row
+
+
+# ---- replies: a post that answers another post ----
+#
+# A reply is a post with a parent_id: the id of the post it answers. Only one
+# level: a reply cannot be answered (the Reply button is only on posts that are
+# not replies, and the database's trigger refuses it too). Replying to your own
+# post is allowed. A reply follows the same rules as a post (text, place,
+# picture), and is counted by the same rate limit, because save_post saves it.
+
+def check_parent_id(parent_id):
+    """Return the id of the post a reply answers, as a number, or raise RuleBroken.
+
+    A whole number, or the same written as digits. Not true or false, not 2.5,
+    not a list: only what the page itself sends.
+    """
+    if isinstance(parent_id, bool) or not isinstance(parent_id, (int, str)) \
+            or not POST_ID_TEXT.fullmatch(str(parent_id).strip()):
+        raise RuleBroken("reply_parent_id_missing")
+    return int(parent_id)
+
+
+def check_reply_parent(connection, parent_id, user_id):
+    """Raise RuleBroken if this user may not answer the post parent_id.
+
+    The post must exist, must not be a reply itself, and its author must not
+    have blocked this user (block). Only reads. It does not close the
+    connection: the caller does.
+    """
+    parent = connection.execute("SELECT parent_id FROM posts WHERE id = ?",
+                                (parent_id,)).fetchone()
+    if parent is None:
+        raise RuleBroken("post_missing")
+    if parent["parent_id"] is not None:
+        raise RuleBroken("reply_to_reply")
+    check_not_blocked_by_author(connection, parent_id, user_id, what="reply")   # block
+
+
+def save_reply(db_path, user_id, text, parent_id, now=None, **more):
+    """Check the rules, save a reply by this user to the post parent_id, and return the row.
+
+    The rules first (the text, then which post), then save_post checks the
+    rest and saves it, so a reply is counted as a post by the rate limit, and
+    a refused reply is not. `more` is what save_post takes besides: place,
+    picture, picture_alt.
+    """
+    text = check_text(text)
+    parent_id = check_parent_id(parent_id)
+    connection = connect(db_path)
+    try:
+        check_reply_parent(connection, parent_id, user_id)
+    finally:
+        connection.close()
+    try:
+        return save_post(db_path, user_id, text, now=now, parent_id=parent_id, **more)
+    except sqlite3.IntegrityError:
+        # The check above passed, but the database refused: the post was deleted
+        # a moment ago (the foreign key), or the trigger refused it. Look again to say why.
+        connection = connect(db_path)
+        try:
+            check_reply_parent(connection, parent_id, user_id)
+        finally:
+            connection.close()
+        raise RuleBroken("post_missing")
+
+
+def has_replies(connection, post_id):
+    """True if any post answers this one. Only reads.
+
+    edit-delete asks this before it deletes a post: a post with replies is kept
+    (shown as deleted), because the database refuses to delete it.
+    """
+    return connection.execute("SELECT 1 FROM posts WHERE parent_id = ? LIMIT 1",
+                              (post_id,)).fetchone() is not None
+
+
+def visible_replies(viewer_id):
+    """The condition that puts VISIBLE_REPLIES right for this viewer, as (sql, params).
+
+    A reply ("answers") is counted only if it is a post this viewer may see:
+    its id is among the posts visible_to allows. visible_to's text names
+    posts and users, and inside this small SELECT those are the reply's own.
+    """
+    visible_sql, visible_params = visible_to(viewer_id)
+    return ("answers.id IN (SELECT posts.id FROM posts JOIN users ON users.id = posts.author_id "
+            "WHERE " + visible_sql + ")"), list(visible_params)
 
 
 def like_count_for(connection, post_id):
@@ -1773,8 +1950,13 @@ def select_posts(connection, conditions, params, viewer_id, order, limit=None):
     """
     visible_sql, visible_params = visible_to(viewer_id)
     where = " AND ".join("(" + condition + ")" for condition in list(conditions) + [visible_sql])
-    sql = POSTS_WITH_AUTHORS + " WHERE " + where + " ORDER BY " + order
-    values = list(params) + list(visible_params)
+    columns = POSTS_WITH_AUTHORS
+    # replies: count only the replies this viewer may see. The condition is in
+    # the column list, before the WHERE, so its values come first.
+    reply_sql, reply_params = visible_replies(viewer_id)
+    sql = columns.replace(VISIBLE_REPLIES, reply_sql) + " WHERE " + where + " ORDER BY " + order
+    values = (reply_params * columns.count(VISIBLE_REPLIES) + list(params)
+              + list(visible_params))
     if limit is not None:
         sql += " LIMIT ?"
         values.append(int(limit))
@@ -2091,8 +2273,8 @@ def blocks_for(db_path, blocker_id):
 
 
 # What a blocked person was trying to do, and the code that refuses it.
-# replies adds one line here: "reply": "reply_blocked".
-BLOCKED_CODES = {"like": "like_blocked"}
+# A blocked person can neither like nor reply to the blocker's posts.
+BLOCKED_CODES = {"like": "like_blocked", "reply": "reply_blocked"}
 
 
 def check_not_blocked_by_author(connection, post_id, user_id, what="like"):
@@ -2119,7 +2301,10 @@ def post_to_json(row):
     return {"id": row["id"], "author": row["author"], "display_name": row["display_name"],
             "text": row["text"], "posted_at": row["posted_at"],
             "old_clock_time": row["old_clock_time"], "like_count": row["like_count"],
-            "place": row["place"], "picture": picture_to_json(row)}
+            "place": row["place"], "picture": picture_to_json(row),
+            # replies: null, null, 0 and null for a post nobody answered.
+            "parent_id": row["parent_id"], "parent_author": row["parent_author"],
+            "reply_count": row["reply_count"], "newest_reply_id": row["newest_reply_id"]}
 
 
 def picture_to_json(row):

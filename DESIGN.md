@@ -593,6 +593,39 @@ each.
   mixed in among the ones shown, and neither `after` nor `before` would bring them. Logging in or
   out also draws it again, because someone else (or nobody) is now looking.
 
+## Replies
+
+Under each post there is a **Reply** button. A signed-in person presses it, and the main post box
+says *Replying to @aiko · Cancel*. The reply appears under the post it answers, oldest reply
+first, with *Replying to @aiko* above its text, and the post says *2 replies*. A reply is a normal
+post in every other way: an author, a time, a heart, a place, a picture.
+
+- **A reply is a post with a `parent_id`**: the id of the post it answers, just as `author_id`
+  points at a user. A normal post has `NULL` there. It is sent through the same `POST /posts`,
+  with `parent_id`, so the rules and the rate limit are the same: `save_reply` checks which post,
+  then saves through `save_post`.
+- **One level only.** A reply cannot be answered: only a post that is not a reply has a Reply
+  button, `save_reply` refuses it (`reply_to_reply`), and in the end the database refuses it too,
+  with a *trigger* (a rule the database runs by itself before each new post),
+  `replies_are_one_level`.
+- **The parent must exist.** `parent_id` is a foreign key to `posts(id)`, so the database refuses a
+  reply to a missing post, and refuses deleting a post that still has replies. `edit-delete` asks
+  `has_replies` first, and keeps such a post as "deleted".
+- **A blocked person cannot reply** to the blocker's posts (`reply_blocked`), as they cannot like
+  them.
+- **The count is never stored.** The server counts the rows with that `parent_id` that the reader
+  may see (`reply_count`; a reply by someone you blocked is not counted for you), and says which
+  reply was the newest it counted (`newest_reply_id`). A reply that arrives later with a larger id
+  was not counted yet, so the page adds one. The page never counts the replies it shows itself,
+  because some may not be loaded.
+- **The replies of a post sit in their own list just after it**, not inside it, so a post that is
+  built again (`redrawPost`) keeps its replies under it, and a post taken away (`removePost`) takes
+  them with it. A reply to a post already on the page goes under it at once; it is not one of the
+  "3 new posts". An older page can bring a reply before its post: it moves under the post when the
+  post arrives.
+- **A draft remembers the post it answers.** The draft is now JSON, `{"v": 2, "text", "reply_to"}`.
+  A draft kept before replies is plain text, and still loads.
+
 ## 8. Build or borrow
 
 - **Built:** the page, the server and the data model.
