@@ -34,6 +34,12 @@
   box-sizing: border-box;
 }
 
+/* A part of the page marked hidden is never shown, even if a rule below gives it
+   a display of its own (as .account-forms does). */
+[hidden] {
+  display: none !important;
+}
+
 body {
   margin: 0;
   background: var(--background);
@@ -83,8 +89,73 @@ button:focus {
   outline-offset: 2px;
 }
 
+/* The two name boxes, side by side on a wide screen, one above the other on a phone. */
 .name-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 16px;
   margin-bottom: 20px;
+}
+
+/* The @ in front of the account name box, so nobody has to type it. */
+.at-box {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--quiet);
+  font-weight: 700;
+}
+
+/* The Log in and Sign up forms, side by side on a wide screen, one above the
+   other on a phone. Only with-backend/ has accounts, but both copies of this
+   file stay the same. */
+.account-forms {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+.account-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px 18px;
+  border: 2px solid var(--border);
+  border-radius: 12px;
+  background: var(--card);
+}
+
+.account-form h2 {
+  margin: 0 0 4px;
+  font-size: 30px;
+}
+
+.account-form label {
+  margin: 8px 0 0;
+}
+
+.account-form button {
+  align-self: flex-start;
+  margin-top: 12px;
+}
+
+/* "Signed in as Aiko Tanaka @aiko · Log out" */
+.who {
+  margin: 0 0 16px;
+}
+
+.who .post-handle {
+  margin-left: 4px;
+}
+
+/* A button that looks like a link, so "Log out" sits inside the sentence. */
+.link-button {
+  padding: 0;
+  border-radius: 0;
+  background: none;
+  color: var(--author);
+  text-decoration: underline;
 }
 
 .post-row {
@@ -140,6 +211,7 @@ button {
   font-weight: 700;
 }
 
+.post-handle,
 .post-time {
   margin-left: 12px;
   color: var(--quiet);

@@ -11,8 +11,17 @@
     <h1>Timeline</h1>
 
     <div class="name-row">
-      <label for="author">Your name</label>
-      <input id="author" type="text" autocomplete="off" placeholder="Aiko">
+      <div>
+        <label for="author">Account name</label>
+        <div class="at-box">
+          <span aria-hidden="true">@</span>
+          <input id="author" type="text" autocomplete="off" placeholder="aiko">
+        </div>
+      </div>
+      <div>
+        <label for="display-name">Display name</label>
+        <input id="display-name" type="text" autocomplete="off" placeholder="Aiko Tanaka">
+      </div>
     </div>
 
     <form id="post-form">

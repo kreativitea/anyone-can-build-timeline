@@ -10,19 +10,54 @@
   <main>
     <h1>Timeline</h1>
 
-    <div class="name-row">
-      <label for="author">Your name</label>
-      <input id="author" type="text" autocomplete="off" placeholder="Aiko">
-    </div>
+    <!-- Shown when nobody is logged in in this window. Both start hidden: the
+         page asks the server who is logged in, then shows one of the two. -->
+    <section id="signed-out" class="account-forms" hidden>
+      <form id="login-form" class="account-form">
+        <h2>Log in</h2>
+        <label for="login-name">Account name</label>
+        <div class="at-box">
+          <span aria-hidden="true">@</span>
+          <input id="login-name" type="text" autocomplete="username" placeholder="aiko">
+        </div>
+        <label for="login-password">Password</label>
+        <input id="login-password" type="password" autocomplete="current-password">
+        <button type="submit">Log in</button>
+      </form>
 
-    <form id="post-form">
-      <label for="text">What is happening?</label>
-      <textarea id="text" rows="3" placeholder="What is happening?"></textarea>
-      <div class="post-row">
-        <span id="count" class="count">0 / 280</span>
-        <button type="submit">Post</button>
-      </div>
-    </form>
+      <form id="signup-form" class="account-form">
+        <h2>Sign up</h2>
+        <label for="signup-name">Account name</label>
+        <div class="at-box">
+          <span aria-hidden="true">@</span>
+          <input id="signup-name" type="text" autocomplete="username" placeholder="aiko">
+        </div>
+        <label for="signup-display-name">Display name</label>
+        <input id="signup-display-name" type="text" autocomplete="nickname"
+               placeholder="Aiko Tanaka">
+        <label for="signup-password">Password (8 characters or more)</label>
+        <input id="signup-password" type="password" autocomplete="new-password">
+        <button type="submit">Sign up</button>
+      </form>
+    </section>
+
+    <!-- Shown when someone is logged in in this window. -->
+    <section id="signed-in" hidden>
+      <p class="who">
+        Signed in as <span id="who-display-name" class="post-author"></span>
+        <span id="who-account-name" class="post-handle"></span> ·
+        <button type="button" id="logout" class="link-button">Log out</button>
+      </p>
+
+      <form id="post-form">
+        <label for="text">What is happening?</label>
+        <textarea id="text" rows="3" placeholder="What is happening?"></textarea>
+        <div class="post-row">
+          <span id="count" class="count">0 / 280</span>
+          <button type="submit">Post</button>
+        </div>
+      </form>
+    </section>
 
     <p id="status" class="status" role="status"></p>
 

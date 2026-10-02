@@ -4,11 +4,37 @@
 // like taken back to the server (server.py), and every second it asks the
 // server: "anything new?"
 // Because every window asks the same server, every window sees every post.
+//
+// Posting and liking need a login. The page never says who you are: the
+// server knows from the session cookie, which the browser sends by itself.
+// The page cannot even read that cookie (it is HttpOnly), so it asks the
+// server "who am I?" with GET /sessions.
 
+// The same rules as the model in server.py, with the same names, so a rule
+// changed on one side is easy to find on the other.
 const MAX_TEXT = 280;
+const MAX_AUTHOR = 40;
+const MAX_DISPLAY_NAME = 50;
+const MIN_PASSWORD = 8;
+const MAX_PASSWORD = 200;
+// The account name rule, the same as ACCOUNT_NAME in server.py.
+const ACCOUNT_NAME = /^[A-Za-z0-9_]+$/;
+// The characters a display name may not hold, the same as HIDDEN_CHARACTERS in server.py.
+const HIDDEN_CHARACTERS = /[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u2028-\u202e\u2066-\u2069]/;
 const CANNOT_REACH = "Cannot reach the server. Trying again every second.";
 
-const authorBox = document.getElementById("author");
+const signedOutSection = document.getElementById("signed-out");
+const signedInSection = document.getElementById("signed-in");
+const loginForm = document.getElementById("login-form");
+const loginNameBox = document.getElementById("login-name");
+const loginPasswordBox = document.getElementById("login-password");
+const signupForm = document.getElementById("signup-form");
+const signupNameBox = document.getElementById("signup-name");
+const signupDisplayNameBox = document.getElementById("signup-display-name");
+const signupPasswordBox = document.getElementById("signup-password");
+const whoDisplayName = document.getElementById("who-display-name");
+const whoAccountName = document.getElementById("who-account-name");
+const logoutButton = document.getElementById("logout");
 const textBox = document.getElementById("text");
 const countLine = document.getElementById("count");
 const statusLine = document.getElementById("status");
@@ -17,6 +43,9 @@ const postForm = document.getElementById("post-form");
 
 // The id of the newest post this window has shown. 0 means "none yet".
 let lastId = 0;
+
+// Who is logged in in this window: { account_name, display_name }, or null.
+let account = null;
 
 // For each post on screen, its heart button and its count, kept by post id, so
 // a new count from the server can be written straight into the right post.
@@ -33,9 +62,14 @@ function showPost(post) {
   const item = document.createElement("li");
   item.className = "post";
 
+  // The display name first (Aiko Tanaka), then the account name (@aiko).
   const author = document.createElement("span");
   author.className = "post-author";
-  author.textContent = post.author;
+  author.textContent = post.display_name;
+
+  const handle = document.createElement("span");
+  handle.className = "post-handle";
+  handle.textContent = "@" + post.author;
 
   const time = document.createElement("span");
   time.className = "post-time";
@@ -65,7 +99,7 @@ function showPost(post) {
   likeParts[post.id] = { button: likeButton, count: likeCount };
 
   // textContent, never innerHTML: a post is shown as words, so it cannot run code on the page.
-  item.append(author, time, text, likeRow);
+  item.append(author, handle, time, text, likeRow);
   timeline.prepend(item);
 }
 
@@ -87,11 +121,87 @@ function showStatus(words) {
   statusLine.textContent = words;
 }
 
+// Logged in: show who, and the post form. Hide the two account forms.
+function showSignedIn(who) {
+  account = who;
+  whoDisplayName.textContent = who.display_name;
+  whoAccountName.textContent = "@" + who.account_name;
+  signedOutSection.hidden = true;
+  signedInSection.hidden = false;
+}
+
+// Not logged in: show the Log in and Sign up forms, and why, if there is a reason.
+// The post box is emptied too, so the next person to log in on this computer
+// does not see the last person's unsent words.
+function showSignedOut(reason) {
+  account = null;
+  signedInSection.hidden = true;
+  signedOutSection.hidden = false;
+  textBox.value = "";
+  updateCount();
+  showStatus(reason);
+}
+
+// The rules for a new account, the same as check_name, check_display_name and
+// check_password in server.py. Returns the broken rule, or "" if none.
+function accountProblem(name, displayName, password) {
+  if (name === "") {
+    return "The name must not be empty.";
+  }
+  if (name.length > MAX_AUTHOR) {
+    return "The name must be " + MAX_AUTHOR + " characters or fewer.";
+  }
+  if (!ACCOUNT_NAME.test(name)) {
+    return "The account name may use only letters, numbers and _.";
+  }
+  if (displayName.length > MAX_DISPLAY_NAME) {
+    return "The display name must be " + MAX_DISPLAY_NAME + " characters or fewer.";
+  }
+  if (HIDDEN_CHARACTERS.test(displayName)) {
+    return "The display name must not have hidden characters or line breaks.";
+  }
+  // A password is never trimmed: a space is part of it.
+  if (password.length < MIN_PASSWORD) {
+    return "The password must be at least " + MIN_PASSWORD + " characters.";
+  }
+  if (password.length > MAX_PASSWORD) {
+    return "The password must be " + MAX_PASSWORD + " characters or fewer.";
+  }
+  return "";
+}
+
+// The rules for a post, the same as check_text in server.py.
+function textProblem(text) {
+  if (text === "") {
+    return "The post must not be empty.";
+  }
+  if (text.length > MAX_TEXT) {
+    return "The post must be " + MAX_TEXT + " characters or fewer.";
+  }
+  return "";
+}
+
 // The live count under the box: "x / 280".
 function updateCount() {
   const length = textBox.value.length;
   countLine.textContent = length + " / " + MAX_TEXT;
   countLine.classList.toggle("too-long", length > MAX_TEXT);
+}
+
+// When the page opens, ask the server who is logged in in this window.
+async function askWhoIAm() {
+  try {
+    const response = await fetch("/sessions");
+    const answer = await response.json();
+    if (response.ok) {
+      showSignedIn(answer);
+    } else {
+      // 401: nobody. That is not a problem, so no reason is shown.
+      showSignedOut("");
+    }
+  } catch (error) {
+    showSignedOut(CANNOT_REACH);
+  }
 }
 
 // Ask the server for every post newer than the last one we have.
@@ -104,8 +214,9 @@ async function checkForNewPosts() {
       showPost(post);
     }
     // A like changes no post, so `after` would never bring one. The counts are
-    // asked for separately, and all of them come back each time.
-    const likesAnswer = await fetch("/likes?author=" + encodeURIComponent(authorBox.value));
+    // asked for separately, and all of them come back each time. "mine" comes
+    // from the cookie: it is empty when nobody is logged in.
+    const likesAnswer = await fetch("/likes");
     const likes = await likesAnswer.json();
     for (const postId in likeParts) {
       showLike(postId, likes.counts[postId] || 0, likes.mine.includes(Number(postId)));
@@ -124,17 +235,101 @@ async function keepChecking() {
   setTimeout(keepChecking, 1000);
 }
 
-// Send a new post to the server.
-async function sendPost(event) {
+// After a login, a sign-up or a log-out, the hearts this window shows as
+// pressed belong to someone else. Ask the server again straight away.
+async function afterAccountChange() {
+  loginPasswordBox.value = "";
+  signupPasswordBox.value = "";
+  await checkForNewPosts();
+}
+
+// Log in with an account name and password.
+async function logIn(event) {
   event.preventDefault();
-  const author = authorBox.value;
-  const text = textBox.value;
+  const name = loginNameBox.value.trim();
+  const password = loginPasswordBox.value;
+  if (name === "" || password === "") {
+    showStatus("Please type your account name and your password.");
+    return;
+  }
+  try {
+    const response = await fetch("/sessions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ account_name: name, password: password }),
+    });
+    const answer = await response.json();
+    if (!response.ok) {
+      // The same words for a wrong name and a wrong password: see WRONG_LOGIN in server.py.
+      showSignedOut(answer.error);
+      return;
+    }
+    showStatus("");
+    showSignedIn(answer);
+    await afterAccountChange();
+  } catch (error) {
+    showStatus(CANNOT_REACH);
+  }
+}
+
+// Make a new account. The server logs it in at once.
+async function signUp(event) {
+  event.preventDefault();
+  const name = signupNameBox.value.trim();
+  const displayName = signupDisplayNameBox.value.trim();
+  const password = signupPasswordBox.value;
 
   // A quick check on the page, so the person does not wait for an answer.
   // The server checks the same rules again. Never trust only the screen:
   // anyone can send a request without using this page at all.
-  if (text.trim() === "") {
-    showStatus("The post must not be empty.");
+  const problem = accountProblem(name, displayName, password);
+  if (problem !== "") {
+    showStatus(problem);
+    return;
+  }
+  try {
+    const response = await fetch("/accounts", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ account_name: name, display_name: displayName, password: password }),
+    });
+    const answer = await response.json();
+    if (!response.ok) {
+      // The server refused it. It says which rule was broken.
+      showStatus(answer.error);
+      return;
+    }
+    showStatus("");
+    showSignedIn(answer);
+    await afterAccountChange();
+  } catch (error) {
+    showStatus(CANNOT_REACH);
+  }
+}
+
+// Log out. The server deletes this window's session and tells the browser
+// to forget the cookie.
+async function logOut() {
+  try {
+    await fetch("/sessions", { method: "DELETE" });
+    showSignedOut("");
+    await afterAccountChange();
+  } catch (error) {
+    showStatus(CANNOT_REACH);
+  }
+}
+
+// Send a new post to the server. It says only what the post says: who wrote
+// it is the person logged in, and the server knows that from the cookie.
+async function sendPost(event) {
+  event.preventDefault();
+  const text = textBox.value;
+
+  // A quick check on the page, so the person does not wait for an answer.
+  // The server checks the same rules again.
+  const problem = textProblem(text.trim());
+  if (problem !== "") {
+    showStatus(problem);
     return;
   }
 
@@ -142,9 +337,14 @@ async function sendPost(event) {
     const response = await fetch("/posts", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ author: author, text: text }),
+      body: JSON.stringify({ text: text }),
     });
     const answer = await response.json();
+    if (response.status === 401) {
+      // The login has ended. Show the Log in form, and the server's reason.
+      showSignedOut(answer.error);
+      return;
+    }
     if (!response.ok) {
       // The server refused the post. It says which rule was broken.
       showStatus(answer.error);
@@ -165,13 +365,10 @@ async function sendPost(event) {
 // pressed. The method says which: POST adds a like, DELETE removes one.
 async function pressHeart(postId) {
   const parts = likeParts[postId];
-  const author = authorBox.value;
 
-  // A quick check on the page, so the person does not wait for an answer. The
-  // server checks the same rule again: anyone can send a request without using
-  // this page at all.
-  if (author.trim() === "") {
-    showStatus("The name must not be empty.");
+  // Only a person who is logged in can like. The server checks this again.
+  if (account === null) {
+    showStatus("Please log in to like a post.");
     return;
   }
 
@@ -187,9 +384,15 @@ async function pressHeart(postId) {
     const response = await fetch("/likes", {
       method: liked ? "DELETE" : "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ author: author, post_id: postId }),
+      body: JSON.stringify({ post_id: postId }),
     });
     const answer = await response.json();
+    if (response.status === 401) {
+      // The login has ended. Show the Log in form, and the server's reason.
+      showSignedOut(answer.error);
+      await checkForNewPosts();
+      return;
+    }
     if (!response.ok) {
       // The server refused it, and says which rule was broken. This window had
       // the heart wrong, so ask the server what is true instead of guessing.
@@ -218,4 +421,8 @@ function clickOnTimeline(event) {
 textBox.addEventListener("input", updateCount);
 timeline.addEventListener("click", clickOnTimeline);
 postForm.addEventListener("submit", sendPost);
+loginForm.addEventListener("submit", logIn);
+signupForm.addEventListener("submit", signUp);
+logoutButton.addEventListener("click", logOut);
+askWhoIAm();
 keepChecking();

@@ -15,10 +15,11 @@ the other has a backend that every window shares.
 
 ## 2. Not in this version
 
-- No accounts, passwords or sign-in. Each window types a display name. A person is their name, so
-  a like can only be *one like per name*, not one per person: someone who types another name can
-  like the same post again. Real one-per-person likes need sign-in, which is why that is the first
-  thing this list gives up.
+- No password reset (it needs email), no changing a password or a display name, and no deleting an
+  account.
+- No limit on login attempts. That is its own feature, `rate-limit`.
+- No HTTPS. The server listens on `127.0.0.1` only, so the password never leaves the computer.
+- No login in `page-only/`. It is a demo of a page with no server, so it has nothing to log in to.
 - No follows, replies, deleting or editing. They are left for whoever extends the app.
 - No pictures. A picture needs a second kind of storage for its files, which is a design of its own.
 - No realtime connection (no WebSockets). The page asks for new posts once a second.
@@ -27,13 +28,23 @@ the other has a backend that every window shares.
 
 ## 3. Screens
 
-One screen, the same in both versions:
+One screen in `with-backend/`:
 
-- **The timeline.** A name field at the top, a *What is happening?* box with a live count
-  (*x / 280*) and a **Post** button, and the timeline below it, newest first (author, text, time,
-  and a heart with the number of people who pressed it). Its one job: show everyone's posts, and
-  take a new one. A heart you have pressed is shown in a different colour, and pressing it again
-  takes the like back.
+- **Signed out.** A *Log in* form (account name, password) and a *Sign up* form (account name,
+  display name, password), side by side. The account name box has an `@` in front of it, so nobody
+  has to type it. The timeline is below, so anyone can read it. Pressing a heart says *Please log in
+  to like a post.*
+- **Signed in.** *Signed in as Aiko Tanaka @aiko · Log out*, then a *What is happening?* box with a
+  live count (*x / 280*) and a **Post** button, and the timeline below it, newest first (display
+  name, `@`account name, time, text, and a heart with the number of people who pressed it). A heart
+  you have pressed is shown in a different colour, and pressing it again takes the like back.
+
+When the page opens, it asks the server who is logged in, then shows one of the two. Whenever the
+server answers *401* (nobody is logged in), the page shows the signed-out view and the server's
+reason, and empties the post box.
+
+`page-only/` is a demo with its own simpler screen: two name boxes, the post box and the timeline,
+with no login and no hearts.
 
 Large type and high contrast, so that it can be read from across a room.
 
@@ -54,7 +65,7 @@ index.html · style.css · app.js  ──  server.py  ────────�
 |---|---|---|
 | **Frontend** (runs on the user's device) | `index.html` · `style.css` · `app.js` | the same three files; `app.js` talks to the server instead of the browser |
 | **Backend** (runs on the server) | none: the rules run in `app.js` | `server.py`, Python 3 standard library (`http.server`), written in three labelled parts: **controller · model · view** |
-| **Data** (runs on the server) | the browser's `sessionStorage` | `timeline.db`, one SQLite file with three tables, `users`, `posts` and `likes`, created by the server when it starts |
+| **Data** (runs on the server) | the browser's `sessionStorage` | `timeline.db`, one SQLite file with four tables, `users`, `posts`, `likes` and `sessions`, created by the server when it starts |
 
 **Technologies, and why each one.**
 
@@ -62,21 +73,30 @@ index.html · style.css · app.js  ──  server.py  ────────�
 - **Python 3 standard library only** (`http.server`, `sqlite3`, `json`). Python ships on a Mac, so
   there is nothing to install. The code avoids anything newer than Python 3.9.
 - **SQLite.** One file, no database server of its own, and the `sqlite3` command can open it.
-- **Polling, once a second.** `fetch('/posts?after=<last id>')` and `fetch('/likes?author=<name>')`
+- **Polling, once a second.** `fetch('/posts?after=<last id>')` and `fetch('/likes')`
   on a timer: each window asks the server *anything new?* It is the simplest thing that works.
+- **`hashlib.pbkdf2_hmac`, from the standard library, for passwords.** It hashes the password with a
+  random salt 600000 times, so a stolen copy of the database is slow to guess from.
+- **A session cookie, `HttpOnly` and `SameSite=Strict`.** The page's JavaScript cannot read it, and
+  the browser sends it only with requests from this site.
 - **`sessionStorage`, not `localStorage`, for the page-only version.** Two normal windows of one
   browser share `localStorage`, which would make the page-only version look shared. `sessionStorage`
   belongs to one window, as each person's phone has its own storage, and it survives a reload.
 
-**The interfaces.**
+**The interfaces.** Who is asking always comes from the session cookie. A name in the JSON is
+never read. Every request with a body must say `Content-Type: application/json`.
 
 | Request | What goes in | What comes out |
 |---|---|---|
-| `POST /posts` | `{"author": "Aiko", "text": "the library is open late tonight"}` | the saved post, with its `id` and `posted_at` · or `400` with the rule it broke |
+| `POST /accounts` | `{"account_name": "aiko", "display_name": "Aiko Tanaka", "password": "…"}` | `201`, the cookie, and `{"account_name", "display_name"}` · or `400` with the rule it broke |
+| `POST /sessions` | `{"account_name": "aiko", "password": "…"}` | `201`, the cookie, and `{"account_name", "display_name"}` · or `401` |
+| `GET /sessions` | the cookie | `200` and `{"account_name", "display_name"}` · or `401` if nobody is logged in |
+| `DELETE /sessions` | the cookie | `200`, and the cookie is cleared |
+| `POST /posts` | `{"text": "the library is open late tonight"}` | the saved post, with its `id` and `posted_at` · or `400` with the rule it broke · or `401` |
 | `GET /posts?after=12` | the last `id` this window has | every post with a larger `id`, oldest first |
-| `POST /likes` | `{"author": "Ben", "post_id": 7}` | `{"post_id": 7, "like_count": 3}` · or `400` with the rule it broke |
-| `DELETE /likes` | `{"author": "Ben", "post_id": 7}` | the same answer, with the count one lower · or `400` if there was no such like |
-| `GET /likes?author=Ben` | the name this window has typed | `{"counts": {"7": 3}, "mine": [7]}`: how many likes each post has, and which posts this name has liked |
+| `POST /likes` | `{"post_id": 7}` | `{"post_id": 7, "like_count": 3}` · or `400` with the rule it broke · or `401` |
+| `DELETE /likes` | `{"post_id": 7}` | the same answer, with the count one lower · or `400` if there was no such like · or `401` |
+| `GET /likes` | the cookie, if there is one | `{"counts": {"7": 3}, "mine": [7]}`: how many likes each post has, and which posts this person has liked (`mine` is empty when nobody is logged in) |
 | `GET /` and the three files | nothing | the page |
 
 Pressing a heart is one idea to a person, but two requests: the **method** says which, so `POST`
@@ -89,19 +109,27 @@ row. That is why the counts have a request of their own, and why it returns *all
 time. `mine` is what lets a window show the right hearts as pressed after a reload, instead of the
 page having to remember.
 
-**The model's rules:** text is not empty after trimming · text is at most 280 characters · author
-is not empty, at most 40 characters · a like says which post it is for, and that post exists · the
-same name cannot like the same post twice · a like cannot be taken back if it was never there. The server checks them even though the page checks for an
-empty post too, because a user can change anything that runs on their own device.
+**The model's rules:** an account name is letters, numbers and `_` only, at most 40 characters, and
+unique even if the capitals differ · a display name is at most 50 characters and has no line
+breaks, control characters or marks that turn text around (empty means "use the account name") · a
+password is 8 to 200 characters and is never trimmed · text is not empty after trimming · text is at
+most 280 characters · a like says which post it is for, and that post exists · the same person
+cannot like the same post twice · a like cannot be taken back if it was never there · posting and
+liking need a login. The server checks them even though the page checks them too, because a user
+can change anything that runs on their own device.
 
 ## 5. The data model
 
-Three tables:
+Four tables:
 
 | `users` | |
 |---|---|
 | `id` | integer, primary key, given by SQLite |
-| `name` | text, the display name, unique |
+| `name` | text, the account name (`aiko`): letters, numbers and `_` only, unique, and unique again with capitals ignored (`users_name_any_case`) |
+| `display_name` | text, the name shown on each post (*Aiko Tanaka*), up to 50 characters, not unique |
+| `password_salt` | text, 16 random bytes as hex, different for every user |
+| `password_hash` | text, the password hashed with the salt, as hex. Never the password itself |
+| `password_rounds` | integer, how many times it was hashed (600000), so the number can be raised later |
 
 | `posts` | |
 |---|---|
@@ -116,13 +144,29 @@ Three tables:
 | `user_id` | integer, foreign key: the `id` of a row in `users` |
 | | `PRIMARY KEY (post_id, user_id)`: the two together, so each pair can appear only once |
 
-Example rows: `users` `1 · Aiko` · `2 · Ben` · `posts` `1 · 1 · the library is open late tonight ·
-15:42` · `2 · 2 · thanks! · 15:42` · `likes` `1 · 2` (Ben liked post 1).
+| `sessions` | |
+|---|---|
+| `token_hash` | text, primary key: the SHA-256 hash of the token in the cookie. Never the token itself |
+| `user_id` | integer, foreign key: the `id` of a row in `users` |
+| `expires_at` | integer, seconds since 1970: 30 days after the login |
 
-There are no accounts, so a user is found by name: the first post with a new name adds that person
-to `users`, and every later post with the same name points at the same row. Each name is kept once,
-and each post points at its author by number. A like works the same way: it points at a post and at
-a user, both by number, and nothing else.
+Example rows: `users` `1 · aiko · Aiko Tanaka · 9f3a… · 5c1e… · 600000` · `2 · ben · Ben Ito · …` ·
+`posts` `1 · 1 · the library is open late tonight · 15:42` · `likes` `1 · 2` (Ben liked post 1) ·
+`sessions` `a41b… · 1 · 1793520000`.
+
+Only sign-up adds a user. Each name is kept once, and each post points at its author by number. A
+like works the same way: it points at a post and at a user, both by number, and nothing else. A
+session is the same again: logging out deletes its row, and an old one stops working when
+`expires_at` has passed.
+
+**Upgrading an older file.** A `timeline.db` made before accounts has `users (id, name)` only. SQLite
+keeps a version number inside the file (`PRAGMA user_version`). When the server starts it makes the
+tables as they were at version 0, then runs each upgrade the file has not had yet. Version 1,
+`upgrade_to_accounts`, adds the new columns and `sessions` in one transaction, and keeps every row.
+An old user's display name starts as their name, and they have no password, so nobody can log in as
+them. The first person to sign up with an old name (capitals ignored) claims it, and its old posts
+and likes. A name that breaks the account-name rule, such as one with a space, can never be claimed:
+its posts stay, with no owner.
 
 **There is no count column.** One row in `likes` means "this person liked this post", and a count is
 `COUNT(*)` over those rows, worked out whenever it is asked for. A stored count would be a second
@@ -154,29 +198,43 @@ back — and solves it with a flag that allows one press at a time.
 
 ## 6. How I will know it works
 
-1. When a post is sent with text, it should come back with an `id` and a time, and the same name
-   should always point at the same user.
-2. When a window asks for posts after an `id`, it should get only newer posts, oldest first.
-3. When two windows are open on the backend version, a post from one should appear in the other
-   within a second, and a heart pressed in one should change the count in the other within a second.
-4. When a heart is pressed a second time, the like should be taken back: the row should be gone, the
+1. When a person signs up, they should be logged in at once, with a cookie the page cannot read. The
+   database should hold a salted hash of the password, never the password itself, and two people
+   with the same password should get two different hashes.
+2. When a person logs in with the right password they should get in. A wrong name and a wrong
+   password should get the same message. Logging out should delete the session row, and an expired
+   session should not work.
+3. When a post is sent by a signed-in person, it should come back with an `id` and a time, and be
+   theirs, even if the JSON names someone else. Without a login, posting and liking should get `401`.
+4. When a window asks for posts after an `id`, it should get only newer posts, oldest first.
+5. When two windows are open, a post from one should appear in the other within a second, and a
+   heart pressed in one should change the count in the other within a second.
+6. When a heart is pressed a second time, the like should be taken back: the row should be gone, the
    count one lower, and liking it again should work. When a window that has the heart wrong presses
    it, the server should refuse and say why, and the page should ask again rather than guess.
-5. **And when it goes wrong:** when a post is empty, or longer than 280 characters, the server
-   should refuse it and say which rule it broke. A like with no name, or for a post that does not
-   exist, should be refused the same way. When the server is stopped, the page should say
-   *Cannot reach the server*, and recover by itself when the server starts again.
+7. When an older `timeline.db` is opened, every user, post and like should still be there, and the
+   first sign-up with an old name should claim it, once.
+8. **And when it goes wrong:** when a post is empty, or longer than 280 characters, the server
+   should refuse it and say which rule it broke. An account name with a space or a symbol, a name
+   already taken (in any capitals), a display name over 50 characters or with a hidden character, or
+   a password under 8 characters should be refused the same way. A request that is not JSON should
+   be refused. When the server is stopped, the page should say *Cannot reach the server*, and
+   recover by itself when the server starts again.
 
-Sentences 1, 2 and 4, and the first half of 5, are checked by `make test`. Sentence 3 and the second
-half of 5 are browser behaviour, and are checked by hand, in two windows.
+Sentences 1, 2, 3, 4, 6 and 7, and the first half of 8, are checked by `make test`. Sentence 5 and
+the second half of 8 are browser behaviour, and are checked by hand, in two windows (one of them
+private, so each has its own cookie).
 
-`make test` also walks one whole journey end to end, in `JourneyTest`: two people like and unlike
-the same post through the real server over real HTTP, and after every step the database file is
-opened and read with SQL, so a step is believed only if the rows agree with what the page was told.
-Every request it sends is one `app.js` really sends, with the same method and the same JSON. The
-page's own JavaScript is not run by it — that would need a browser or Node, and this project needs
-only `python3` — so `PageAndServerAgreeTest` reads `app.js` instead and checks that every request it
-names is one the server answers. A route renamed on one side and not the other fails there.
+`make test` also walks one whole journey end to end, in `JourneyTest`: two people sign up, post,
+like and unlike through the real server over real HTTP, each with a cookie jar of their own, as two
+browsers would. One tries to post as the other and fails; one logs out and cannot like, then logs
+in again and can. After every step the database file is opened and read with SQL, so a step is
+believed only if the rows agree with what the page was told. Every request it sends is one `app.js`
+really sends, with the same method and the same JSON. The page's own JavaScript is not run by it —
+that would need a browser or Node, and this project needs only `python3` — so
+`PageAndServerAgreeTest` reads `app.js` instead. It checks that every request the page names is
+one the server answers, that the JSON names the page sends are exactly the ones the server reads,
+and that the page has the model's limits and patterns.
 
 ---
 
@@ -192,8 +250,15 @@ names is one the server answers. A route renamed on one side and not the other f
 | A `like_count` column on `posts` would save counting the rows every time. | design | reject | Two copies of one fact can drift apart, and this timeline is far too small for that to cost anything. | Nothing; the count is `COUNT(*)`. |
 | `GET /posts?after=<id>` never carries a like, so other windows would never see one. | design | accept | It would have looked like a bug in the polling, when it is really what `after` means. | A request of its own, `GET /likes`, asked for in the same once-a-second tick. |
 | A model check alone cannot stop two likes that arrive at the same moment. | design | accept | The server is threaded, so the race is real, not theoretical. | `PRIMARY KEY (post_id, user_id)`, so the database refuses the second row. |
-| Without accounts, a person can like twice by typing another name. | product | accept | Honest about what "one like each" can mean with no sign-in. | Nothing in the code; section 2 says so. |
-| One `POST /likes` that flips the like would be half the code of a second route. | design | reject | It can do the opposite of what was meant: a heart that looks unpressed because the same name liked it in another window would be *unliked* by a press meant to like it. | Nothing; `DELETE` says what happens. |
+| Without accounts, a person can like twice by typing another name. | product | accept | Honest about what "one like each" can mean with no sign-in. | Accounts: a like belongs to a signed-in user, found from the cookie. |
+| Anyone can post as anyone by typing their name. | security | accept | It is the reason accounts exist. | Who is asking comes only from the session cookie; a name in the JSON is never read. |
+| Anyone can claim an old name from before accounts, by signing up with it first. | security | accept (owner's decision) | The old names never had passwords, so there is no way to tell who they belonged to. The timeline is small and the people know each other. | The first sign-up claims it, in one `UPDATE … WHERE password_hash IS NULL`, so only one can win. |
+| Sign-up says "That account name is taken", so it shows which names exist. | security | accept | Every name is shown next to every post anyway. Login still gives one message for a wrong name and a wrong password. | Nothing. |
+| There is no limit on login attempts, so a password can be guessed over and over. | security | accept for now | 600000 rounds make each guess slow, and the server listens on `127.0.0.1` only. | Nothing here; it is its own feature, `rate-limit`. |
+| A copy of `timeline.db` would give away every password and every login. | security | accept | A file can be copied. | Only a salted, slow hash of each password, and only a hash of each session token, are kept. |
+| A form on another website could post with a signed-in person's cookie. | security | accept | That is how cross-site request forgery works. | `SameSite=Strict` on the cookie, and every request with a body must be `application/json`, which another site cannot send without the server agreeing. |
+| A display name with a line break or a direction mark could fake a line in the terminal or look like someone else. | security | accept | Both are invisible on screen. | `check_display_name` refuses them, and the log line puts the post's text in quotes. |
+| One `POST /likes` that flips the like would be half the code of a second route. | design | reject | It can do the opposite of what was meant: a heart that looks unpressed because the same person liked it in another window would be *unliked* by a press meant to like it. | Nothing; `DELETE` says what happens. |
 | Taking back a like that is not there could just succeed, since the end state is the same. | design | reject | A refusal with a sentence is how every other rule here answers, and the page already stops the press that would cause it. | Nothing; it is refused. |
 | `remove_like` could look for the row and then delete it. | design | accept | Two presses at once would both look, both see the row, and both try to delete it. | One `DELETE`, and `cursor.rowcount` says whether it was there. |
 | Two fast presses send two requests, because the first answer has not come back yet. | design | accept | The heart is the page's own idea of the truth, so the page has to hold it still. | A flag in `app.js`: one press at a time. |
@@ -218,8 +283,9 @@ page-only/           open index.html; nothing to start
 with-backend/        make run, then http://localhost:8009
   index.html  style.css  app.js
   server.py          controller · model · view, labelled
-  test_server.py     unittest: the rules, saving, "after", likes and unlikes, real round
-                     trips, and one whole journey through all three levels
+  test_server.py     unittest: the rules, accounts and sessions, the upgrade of an older
+                     file, saving, "after", likes and unlikes, real round trips, one whole
+                     journey through all three levels, and the page and server agreeing
 ```
 
 `timeline.db` is created next to `server.py` and is git-ignored. `make reset` deletes it.
