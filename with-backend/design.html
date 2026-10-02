@@ -17,9 +17,9 @@
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(min(100%, 560px), 1fr));
     }
+    /* Each column has the page's wash behind it (.wash), so the glass shows. */
     .guide-column {
       padding: var(--space-6) var(--space-5);
-      background: var(--background);
       color: var(--text);
     }
     .guide-light { color-scheme: light; }
@@ -51,7 +51,7 @@
     }
     .guide-tokens td {
       padding: var(--space-2) var(--space-3) var(--space-2) 0;
-      border-bottom: 1px solid var(--border);
+      border-bottom: var(--hairline) solid var(--glass-edge);
       vertical-align: middle;
       overflow-wrap: anywhere;
     }
@@ -61,6 +61,15 @@
       min-height: var(--space-6);
       border: 1px solid var(--border);
       background: var(--card);
+    }
+    .guide-glass {
+      padding: var(--space-6) var(--space-7);
+    }
+    .guide-glass.glass-strong {
+      border-radius: var(--radius);
+    }
+    .guide-row .new-posts {
+      margin: 0;
     }
     .guide-row .avatar {
       position: static;
@@ -119,6 +128,18 @@
       <button type="button" class="like button-pill liked">♥</button>
       <button type="button" class="button-pill" disabled>♥</button>
       <button type="button" class="bookmark button-pill bookmarked">★</button>
+    </div>
+
+    <h3>glass: <code>.glass</code>, <code>.glass-strong</code></h3>
+    <p class="guide-note">A frosted, see-through surface over the wash: a hairline edge,
+      a faint light line along the top and a soft shadow. Cards, an open disclosure and
+      the stream are .glass; the top bar, an open "⋯" menu and "3 new posts" are
+      .glass-strong. Posts are never glass: they are plain rows on it. With less
+      transparency, more contrast, or no blur in the browser, both become solid.</p>
+    <div class="guide-row">
+      <div class="glass guide-glass">.glass</div>
+      <div class="glass-strong guide-glass">.glass-strong</div>
+      <button type="button" class="new-posts glass-strong">3 new posts</button>
     </div>
 
     <h3>card: <code>.card</code></h3>
@@ -201,7 +222,7 @@
       words you cannot see: [<span class="visually-hidden">Signed in as</span>].</p>
 
     <h2>Layout (classic-layout)</h2>
-    <p class="guide-note">The page's three areas: the dark bar across the top, the left
+    <p class="guide-note">The page's three areas: the glass bar across the top, the left
       column and the right column. On the page the bar stays at the top while you
       scroll, and the columns sit side by side from 920px wide. Here they are drawn
       one under the other, to fit the guide.</p>
@@ -259,7 +280,7 @@
     const guide = document.getElementById("guide");
     for (const scheme of ["light", "dark"]) {
       const column = document.createElement("section");
-      column.className = "guide-column guide-" + scheme;
+      column.className = "guide-column wash guide-" + scheme;
       const heading = document.createElement("h2");
       heading.textContent = scheme === "light" ? "Light" : "Dark";
       column.append(heading, guide.content.cloneNode(true));
@@ -272,8 +293,13 @@
       const sample = document.createElement("span");
       sample.className = "guide-sample";
       const value = "var(" + name + ")";
-      if (/^--(background|card|text|quiet|author|button|button-text|warning|border|hover|avatar-\d)$/.test(name)) {
+      if (/^--(background|wash-\d|card|glass|glass-strong|glass-edge|glass-highlight|shadow|field|track|raised|text|quiet|author|button|button-text|warning|border|hover|avatar-\d)$/.test(name)) {
         sample.style.background = value;
+      } else if (name.startsWith("--shadow-") || name === "--glass-shine") {
+        sample.style.boxShadow = value;
+      } else if (name === "--glass-filter" || name === "--glass-blur" || name === "--glass-saturate") {
+        sample.style.background = "var(--glass)";
+        sample.style.backdropFilter = "var(--glass-filter)";
       } else if (name.startsWith("--space-") || name.startsWith("--avatar") || name === "--check-size") {
         sample.style.width = value;
         sample.style.minWidth = "0";
@@ -286,7 +312,7 @@
         sample.style.border = "none";
         sample.style.background = "none";
         sample.style[name.startsWith("--weight") ? "fontWeight" : name === "--font-family" ? "fontFamily" : "fontSize"] = value;
-      } else if (name === "--line" || name === "--line-thick" || name === "--band") {
+      } else if (name === "--line" || name === "--line-thick" || name === "--band" || name === "--hairline") {
         sample.style.borderTop = value + " solid var(--border)";
       } else if (name === "--focus-ring") {
         sample.style.outline = value;

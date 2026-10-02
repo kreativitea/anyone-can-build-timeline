@@ -31,7 +31,8 @@ the other has a backend that every window shares.
 
 One screen in `with-backend/`:
 
-The page is laid out like a 2012 timeline (see "Classic layout" below): a dark bar across the
+The page is laid out like a 2012 timeline (see "Classic layout" below), with a current, glassy
+surface (see "Glass style"): a bar across the
 top, a narrow left column and a wide right column with the posts.
 
 - **Signed out.** A *Log in* form (account name, password) and a *Sign up* form (account name,
@@ -789,7 +790,7 @@ and phone width, signed in and out.
 
   | File | What it holds |
   |---|---|
-  | `tokens.css` | every **token**: a named value. The colours first (`light-dark(LIGHT, DARK)`, as before), then type (`--text-small`, `--text-body`, `--text-large`, `--text-title`, `--text-meta`, `--line-height`, `--weight-…`), space (`--space-1` 2px … `--space-7` 20px), corners (`--radius-small`, `--radius`, `--radius-field`, `--radius-large`, `--radius-pill`, `--radius-round`), lines (`--line`, `--line-thick`, `--band`, `--focus-ring`, `--focus-offset`), sizes (`--page-width`, `--avatar…`, `--check-size`, `--picture-height`, and the layout's `--bar-height`, `--dashboard-width`, `--stream-width`, `--sticky-top`), `--layer-sticky`, `--layer-bar` and `--faded`. |
+  | `tokens.css` | every **token**: a named value. The colours first (`light-dark(LIGHT, DARK)`, as before), then type (`--text-small`, `--text-body`, `--text-large`, `--text-title`, `--text-meta`, `--line-height`, `--weight-…`), space (`--space-1` 2px … `--space-7` 20px), corners (`--radius-small`, `--radius`, `--radius-field`, `--radius-large`, `--radius-pill`, `--radius-round`), lines (`--line`, `--line-thick`, `--band`, `--focus-ring`, `--focus-offset`), sizes (`--page-width`, `--avatar…`, `--check-size`, `--picture-height`, and the layout's `--bar-height`, `--dashboard-width`, `--stream-width`, `--sticky-top`), `--layer-sticky`, `--layer-bar` and `--faded`; glass style added the wash (`--wash-1…3`), the glass (`--glass`, `--glass-strong`, `--glass-edge`, `--glass-highlight`, `--glass-blur`, `--glass-saturate`, `--glass-filter`, `--glass-shine`), `--field`, `--track`, `--raised`, `--shadow`, `--shadow-soft`, `--shadow-raised` and `--hairline`, and the three solid fallbacks at the end. |
   | `base.css` | the page itself: the box model, `[hidden]`, `body` (with the band of colour), `main`, `h1`. |
   | `components.css` | the shared pieces, each one class: **field** (`label`, `input`, `textarea`, `select`, `.hint`, `.count`), **button** (every `<button>`, and `.button-link`, `.button-quiet`, `.button-pill`, with the turned-off look once), **card** (`.card`), **disclosure** (`.disclosure`, a card while open), **menu** (`.menu`, the "⋯"), **tabs** (`.tabs`), **status** (`.status`), **avatar** (`.avatar`, `.avatar-colour-1` … `6`), **post** (`.timeline`, `.post`, its slots `head`, `body`, `foot`, `menu`, and its states: deleted, hidden by reports, a reply, under the mouse, on a phone), and **hidden** (`.visually-hidden`). Then the **layout** (classic-layout): **top-bar** (`.top-bar`, `.top-bar-inner`, `.top-bar-title`), **columns** (`.columns`, `.dashboard`, `.stream`), **stream** (`.stream-header`), **profile** (`.profile-card`, `.profile-counts`) and **trends** (`.trends`, `.trends-list`). |
   | `features.css` | each feature's own small block, under its name. A block only **arranges** components and uses tokens: where things sit and the room between them. |
@@ -828,7 +829,7 @@ era, the type size and the four things in the left column; the sizes come from t
 - **Type: 15px** for the words, 13px for notes, the `@name` and the time, 18px for headings. This
   **replaces** the old rule "the type is large because the page is read from the back of a room".
   The comment in `tokens.css` says so too, so nobody puts the large type back. The space scale has
-  seven steps (2 to 20px), the corners are small (4 to 6px), and the lines 1px.
+  seven steps (2 to 20px). (Glass style later made the corners large and the lines hairlines.)
 - **The profile card** shows your circle, both names, and two counts: your **posts** that are not
   deleted (a reply is a post) and the **likes received** from other people (the same "popular" as
   who-liked). `account_counts` counts them from the rows when `GET /sessions` is asked, never
@@ -839,12 +840,62 @@ era, the type size and the four things in the left column; the sizes come from t
   counts. Ties are A to Z. `GET /trends` is open to everyone and is not printed in the terminal; the
   page asks when it opens, after a login, a post or a delete, and every 60 seconds (never every
   second). Each tag is a link to its search (`searchElement`, `searchFor`).
-- **Colours of the bar** (`--bar`, `--bar-text`, `--bar-quiet`, `--bar-current`) are dark in both
-  modes, and a test checks the words on them read at 4.5 to 1. The focus ring is white in the bar.
+- **Colours of the bar** were their own dark tokens (`--bar`, `--bar-text`, `--bar-quiet`,
+  `--bar-current`), dark in both modes. Glass style replaced them: the bar is strong glass, with
+  the same words colours as the rest of the page (see "Glass style").
 - `index.html` was rearranged, not rewritten: every `id` `app.js` looks up is still there (a test
   checks it). `page-only/` loads the same four style files and has no bar and no columns.
 - Not in this version: following people, "who to follow", a page for each person, a post box that
   opens as a pop-up.
+
+## Glass style
+
+The owner asked for a look that is less dated: "thinner lines and cleaner edges, think Apple
+liquid glass". The layout stayed exactly as it was; only the surface changed, through tokens and
+components, with a few lines in `features.css`.
+
+- **What it looks like.** A soft wash of colour fills the screen behind everything: large soft
+  spots of blue, lilac and sky on a pale base (deep blue, violet and teal on a dark base in dark
+  mode). It is made of CSS gradients on `body::before`, fixed to the screen, so it is drawn once
+  and never moves. The bar, the cards, the stream, an open disclosure, an open "⋯" menu and "3 new
+  posts" are frosted **glass**: a see-through fill that blurs what is behind it (`backdrop-filter:
+  blur(24px) saturate(160%)`, also written as `-webkit-backdrop-filter` for Safari), a hairline
+  edge (half a pixel on a sharp screen), a faint light line along its top edge and a soft shadow.
+  Corners are large (18px cards, 12px boxes); every button, the search box, the Colours switch and
+  the view tabs are pills, and the tabs are a segmented control (the current one a raised pill).
+  Boxes to type in have a soft fill and a hairline edge. The posts scroll under the bar, blurred.
+- **Why posts are not glass.** A blur is work for the computer on every frame while the page
+  scrolls. One blur for the stream and one for each card is cheap; one for each of hundreds of
+  posts is not. So posts are plain rows on the stream's glass, with a hairline between them, and
+  the lists inside the stream are not a second layer of glass. A test checks that no rule with a
+  blur names `.post` or `.timeline`.
+- **The fallbacks.** Glass becomes solid (`--card`), with no blur, in three cases, set only by
+  tokens at the end of `tokens.css`, so every surface follows: the browser cannot blur
+  (`@supports not (backdrop-filter …)`); the computer asks for less transparency
+  (`prefers-reduced-transparency: reduce`); the computer asks for more contrast
+  (`prefers-contrast: more`, which also draws every hairline as a whole pixel in the strong
+  `--border` colour). The wash stays: it is colour, not transparency.
+- **How the contrast test works.** A see-through colour has no contrast of its own: it depends on
+  what is behind it. So `ColoursTest` does what the browser does. It takes the wash's colours (the
+  base, the three spots, and halfway between each two, because a blend can be darker than both
+  ends), applies the glass's `saturate()` to them (with the numbers from the Filter Effects
+  standard), lays the glass fill on each, and checks the words on every result: 4.5 to 1 for text
+  in every colour, on the wash, the glass, a post under the mouse, a box to type in and a menu; 3
+  to 1 for the focus ring and the edge of a box to type in. The bar is checked over the wash, over
+  the cards, and over a pure black and a pure white picture, since posts and pictures scroll under
+  it. The solid fallback is checked too. The lowest results: 4.6 (light, the view tab words on
+  their track over a black picture) 4.75 for text (light, quiet words right on the blue of the wash), and 3.2 for the edge of a
+  box (light, on the wash).
+  **Decoration, not checked:** the glass's hairline edge (`--glass-edge`), the line between posts,
+  the line on the left of replies, the light top line (`--glass-highlight`) and the shadow. Each
+  card's words and boxes are found without them.
+- **Small changes that go with it.** The link colour, the warning red and the edge of a box are a
+  little darker in light mode (lighter in dark mode), so they still read on the stronger wash. A
+  `.button-link` (Reply, Log out) is underlined only under the mouse or the keyboard; a web link in
+  a post keeps its underline. A button shows its focus ring only for the keyboard
+  (`:focus-visible`), not after a click. The example words in an empty box are `--quiet`.
+- Not in this version: moving or animated glass, a picture behind the glass, glass on each post,
+  any layout change.
 
 ## 8. Build or borrow
 

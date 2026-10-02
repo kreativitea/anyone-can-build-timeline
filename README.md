@@ -14,8 +14,10 @@ in two versions:
 
 The difference between the two is the reason a backend exists.
 
-The backend version is laid out like a 2012 timeline: a dark bar across the top, your profile
-card, the post box and the trending `#tags` on the left, and the posts on the right.
+The backend version is laid out like a 2012 timeline: a bar across the top, your profile
+card, the post box and the trending `#tags` on the left, and the posts on the right. It looks
+current: frosted glass over a soft wash of colour, thin lines and round corners, and solid when
+your computer asks for less transparency or more contrast.
 
 You need a web browser. For the backend version you also need `python3`, version 3.9 or newer.
 A Mac already has it. There is nothing to install.

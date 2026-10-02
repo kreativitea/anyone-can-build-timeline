@@ -23,6 +23,28 @@ body {
   line-height: var(--line-height);
 }
 
+/* glass-style: the wash, a soft blend of colour behind the glass. Three large
+   soft spots of colour on --background, made with gradients only (no picture
+   file). It is drawn on a layer fixed to the screen, behind everything, so it
+   does not move or get drawn again while the page scrolls. The style guide
+   puts the same wash in each of its columns with the class .wash. */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+}
+
+body::before,
+.wash {
+  background:
+    radial-gradient(ellipse 80% 70% at 15% 15%, var(--wash-1), transparent),
+    radial-gradient(ellipse 70% 70% at 90% 35%, var(--wash-2), transparent),
+    radial-gradient(ellipse 80% 60% at 45% 100%, var(--wash-3), transparent),
+    var(--background);
+}
+
 /* The one column everything sits in. */
 main {
   max-width: var(--page-width);

@@ -182,13 +182,14 @@ time.post-time {
   gap: var(--space-4);
   margin: 0;
   padding: var(--space-4) var(--space-5);
-  border-bottom: var(--line) solid var(--border);
+  border-bottom: var(--hairline) solid var(--glass-edge);
   overflow-wrap: anywhere;
 }
 
 /* timeline-flow */
 /* "3 new posts": sticky, so it stays at the top of the screen while you read
-   further down. */
+   further down. glass-style: a pill of strong glass (.glass-strong, in
+   index.html) with words in the link colour. */
 .new-posts {
   position: sticky;
   top: var(--sticky-top);   /* just under the top bar */
@@ -196,6 +197,7 @@ time.post-time {
   display: block;
   margin: var(--space-4) auto;
   padding: var(--space-3) var(--space-6);
+  color: var(--author);
 }
 
 /* "Show older posts", "Loading…" or "No older posts." under the list. */
@@ -337,7 +339,7 @@ time.post-time {
 .versions {
   margin: var(--space-3) 0 0;
   padding: 0 0 0 var(--space-5);
-  border-left: var(--line-thick) solid var(--border);
+  border-left: var(--line-thick) solid var(--glass-edge);
   font-size: var(--text-small);
   list-style: none;
 }

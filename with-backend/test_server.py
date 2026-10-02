@@ -6449,10 +6449,12 @@ class ColoursTest(unittest.TestCase):
         self.page_code = self.read("app.js")
         # The first :root { ... } block: the colours, in one place.
         self.root_block = re.search(r":root \{(.*?)\}", self.css, re.DOTALL).group(1)
-        # Every colour, as {name: (light, dark)}.
+        # Every colour, as {name: (light, dark)}. glass-style: a colour may have
+        # two more hex digits at the end, for how solid it is (#ffffff9e).
         self.colours = {
             name: (light, dark) for name, light, dark in re.findall(
-                r"--([\w-]+): light-dark\((#[0-9a-f]{6}), (#[0-9a-f]{6})\);", self.root_block)
+                r"--([\w-]+): light-dark\((#[0-9a-f]{6}(?:[0-9a-f]{2})?), "
+                r"(#[0-9a-f]{6}(?:[0-9a-f]{2})?)\);", self.root_block)
         }
 
     # The WCAG contrast ratio: how different two colours look, from 1 (the
@@ -6503,14 +6505,96 @@ class ColoursTest(unittest.TestCase):
             with self.subTest(line=value):
                 self.assertLessEqual(len([n for n in names if n in self.colours]), 1)
 
+    # glass-style: most words sit on see-through glass, so the colour behind
+    # them is the glass laid over the wash. These tests work that colour out,
+    # the way the browser does, and check the words on the result.
+
+    def rgba(self, colour):
+        """#rrggbb or #rrggbbaa as four numbers from 0 to 1 (the last: how solid)."""
+        values = [int(colour[place:place + 2], 16) / 255 for place in range(1, len(colour), 2)]
+        return values + [1.0] * (4 - len(values))
+
+    def solid(self, numbers):
+        """Four numbers back to a solid #rrggbb."""
+        return "#" + "".join("%02x" % round(value * 255) for value in numbers[:3])
+
+    def over(self, top, bottom):
+        """The colour seen when `top` (it may be see-through) lies on solid `bottom`."""
+        front, back = self.rgba(top), self.rgba(bottom)
+        alpha = front[3]
+        return self.solid([front[i] * alpha + back[i] * (1 - alpha) for i in range(3)])
+
+    def saturate(self, colour, amount):
+        """The CSS filter saturate(amount): the glass makes what is behind it a little
+        stronger in colour before laying itself on it. The numbers are from the
+        Filter Effects standard."""
+        red, green, blue = self.rgba(colour)[:3]
+        rows = [(0.213 + 0.787 * amount, 0.715 - 0.715 * amount, 0.072 - 0.072 * amount),
+                (0.213 - 0.213 * amount, 0.715 + 0.285 * amount, 0.072 - 0.072 * amount),
+                (0.213 - 0.213 * amount, 0.715 - 0.715 * amount, 0.072 + 0.928 * amount)]
+        return self.solid([min(1, max(0, a * red + b * green + c * blue)) for a, b, c in rows])
+
+    def surfaces(self, which):
+        """Every solid colour a word can end up on, by surface, in one mode
+        (0 light, 1 dark). Each is a list, one colour for each place behind it."""
+        colour = {name: values[which] for name, values in self.colours.items()}
+        amount = int(re.search(r"--glass-saturate: (\d+)%;", self.css).group(1)) / 100
+        # The wash: its base, its three colours, and halfway between each two
+        # (a blend can be darker than both ends).
+        ends = [colour["background"], colour["wash-1"], colour["wash-2"], colour["wash-3"]]
+        wash = list(ends)
+        for first in range(len(ends)):
+            for second in range(first + 1, len(ends)):
+                one, other = self.rgba(ends[first]), self.rgba(ends[second])
+                wash.append(self.solid([(one[i] + other[i]) / 2 for i in range(3)]))
+        glass = lambda fill, behind: [self.over(colour[fill], self.saturate(b, amount))
+                                      for b in behind]
+        card = glass("glass", wash)
+        hover = [self.over(colour["hover"], back) for back in card]
+        # The bar: posts and pictures scroll under it, so it is checked over the
+        # wash, over the cards, and over a black and a white picture too.
+        bar = glass("glass-strong", wash + card + ["#000000", "#ffffff"])
+        menu = glass("glass-strong", card + hover)
+        field = [self.over(colour["field"], back) for back in wash + card + bar]
+        track = [self.over(colour["track"], back) for back in card + hover + bar]
+        raised = [self.over(colour["raised"], back) for back in track]
+        return {"wash": wash, "card": card, "hover": hover, "bar": bar, "menu": menu,
+                "field": field, "track": track, "raised": raised}
+
+    def check_on(self, fronts, places, at_least):
+        """Each colour in `fronts` on every colour of every surface in `places`."""
+        lowest = None
+        for mode, which in (("light", 0), ("dark", 1)):
+            surfaces = self.surfaces(which)
+            for front in fronts:
+                for place in places:
+                    for back in surfaces[place]:
+                        ratio = self.contrast(self.colours[front][which], back)
+                        lowest = ratio if lowest is None else min(lowest, ratio)
+                        with self.subTest(mode=mode, front=front, on=place, back=back):
+                            self.assertGreaterEqual(ratio, at_least)
+        return lowest
+
     def test_text_is_easy_to_read_in_both_modes(self):
-        pairs = [(front, back) for front in ("text", "quiet", "author", "warning")
-                 for back in ("background", "card")]
-        pairs.append(("button-text", "button"))
-        self.check_contrast(pairs, 4.5)
+        # Words of every colour, on the wash (the status line), the glass, a post
+        # under the mouse, a box to type in and an open "⋯" menu.
+        self.check_on(("text", "quiet", "author", "warning"),
+                      ("wash", "card", "hover", "field", "menu"), 4.5)
+        self.check_contrast([("button-text", "button")], 4.5)
 
     def test_the_edges_of_boxes_can_be_seen_in_both_modes(self):
-        self.check_contrast([("border", "background"), ("border", "card")], 3)
+        # The edge of a box to type in, against what is around it and its own fill.
+        self.check_on(("border",), ("wash", "card", "bar", "field"), 3)
+
+    def test_the_focus_ring_can_be_seen_on_every_surface(self):
+        # The focus ring is --author: on the wash, the glass, the bar and a menu.
+        self.check_on(("author",), ("wash", "card", "hover", "bar", "menu", "field"), 3)
+
+    def test_the_solid_fallback_is_easy_to_read_too(self):
+        # With less transparency or more contrast, the glass becomes --card.
+        self.check_contrast([(front, "card") for front in ("text", "quiet", "author", "warning")],
+                            4.5)
+        self.check_contrast([("border", "card")], 3)
 
     def test_there_are_exactly_three_choices(self):
         self.assertEqual(re.findall(r'<option value="(\w+)"', self.html),
@@ -6544,24 +6628,23 @@ class ColoursTest(unittest.TestCase):
         self.assertIn("color-scheme: light dark;", self.root_block)
 
     # classic-style: a post under the mouse gets the --hover tint, so every
-    # colour on a post must still be easy to read on it.
+    # colour on a post must still be easy to read on it (glass-style: the tint
+    # is see-through, laid over the glass).
     def test_text_is_easy_to_read_on_a_hovered_post(self):
-        self.check_contrast([(front, "hover")
-                             for front in ("text", "quiet", "author", "warning")], 4.5)
-        self.check_contrast([("border", "hover")], 3)
+        self.check_on(("text", "quiet", "author", "warning"), ("hover",), 4.5)
 
     # classic-style: the white letter in each of the six circles.
     def test_the_letter_in_each_circle_is_easy_to_read(self):
         self.check_contrast([("button-text", "avatar-%d" % number)
                              for number in range(1, 7)], 4.5)
 
-    # classic-layout: the dark bar across the top. Its words, the quieter view
-    # tabs, and the current tab's patch, in both modes.
+    # classic-layout: the bar across the top (glass-style: strong glass). Its
+    # words, the quieter view tabs on their track and the current tab's raised
+    # pill, in both modes, even with a black or a white picture under the bar.
     def test_the_top_bar_is_easy_to_read_in_both_modes(self):
-        self.check_contrast([("bar-text", "bar"), ("bar-quiet", "bar"),
-                             ("bar-text", "bar-current")], 4.5)
-        # The white focus ring can be seen on the bar and on the current tab.
-        self.check_contrast([("bar-text", "bar"), ("bar-text", "bar-current")], 3)
+        self.check_on(("text", "quiet", "author"), ("bar",), 4.5)
+        self.check_on(("quiet",), ("track",), 4.5)
+        self.check_on(("text",), ("raised",), 4.5)
 
 def functions_in(code):
     """Cut app.js into its top-level functions. Gives a map: name -> body.
@@ -7030,6 +7113,105 @@ class DesignSystemTest(unittest.TestCase):
             for name, number, declaration in found:
                 print("    %s:%d  %s" % (name, number, declaration))
 
+
+
+class GlassStyleTest(unittest.TestCase):
+    """glass-style: frosted glass over a soft wash, read as text (no browser).
+
+    The colours on the glass are checked in ColoursTest. These check the
+    pieces that would break quietly: the three solid fallbacks, the Safari
+    form, no glass on a post, and the style guide.
+    """
+
+    def read(self, *path):
+        with open(os.path.join(HERE, *path), encoding="utf-8") as file:
+            return file.read()
+
+    def setUp(self):
+        self.tokens = self.read("tokens.css")
+        self.components = self.read("components.css")
+        self.css = read_design_css()
+
+    def block(self, opening):
+        """The text inside the { } that comes after `opening` in tokens.css."""
+        start = self.tokens.index(opening)
+        return self.tokens[start:self.tokens.index("\n}\n", start)]
+
+    def test_the_three_fallbacks_make_the_glass_solid(self):
+        for opening in ("@supports not ((backdrop-filter: blur(1px)) or "
+                        "(-webkit-backdrop-filter: blur(1px)))",
+                        "@media (prefers-reduced-transparency: reduce)",
+                        "@media (prefers-contrast: more)"):
+            with self.subTest(fallback=opening):
+                block = self.block(opening)
+                self.assertIn("--glass: var(--card);", block)
+                self.assertIn("--glass-strong: var(--card);", block)
+                self.assertIn("--glass-filter: none;", block)
+        more = self.block("@media (prefers-contrast: more)")
+        self.assertIn("--glass-edge: var(--border);", more)
+        self.assertIn("--hairline: var(--line);", more)
+
+    def test_every_blur_has_the_safari_form_too(self):
+        plain = re.findall(r"^\s*backdrop-filter: ([^;\n]+);", self.css, re.MULTILINE)
+        safari = re.findall(r"^\s*-webkit-backdrop-filter: ([^;\n]+);", self.css, re.MULTILINE)
+        self.assertGreater(len(plain), 0)
+        self.assertEqual(plain, safari)
+        # The blur is only ever the token, so the fallbacks can turn it off.
+        for value in plain:
+            with self.subTest(value=value):
+                self.assertIn(value, ("var(--glass-filter)", "none"))
+
+    def test_a_post_is_never_glass(self):
+        # Blurring every post would make a long timeline slow to scroll.
+        for selectors, body in re.findall(r"([^{}]+)\{([^{}]*)\}", self.css):
+            if "backdrop-filter: var(" in body:
+                with self.subTest(rule=selectors.strip()):
+                    self.assertNotIn(".post", selectors)
+                    self.assertNotIn(".timeline", selectors)
+        post_rule = re.search(r"\n\.post \{(.*?)\}", self.css, re.DOTALL).group(1)
+        self.assertIn("background: none;", post_rule)
+        # The lists of posts inside the stream are not a second layer of glass.
+        inside = re.search(r"\.stream \.card:not\(:empty\) \{(.*?)\}", self.components,
+                           re.DOTALL).group(1)
+        self.assertIn("backdrop-filter: none;", inside)
+
+    def test_the_glass_surfaces(self):
+        glass = re.search(r"\.glass,\n(.*?)\{", self.components, re.DOTALL).group(1)
+        for name in (".card:not(:empty)", ".disclosure[open]", ".stream"):
+            with self.subTest(glass=name):
+                self.assertIn(name, glass)
+        strong = re.search(r"\.glass-strong,\n(.*?)\{", self.components, re.DOTALL).group(1)
+        for name in (".top-bar", ".menu[open] > ul"):
+            with self.subTest(strong=name):
+                self.assertIn(name, strong)
+        self.assertIn('class="new-posts glass-strong"', self.read("index.html"))
+
+    def test_the_wash_is_fixed_behind_the_page_and_made_of_gradients(self):
+        base = self.read("base.css")
+        before = re.search(r"body::before \{(.*?)\}", base, re.DOTALL).group(1)
+        self.assertIn("position: fixed;", before)
+        self.assertIn("z-index: -1;", before)
+        wash = re.search(r"body::before,\n\.wash \{(.*?)\}", base, re.DOTALL).group(1)
+        for name in ("--wash-1", "--wash-2", "--wash-3", "--background"):
+            with self.subTest(colour=name):
+                self.assertIn("var(%s)" % name, wash)
+        self.assertNotIn("url(", base)
+
+    def test_the_style_guide_shows_the_glass_on_the_wash(self):
+        guide = self.read("design.html")
+        self.assertIn('class="glass guide-glass"', guide)
+        self.assertIn('class="glass-strong guide-glass"', guide)
+        self.assertIn('"guide-column wash guide-"', guide)
+
+    def test_corners_are_large_and_buttons_are_pills(self):
+        self.assertIn("--radius-large: 18px;", self.tokens)
+        self.assertIn("--hairline: 0.5px;", self.tokens)
+        button = re.search(r"\nbutton \{(.*?)\}", self.components, re.DOTALL).group(1)
+        self.assertIn("border-radius: var(--radius-pill);", button)
+        tabs = re.search(r"\n\.tabs \{(.*?)\}", self.components, re.DOTALL).group(1)
+        self.assertIn("border-radius: var(--radius-pill);", tabs)
+        self.assertIn('input[type="search"] {\n  border-radius: var(--radius-pill);',
+                      self.components)
 
 
 class ClassicLayoutModelTest(unittest.TestCase):

@@ -15,34 +15,56 @@
    Only colours go in this first block. */
 :root {
   color-scheme: light dark;
-  --background: light-dark(#c6e2ef, #0e1a23);
-  --card: light-dark(#ffffff, #16283a);
-  --text: light-dark(#262c31, #e7eef3);
-  --quiet: light-dark(#4d5961, #a3b6c4);
-  --author: light-dark(#0a6694, #6ec3ef);
-  --button: light-dark(#1d6fa8, #1d6fa8);
+  /* glass-style: the page behind everything is a soft wash of colour (base.css
+     draws it): --background, with three large soft spots of --wash-1 (blue),
+     --wash-2 (lilac) and --wash-3 (sky) on it. Deep blue and violet in dark
+     mode. A little text sits right on the wash (the status line), so each wash
+     colour is light enough (or dark enough) for every colour of words. */
+  --background: light-dark(#eef3fa, #0a1120);
+  --wash-1: light-dark(#a9c9f2, #1a427e);
+  --wash-2: light-dark(#d2c2f4, #3d2b76);
+  --wash-3: light-dark(#b3e0ec, #0f4560);
+  /* glass-style: the surfaces. --glass is the see-through fill of a card and
+     the stream; --glass-strong is a more solid one for what floats over other
+     things (the top bar, a "⋯" menu, "3 new posts"). The two hex digits at the
+     end of a colour are how solid it is (00 = clear, ff = solid). --card is a
+     solid card: what the glass becomes when the computer asks for less
+     transparency or more contrast, or cannot blur (see the end of this file). */
+  --card: light-dark(#ffffff, #142235);
+  --glass: light-dark(#ffffff80, #0f1a2b99);
+  --glass-strong: light-dark(#ffffffcc, #0d1625d6);
+  /* The hairline at the edge of the glass, the faint light line along its top,
+     and the colour of the soft shadow under it. These three are decoration:
+     nothing is found only by them, so they may be fainter than 3 to 1. */
+  --glass-edge: light-dark(#1e3a5f24, #ffffff1f);
+  --glass-highlight: light-dark(#ffffffcc, #ffffff2e);
+  --shadow: light-dark(#1e3a5f1a, #00000052);
+  /* The soft fill of a box to type in, the track of the view tabs and of the
+     heart and the star, and the raised pill of the current tab. */
+  --field: light-dark(#ffffffb8, #08101cb3);
+  --track: light-dark(#1e3a5f0f, #ffffff12);
+  --raised: light-dark(#ffffff, #ffffff26);
+  --text: light-dark(#1d242b, #e9eef5);
+  --quiet: light-dark(#46515c, #afbdcc);
+  --author: light-dark(#074c98, #82bcff);
+  --button: light-dark(#0a63d1, #0a63d1);
   --button-text: light-dark(#ffffff, #ffffff);
-  --warning: light-dark(#b3261e, #ff8a7a);
-  /* The edge of a box or a button: at least 3 to 1 against the background and
-     the cards, so the edge can be seen. */
-  --border: light-dark(#5f7d8c, #62819a);
-  /* classic-style: the light tint under the mouse, and the six colours of the
-     circles with a letter. A white letter reads on each circle in both modes,
-     so each circle colour is the same in light and dark, like --button. */
-  --hover: light-dark(#eef6fa, #1d3448);
+  --warning: light-dark(#9a1f17, #ff9a8c);
+  /* The edge of a box to type in: at least 3 to 1 against everything it sits
+     on and its own fill (glass-style: checked with the glass laid over the
+     wash), so the box can be seen. */
+  --border: light-dark(#586b7e, #8099b3);
+  /* classic-style: the light tint under the mouse (glass-style: a see-through
+     tint), and the six colours of the circles with a letter. A white letter
+     reads on each circle in both modes, so each circle colour is the same in
+     light and dark, like --button. */
+  --hover: light-dark(#0a5fcc0f, #ffffff0d);
   --avatar-1: light-dark(#1d6fa8, #1d6fa8);
   --avatar-2: light-dark(#8a4fb0, #8a4fb0);
   --avatar-3: light-dark(#b0413e, #b0413e);
   --avatar-4: light-dark(#2e7d4f, #2e7d4f);
   --avatar-5: light-dark(#9a5800, #9a5800);
   --avatar-6: light-dark(#2f6f7a, #2f6f7a);
-  /* classic-layout: the dark bar across the top, dark in both modes, as in
-     2012. Its words are white, the view tabs a quieter grey, and the current
-     tab sits on a slightly lighter patch. */
-  --bar: light-dark(#222c33, #05090c);
-  --bar-text: light-dark(#ffffff, #ffffff);
-  --bar-quiet: light-dark(#c3ccd2, #b4c2cc);
-  --bar-current: light-dark(#3a4952, #1f2d38);
 }
 
 /* Light or Dark chosen by hand with the Colours switch (with-backend/ only).
@@ -82,20 +104,33 @@
   --space-6: 16px;
   --space-7: 20px;
 
-  /* Corners: small, as in 2012. */
-  --radius-small: 2px;     /* the focus ring of a link in a post */
-  --radius: 4px;           /* buttons, pictures */
-  --radius-field: 5px;     /* boxes to type in, and the Colours switch */
-  --radius-large: 6px;     /* cards */
-  --radius-pill: 999px;    /* the heart and the star */
+  /* Corners: large and soft (glass-style). */
+  --radius-small: 6px;     /* the focus ring of a link in a post, an item in a "⋯" menu */
+  --radius: 12px;          /* pictures, the "⋯" menu */
+  --radius-field: 12px;    /* boxes to type in */
+  --radius-large: 18px;    /* cards and the stream */
+  --radius-pill: 999px;    /* every button, the search box, the Colours switch, the view tabs */
   --radius-round: 50%;     /* the circle with a letter */
 
   /* Lines. */
-  --line: 1px;             /* the edge of a card, a box or a button */
+  --line: 1px;             /* the edge of a box to type in */
+  --hairline: 1px;         /* the edge of the glass and the line between posts: 0.5px on a sharp screen */
   --line-thick: 2px;       /* the line on the left of replies and old versions */
   --band: 10px;            /* the band of colour across the top of page-only/ */
   --focus-ring: 3px solid var(--author);
   --focus-offset: 2px;
+
+  /* glass-style: the frost. The glass blurs what is behind it and makes its
+     colours a little stronger. --glass-filter is the two together; it is
+     "none" where the glass is solid (the end of this file). */
+  --glass-blur: 24px;
+  --glass-saturate: 160%;
+  --glass-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  /* The faint light line along the top edge of the glass, and two soft
+     shadows: a low one for cards, a higher one for what floats. */
+  --glass-shine: inset 0 var(--hairline) 0 var(--glass-highlight);
+  --shadow-soft: 0 1px 2px var(--shadow), 0 8px 24px var(--shadow);
+  --shadow-raised: 0 2px 6px var(--shadow), 0 16px 40px var(--shadow);
 
   /* Sizes. */
   --page-width: 940px;     /* the two columns (300 + 20 + 590) and the room around them */
@@ -111,7 +146,8 @@
   --check-size: 18px;      /* a checkbox, as tall as the words beside it */
   --picture-height: 24rem; /* a picture is never taller than about half a screen */
 
-  /* classic-layout: the bar across the top, and the two columns under it. */
+  /* classic-layout: the bar across the top (glass-style: frosted glass, with
+     the words in --text), and the two columns under it. */
   --bar-height: 46px;
   /* The bar's contents may be wider than the two columns, so the app's name,
      three view tabs, search, Colours and Log out fit on one line on a laptop. */
@@ -133,5 +169,48 @@
 @media (max-width: 919px) {
   :root {
     --sticky-top: var(--space-3);
+  }
+}
+
+/* glass-style: a hairline is half a pixel on a sharp screen (two or more
+   screen dots for each CSS pixel), where it still shows as one thin line. */
+@media (min-resolution: 2dppx) {
+  :root {
+    --hairline: 0.5px;
+  }
+}
+
+/* glass-style: the three times the glass becomes solid. Only tokens change, so
+   every glass surface follows at once.
+   1. The browser cannot blur what is behind (no backdrop-filter): see-through
+      glass with nothing blurred would be hard to read, so it is solid. */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  :root {
+    --glass: var(--card);
+    --glass-strong: var(--card);
+    --glass-filter: none;
+  }
+}
+
+/* 2. The computer asks for less transparency. */
+@media (prefers-reduced-transparency: reduce) {
+  :root {
+    --glass: var(--card);
+    --glass-strong: var(--card);
+    --field: var(--card);
+    --glass-filter: none;
+  }
+}
+
+/* 3. The computer asks for more contrast: solid, and every edge and line
+   between posts in the strong --border colour, a whole pixel wide. */
+@media (prefers-contrast: more) {
+  :root {
+    --glass: var(--card);
+    --glass-strong: var(--card);
+    --field: var(--card);
+    --glass-filter: none;
+    --glass-edge: var(--border);
+    --hairline: var(--line);
   }
 }
