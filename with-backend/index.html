@@ -99,7 +99,11 @@
 
     <!-- One view: the timeline. Another view would be a section next to it. -->
     <section data-view="timeline">
-      <ol id="timeline" class="timeline" aria-label="Posts, newest first"></ol>
+      <!-- timeline-flow: new posts wait behind this button while you read lower down. -->
+      <button type="button" id="new-posts" class="new-posts" hidden></button>
+      <ol id="timeline" class="timeline" aria-label="Posts, newest first" tabindex="-1"></ol>
+      <!-- timeline-flow: older posts load when this comes near the screen, or when pressed. -->
+      <p id="older-posts" class="older-posts"><button type="button" id="load-older" class="link-button">Show older posts</button></p>
     </section>
 
     <!-- The search results view. app.js adds its button with addView("search", ...). -->

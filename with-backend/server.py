@@ -51,8 +51,18 @@ class TimelineHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         url = urlparse(self.path)
         if url.path == "/posts":
+            # keep_blank_values: "?before=" is a wrong question, not no question.
+            query = parse_qs(url.query, keep_blank_values=True)
+            # timeline-flow: `before` asks for one page of older posts, `after`
+            # for every newer post. Which request this is, is the controller's job.
+            if "before" in query and "after" in query:
+                self.send_json(400, {"error": "Ask for 'before' or 'after', not both."})
+                return
+            if "before" in query:
+                self.show_posts_before(query["before"][0])
+                return
             try:
-                after = int(parse_qs(url.query).get("after", ["0"])[0])
+                after = int(query.get("after", ["0"])[0])
             except ValueError:
                 self.send_json(400, {"error": "'after' must be a whole number."})
                 return
@@ -66,8 +76,15 @@ class TimelineHandler(BaseHTTPRequestHandler):
         elif url.path == "/likes":
             # A like changes no post, so a window asks for the counts separately.
             # Anyone may read the counts; "mine" is empty for a window not logged in.
+            # timeline-flow: `from` leaves out posts older than the oldest one
+            # the window shows. Left out, it is 0: every post.
             user = self.user_or_none()
-            counts, mine = likes_for(self.server.db_path, user["id"] if user else None)
+            try:
+                counts, mine = likes_for(self.server.db_path, user["id"] if user else None,
+                                         parse_qs(url.query, keep_blank_values=True).get("from", ["0"])[0])
+            except RuleBroken as problem:
+                self.send_json(400, {"error": str(problem)})
+                return
             self.send_json(200, likes_to_json(counts, mine))
         elif url.path == "/likers":
             self.show_likers(parse_qs(url.query).get("post_id", [None])[0])
@@ -87,6 +104,16 @@ class TimelineHandler(BaseHTTPRequestHandler):
                 self.send_json(404, {"error": "The file " + file_name + " is missing."})
         else:
             self.send_nothing_here("GET", url.path)
+
+    def show_posts_before(self, before):
+        """timeline-flow: answer one page of posts older than `before`, newest first."""
+        viewer = self.user_or_none()
+        try:
+            rows = posts_before(self.server.db_path, before, viewer["id"] if viewer else None)
+        except RuleBroken as problem:
+            self.send_json(400, {"error": str(problem)})
+            return
+        self.send_json(200, posts_to_json(rows))
 
     def do_POST(self):
         path = urlparse(self.path).path
@@ -1086,18 +1113,23 @@ def remove_like(db_path, user_id, post_id):
     return post_id, count
 
 
-def likes_for(db_path, user_id):
+def likes_for(db_path, user_id, from_id=0):
     """Return how many likes each post has, and which posts this user has liked.
 
     user_id is None for a window that is not logged in: it has liked nothing.
+    from_id (timeline-flow) leaves out every post with a smaller id: a window
+    asks only about the posts it shows. 0, the default, means every post.
     """
+    from_id = check_id_bound(from_id, "from")
     connection = connect(db_path)
     counts = connection.execute("SELECT post_id, COUNT(*) AS like_count "
-                                "FROM likes GROUP BY post_id").fetchall()
+                                "FROM likes WHERE post_id >= ? GROUP BY post_id",
+                                (from_id,)).fetchall()
     mine = []
     if user_id is not None:
         mine = connection.execute("SELECT post_id FROM likes WHERE user_id = ? "
-                                  "ORDER BY post_id", (user_id,)).fetchall()
+                                  "AND post_id >= ? ORDER BY post_id",
+                                  (user_id, from_id)).fetchall()
     connection.close()
     return counts, mine
 
@@ -1339,6 +1371,45 @@ def search_posts(db_path, query, viewer_id=None):
     finally:
         connection.close()
     return rows[:SEARCH_LIMIT], len(rows) > SEARCH_LIMIT
+
+
+# ---- timeline-flow: one page of older posts at a time ----
+
+# How many posts one page has. The page has the same number (PAGE_SIZE in
+# app.js) only to know when it has reached the end; a test checks they agree.
+# The page cannot ask for more, so nobody can ask for a million posts at once.
+PAGE_SIZE = 20
+
+
+def check_id_bound(value, name):
+    """Return `value` as a whole number, 0 or more, or raise RuleBroken.
+
+    `name` is the name of the question in the address ("before", "from"), so
+    the sentence says which one is wrong. "1.5", "-1", " 3" and "abc" are refused.
+    """
+    if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+        return value
+    if isinstance(value, str) and POST_ID_TEXT.fullmatch(value):
+        return int(value)
+    raise RuleBroken(f"'{name}' must be a whole number, 0 or more.")
+
+
+def posts_before(db_path, before, viewer_id=None):
+    """Return at most PAGE_SIZE posts with an id smaller than `before`, newest first.
+
+    `before` 0 means "from the very newest", the same way `after` 0 means
+    "from the very first". A page is asked for by id, not by page number, so
+    a new post that arrives between two pages cannot push a post into both.
+    """
+    before = check_id_bound(before, "before")
+    conditions, params = [], []
+    if before > 0:
+        conditions, params = ["posts.id < ?"], [before]
+    connection = connect(db_path)
+    rows = select_posts(connection, conditions, params, viewer_id, "posts.id DESC",
+                        limit=PAGE_SIZE)
+    connection.close()
+    return rows
 
 
 # ============================================================================

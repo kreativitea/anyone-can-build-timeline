@@ -434,6 +434,36 @@ with a **Back to the timeline** button.
   like"): a heart is kept up to date only on the live timeline. Searches are not printed in the
   server's terminal, because what a person searched for is their own business.
 
+## Timeline flow
+
+New posts that arrive while you read lower down no longer push the list down. They wait behind a
+sticky **"3 new posts"** button at the top; pressing it shows them, goes to the top of the list and
+moves keyboard focus there. If the top of the list is on screen, new posts appear at once, as
+before. Pressing **Post** shows every waiting post. The page also loads only the newest 20 posts
+when it opens, and 20 older ones each time the bottom comes near, until it says
+**"No older posts."**
+
+- **`before` and `after`.** `GET /posts?after=12` gives every post newer than 12, oldest first.
+  `GET /posts?before=300` gives at most `PAGE_SIZE` (20) posts older than 300, newest first;
+  `before=0` means "from the very newest". Each order is the order the page puts them on screen:
+  new posts go on top one by one, older posts at the bottom one by one. Asking for both is `400`.
+- **Why ids and not page numbers.** With page numbers (`OFFSET 40`), a new post arriving between
+  two pages pushes every post down one place, so one post is shown twice. With ids, a new post
+  cannot change which posts are below 300. `posts.id` is the table's own row number, so this is read
+  straight from its index.
+- **The server decides the size.** The page cannot ask for more than `PAGE_SIZE`. It has the same
+  number only to know that a short page is the last one.
+- **`/likes?from=`.** Every second the page asks for like counts only from the oldest post on
+  screen up, so the answer does not grow with every liked post in the database. Leaving `from` out
+  gives every post, as before.
+- **Loading older posts** uses an `IntersectionObserver` (a browser feature that tells the page
+  when an element comes on screen), 400 pixels early. The "Show older posts" button stays for
+  keyboard and screen-reader users, and for a browser where the observer does not fire.
+- **Checked by hand:** two windows, 45 posts. In window A scroll down; in B post twice. A's list
+  does not move and the button says "2 new posts". Press it: both appear, at the top. Scroll to the
+  bottom of A: older posts load, and at the end it says "No older posts." Scroll back to the top
+  while a post waits: it appears within a second. Tab to "Show older posts" and press Enter.
+
 ## 8. Build or borrow
 
 - **Built:** the page, the server and the data model.

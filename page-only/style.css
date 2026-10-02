@@ -460,3 +460,29 @@ time.post-time {
   border-color: var(--border);
   color: var(--quiet);
 }
+
+/* timeline-flow */
+/* "3 new posts": sticky, so it stays at the top of the screen while you read
+   further down. Only the existing colour variables, so it follows the theme. */
+.new-posts {
+  position: sticky;
+  top: 0.5rem;
+  z-index: 1;
+  display: block;
+  margin: 0 auto 12px;
+  padding: 8px 24px;
+  background: var(--button);
+  color: var(--button-text);
+  border-radius: 999px;
+}
+
+.new-posts[hidden] {
+  display: none;
+}
+
+/* "Show older posts", "Loading…" or "No older posts." under the list. */
+.older-posts {
+  margin: 16px 0 24px;
+  color: var(--quiet);
+  text-align: center;
+}

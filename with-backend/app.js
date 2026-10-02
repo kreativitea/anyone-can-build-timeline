@@ -49,7 +49,9 @@ const postForm = document.getElementById("post-form");
 const THEME_KEY = "timeline-theme";
 const themeSwitch = document.getElementById("theme");
 
-// The id of the newest post this window has shown. 0 means "none yet".
+// The id of the newest post this window has received, shown or still waiting
+// behind the "new posts" button (timeline-flow). It must count the waiting ones
+// too, or the same posts would come back every second. 0 means "none yet".
 let lastId = 0;
 
 // Who is logged in in this window: { account_name, display_name }, or null.
@@ -792,6 +794,182 @@ function holdForm(form, seconds) {
   }, seconds * 1000);
 }
 
+// ---- timeline-flow: new posts wait while you read; older posts load on scroll ----
+//
+// The page loads only the newest PAGE_SIZE posts when it opens
+// (GET /posts?before=0), and the next older page (before=<oldest shown id>)
+// when the bottom of the list comes near, or when "Show older posts" is
+// pressed. New posts that arrive while you read lower down do not push the
+// list down: they wait behind a "3 new posts" button at the top. If the top of
+// the list is on screen, they appear at once.
+
+// The same as PAGE_SIZE in server.py. The page only uses it to know when it
+// has reached the end: a page shorter than this is the last one.
+const PAGE_SIZE = 20;
+
+// The words of this feature, each one a whole sentence. (These move to
+// words.js with the Japanese words table.)
+const FLOW_WORDS = {
+  new_posts_one: "{count} new post",
+  new_posts_other: "{count} new posts",
+  show_older: "Show older posts",
+  loading_older: "Loading…",
+  no_older: "No older posts.",
+};
+
+const newPostsButton = document.getElementById("new-posts");
+const olderPosts = document.getElementById("older-posts");
+const loadOlderButton = document.getElementById("load-older");
+
+let oldestId = 0;                // the oldest post on screen; 0 means none yet
+let firstPageLoaded = false;     // has the newest page come in?
+let loadingOlder = false;        // one page at a time
+let noOlderPosts = false;        // the server has no posts older than oldestId
+const waitingPosts = [];         // new posts not shown yet, oldest first
+let olderObserver = null;        // watches the bottom of the list (watchTheBottom)
+
+// Put one post on the timeline, at "top" or "bottom", unless this window
+// already shows it. showPost is not used here: it skips every post with an id
+// at or below lastId, and an older post always has a smaller id.
+function putPost(post, where) {
+  if (postParts[post.id] !== undefined) {
+    return;
+  }
+  postParts[post.id] = makePostItem(post);
+  placePost(postParts[post.id].item, post, where);
+}
+
+// True when the top of the list is not above the screen, so adding a post
+// there cannot move what the person is reading. A page position can be a
+// part of a pixel (-0.16 right after "3 new posts" is pressed), so up to one
+// pixel above still counts as the top.
+function readerIsAtTop() {
+  return timeline.getBoundingClientRect().top >= -1;
+}
+
+// New posts from GET /posts?after=, oldest first. Keep them waiting, then show
+// them at once if the reader can see the top; otherwise update the button.
+function receiveNewPosts(posts) {
+  for (const post of posts) {
+    // Two checks that ran at the same moment can both bring the same post.
+    if (post.id <= lastId) {
+      continue;
+    }
+    lastId = post.id;
+    waitingPosts.push(post);
+  }
+  if (readerIsAtTop()) {
+    showWaitingPosts();
+  } else {
+    updateNewPostsButton();
+  }
+}
+
+// Show every waiting post, oldest first, so the newest ends up on top.
+function showWaitingPosts() {
+  for (const post of waitingPosts) {
+    putPost(post, "top");
+  }
+  waitingPosts.length = 0;
+  updateNewPostsButton();
+}
+
+// Hidden when nothing waits; otherwise "1 new post" or "3 new posts".
+function updateNewPostsButton() {
+  const count = waitingPosts.length;
+  newPostsButton.hidden = count === 0;
+  if (count > 0) {
+    const form = new Intl.PluralRules("en").select(count) === "one" ? "_one" : "_other";
+    newPostsButton.textContent = FLOW_WORDS["new_posts" + form].replace("{count}", String(count));
+  }
+}
+
+// "3 new posts" was pressed: show them, go to the top of the list, and move
+// keyboard focus there, so a screen-reader user hears where they are instead
+// of staying on a button that has just been hidden.
+function pressNewPosts() {
+  showWaitingPosts();
+  timeline.scrollIntoView();
+  timeline.focus({ preventScroll: true });
+}
+
+// Ask for the next page of older posts, and put them at the bottom. The first
+// time (oldestId 0) this is the newest page.
+async function loadOlderPosts() {
+  if (loadingOlder || noOlderPosts) {
+    return;
+  }
+  loadingOlder = true;
+  loadOlderButton.textContent = FLOW_WORDS.loading_older;
+  let loaded = false;
+  try {
+    const response = await fetch("/posts?before=" + oldestId);
+    const posts = await response.json();
+    if (!response.ok) {
+      throw new Error(posts.error);
+    }
+    // The server sends them newest first: each goes at the bottom, in order.
+    for (const post of posts) {
+      putPost(post, "bottom");
+    }
+    if (posts.length > 0) {
+      oldestId = posts[posts.length - 1].id;
+      if (!firstPageLoaded) {
+        // New posts are asked for from the newest one in the first page.
+        lastId = Math.max(lastId, posts[0].id);
+      }
+    }
+    firstPageLoaded = true;
+    loaded = true;
+    if (posts.length < PAGE_SIZE) {
+      noOlderPosts = true;
+      // Nothing at all if the timeline is empty: there is nothing older than nothing.
+      olderPosts.textContent = oldestId === 0 ? "" : FLOW_WORDS.no_older;
+    }
+    if (statusLine.textContent === CANNOT_REACH) {
+      showStatus("");
+    }
+  } catch (error) {
+    // The button stays, so the person can try again.
+    showStatus(CANNOT_REACH);
+  } finally {
+    loadingOlder = false;
+    if (!noOlderPosts) {
+      loadOlderButton.textContent = FLOW_WORDS.show_older;
+    }
+  }
+  if (olderObserver !== null) {
+    if (noOlderPosts) {
+      olderObserver.disconnect();
+    } else if (loaded) {
+      // Watch the bottom again. An observer only speaks when something
+      // changes, so on a tall screen where the bottom is still in view after
+      // a page, nothing would ever load the next one. Watching again makes it
+      // look once more. (Not after an error, or it would ask again and again.)
+      olderObserver.unobserve(olderPosts);
+      olderObserver.observe(olderPosts);
+    }
+  }
+}
+
+// Load the next page when the bottom of the list is on screen or within 400
+// pixels of it, so it is usually there before the person reaches the end.
+// IntersectionObserver is a browser feature that tells the page when an
+// element comes on screen. Without it, the button still works.
+function watchTheBottom() {
+  if (typeof IntersectionObserver === "undefined") {
+    return;
+  }
+  olderObserver = new IntersectionObserver(function (entries) {
+    for (const entry of entries) {
+      if (entry.isIntersecting) {
+        loadOlderPosts();
+      }
+    }
+  }, { rootMargin: "400px" });
+  olderObserver.observe(olderPosts);
+}
+
 // When the page opens, ask the server who is logged in in this window.
 async function askWhoIAm() {
   try {
@@ -811,16 +989,24 @@ async function askWhoIAm() {
 // Ask the server for every post newer than the last one we have.
 async function checkForNewPosts() {
   try {
+    // timeline-flow (1 of 3): first the newest page, not every post ever.
+    // If the server did not answer, the next second tries again.
+    if (!firstPageLoaded) {
+      await loadOlderPosts();
+      if (!firstPageLoaded) {
+        return;
+      }
+    }
     const response = await fetch("/posts?after=" + lastId);
     const posts = await response.json();
-    // The server sends them oldest first. Each one goes on top, so the newest ends up first.
-    for (const post of posts) {
-      showPost(post);
-    }
+    // timeline-flow (2 of 3): the server sends them oldest first. They wait
+    // behind the "new posts" button, or appear at once at the top.
+    receiveNewPosts(posts);
     // A like changes no post, so `after` would never bring one. The counts are
     // asked for separately, and all of them come back each time. "mine" comes
     // from the cookie: it is empty when nobody is logged in.
-    const likesAnswer = await fetch("/likes");
+    // timeline-flow (3 of 3): only the posts from the oldest one on screen up.
+    const likesAnswer = await fetch("/likes?from=" + oldestId);
     const likes = await likesAnswer.json();
     for (const postId in postParts) {
       showLike(postId, likes.counts[postId] || 0, likes.mine.includes(Number(postId)));
@@ -965,6 +1151,8 @@ async function sendPost(event) {
     forgetDraft();
     updateCount();
     await checkForNewPosts();
+    // timeline-flow: you expect to see your own post, so show every waiting one.
+    showWaitingPosts();
   } catch (error) {
     showStatus(CANNOT_REACH);
   }
@@ -1356,5 +1544,8 @@ window.addEventListener("popstate", searchFromAddress);
 searchFromAddress();
 updateCount();
 askWhoIAm();
+newPostsButton.addEventListener("click", pressNewPosts);
+loadOlderButton.addEventListener("click", loadOlderPosts);
+watchTheBottom();
 keepChecking();
 setInterval(refreshTimes, 30000);   // every 30 seconds: the smallest step shown is a minute

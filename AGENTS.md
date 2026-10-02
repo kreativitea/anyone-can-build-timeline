@@ -28,7 +28,7 @@ piece of text the browser keeps and sends back by itself), never from a name in 
 | `page-only/app.js` | Checks the rules and keeps the posts in this window's `sessionStorage`. There are no likes in this version. |
 | `with-backend/index.html` | The parts of the screen: Log in and Sign up forms when signed out; "Signed in as …", Log out and the post box when signed in; the timeline. A tiny script in `<head>` that sets the colours before the page is drawn, and the Colours switch. |
 | `with-backend/style.css` | How the screen looks. Each colour is written once for light and dark, as `light-dark(LIGHT, DARK)`. |
-| `with-backend/app.js` | Asks the server who is logged in, sends sign-ups, logins, log-outs, posts, likes and likes taken back, and asks for new posts and new like counts every second. Remembers the Colours choice in `localStorage`. It keeps a half-written post in this browser's `localStorage`, one per account, removed after posting or logging out. It shows who liked each post, and asks for the names only when a count changes. It searches posts (`GET /search`) and shows the results in their own view. |
+| `with-backend/app.js` | Asks the server who is logged in, sends sign-ups, logins, log-outs, posts, likes and likes taken back, and asks for new posts and new like counts every second. Remembers the Colours choice in `localStorage`. It keeps a half-written post in this browser's `localStorage`, one per account, removed after posting or logging out. It shows who liked each post, and asks for the names only when a count changes. It searches posts (`GET /search`) and shows the results in their own view. It asks for the newest page of posts, older pages on scroll, and holds new posts behind a "3 new posts" button while you read lower down. |
 | `with-backend/server.py` | The backend, in three labelled parts: **controller**, **model**, **view**. |
 | `with-backend/test_server.py` | The checks for `server.py`, and for the page and the server agreeing. |
 | `with-backend/timeline.db` | The database, in four tables. The server creates it when it starts, and brings an older one up to date. It is not in git. |
@@ -45,7 +45,8 @@ The three parts of `server.py`:
   name from the JSON. A request with a body must say `Content-Type: application/json`.
 - **Model** (`check_name`, `check_display_name`, `check_password`, `check_text`, `check_post_id`,
   `hash_password`, `hash_token`, `create_account`, `log_in`, `user_for_session`, `log_out`,
-  `start_session`, `account_for`, `save_post`, `posts_after`, `add_like`, `remove_like`,
+  `start_session`, `account_for`, `save_post`, `posts_after`, `posts_before`, `check_id_bound`,
+  `add_like`, `remove_like`,
   `like_count_for`, `likes_for`, `who_liked`, `check_post_ids`, `like_summaries`, `utc_now`,
   `utc_text`, `use_allowance`, `forget_attempts`, `clock`, `check_query`, `escape_like`, `tags_in`,
   `has_tag`, `search_posts`, and `create_tables` with its upgrades):
@@ -156,6 +157,20 @@ Anyone may search. Searches are never printed in the terminal.
 - **Page:** results are built with `makePostItem` into their own list, `#results-list`, never into
   `postParts`, and shown with `showView("search")`. Their hearts are disabled: liking is done on the
   timeline. The results list uses `clickOnTimeline` too, so other buttons in a post work there.
+
+## Timeline flow (pages of posts)
+
+- The page asks for the newest `PAGE_SIZE` (20) posts with `GET /posts?before=0`, then each older
+  page with `before=<the oldest id it shows>`, newest first. `after` stays oldest first. Asking for
+  both is `400`. `PAGE_SIZE` is in the model and in `app.js`; a test checks they agree.
+- `GET /likes?from=<the oldest id it shows>` gives the counts for those posts only. Without `from`
+  it gives every post, as before.
+- A filter on which posts the timeline shows goes in `visible_to` (or the SQL of both `posts_after`
+  and `posts_before`), never in Python afterwards: a filtered page would be shorter than
+  `PAGE_SIZE`, and the page would wrongly say "No older posts."
+- In `app.js`, new posts go through `receiveNewPosts` (they wait in `waitingPosts` while the reader
+  is lower down), and every post is put on the page by `putPost(post, "top" | "bottom")`, which
+  skips a post already in `postParts`. `lastId` is the newest post received, shown or waiting.
 
 ## Rate limits
 

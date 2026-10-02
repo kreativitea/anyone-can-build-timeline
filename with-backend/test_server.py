@@ -1320,6 +1320,75 @@ class ModelTests(unittest.TestCase):
         self.assertEqual(set(answer), {"posts", "more"})
         self.assertEqual(answer["posts"], server.posts_to_json(rows))
 
+    # -- timeline-flow: one page of older posts at a time --
+
+    def many_posts(self, user_id, count):
+        """Save `count` posts, a minute apart on the fake clock, so the rate limit
+        never refuses one. Return their ids, oldest first."""
+        clock = use_fake_clock(self)
+        ids = []
+        for number in range(count):
+            ids.append(self.post_by(user_id, f"post {number + 1}"))
+            clock.move(61)
+        return ids
+
+    def ids(self, rows):
+        return [row["id"] for row in rows]
+
+    def test_before_0_gives_the_newest_page_newest_first(self):
+        ids = self.many_posts(self.person("aiko"), 25)
+        page = self.ids(server.posts_before(self.db_path, 0))
+        self.assertEqual(len(page), server.PAGE_SIZE)
+        self.assertEqual(page, list(reversed(ids))[:server.PAGE_SIZE])
+
+    def test_before_gives_the_next_older_page(self):
+        ids = self.many_posts(self.person("aiko"), 25)
+        self.assertEqual(self.ids(server.posts_before(self.db_path, ids[5])),
+                         list(reversed(ids[:5])))
+        self.assertEqual(server.posts_before(self.db_path, ids[0]), [])
+        # The address gives it as text; the model takes that too.
+        self.assertEqual(self.ids(server.posts_before(self.db_path, str(ids[5]))),
+                         list(reversed(ids[:5])))
+
+    def test_a_new_post_does_not_move_a_page(self):
+        aiko = self.person("aiko")
+        self.many_posts(aiko, 25)
+        first = self.ids(server.posts_before(self.db_path, 0))
+        self.post_by(self.person("ben"), "a new post between two pages")
+        second = self.ids(server.posts_before(self.db_path, first[-1]))
+        self.assertEqual(set(first) & set(second), set())
+        self.assertEqual(len(first) + len(second), 25)
+
+    def test_before_must_be_a_whole_number_0_or_more(self):
+        for wrong in ("abc", "-1", None, "1.5", "", " 3", "+3", -1, True, 1.0):
+            with self.subTest(before=wrong):
+                with self.assertRaises(server.RuleBroken) as caught:
+                    server.posts_before(self.db_path, wrong)
+                self.assertEqual(str(caught.exception),
+                                 "'before' must be a whole number, 0 or more.")
+
+    def test_posts_before_goes_through_the_visibility_filter(self):
+        aiko = self.person("aiko")
+        self.post_by(aiko)
+        with mock.patch.object(server, "visible_to", return_value=("1 = 0", [])):
+            self.assertEqual(server.posts_before(self.db_path, 0), [])
+
+    def test_likes_from_leaves_out_older_posts(self):
+        aiko = self.person("aiko")
+        ids = self.many_posts(aiko, 10)
+        server.add_like(self.db_path, aiko, ids[1])
+        server.add_like(self.db_path, aiko, ids[8])
+        counts, mine = server.likes_for(self.db_path, aiko, ids[4])
+        self.assertEqual([row["post_id"] for row in counts], [ids[8]])
+        self.assertEqual([row["post_id"] for row in mine], [ids[8]])
+        counts, mine = server.likes_for(self.db_path, aiko)
+        self.assertEqual([row["post_id"] for row in counts], [ids[1], ids[8]])
+        self.assertEqual([row["post_id"] for row in mine], [ids[1], ids[8]])
+        with self.assertRaises(server.RuleBroken) as caught:
+            server.likes_for(self.db_path, aiko, "abc")
+        self.assertEqual(str(caught.exception), "'from' must be a whole number, 0 or more.")
+
+
 
 class RealServerTest(unittest.TestCase):
 
@@ -1608,6 +1677,45 @@ class RealServerTest(unittest.TestCase):
         with mock.patch("http.server.BaseHTTPRequestHandler.log_message") as printed:
             self.get("/search?q=secret")
         printed.assert_not_called()
+
+    # -- timeline-flow --
+
+    def refused_get_plain(self, path):
+        """A GET the server should refuse. Return the code and the reason."""
+        with self.assertRaises(urllib.error.HTTPError) as caught:
+            self.window.open(self.base + path)
+        reason = json.loads(caught.exception.read())["error"]
+        caught.exception.close()
+        return caught.exception.code, reason
+
+    def test_get_posts_before_0(self):
+        clock = use_fake_clock(self)
+        self.sign_up()
+        for number in range(3):
+            self.send("/posts", {"text": f"post {number}"})
+            clock.move(61)
+        posts = self.get("/posts?before=0")
+        self.assertIsInstance(posts, list)
+        self.assertLessEqual(len(posts), server.PAGE_SIZE)
+        self.assertEqual([post["text"] for post in posts], ["post 2", "post 1", "post 0"])
+        # The same JSON as an `after` answer, field for field.
+        self.assertEqual(posts[0], self.get("/posts?after=0")[-1])
+
+    def test_before_that_is_not_a_number_gets_400_and_a_reason(self):
+        for wrong in ("abc", "-1", "1.5", ""):
+            with self.subTest(before=wrong):
+                self.assertEqual(self.refused_get_plain("/posts?before=" + wrong),
+                                 (400, "'before' must be a whole number, 0 or more."))
+
+    def test_before_and_after_together_get_400(self):
+        self.assertEqual(self.refused_get_plain("/posts?before=300&after=12"),
+                         (400, "Ask for 'before' or 'after', not both."))
+
+    def test_likes_from_that_is_not_a_number_gets_400(self):
+        self.assertEqual(self.refused_get_plain("/likes?from=abc"),
+                         (400, "'from' must be a whole number, 0 or more."))
+        self.assertEqual(self.get("/likes?from=5"), self.get("/likes"))
+
 
 
 class JourneyTest(unittest.TestCase):
@@ -2068,6 +2176,75 @@ class JourneyTest(unittest.TestCase):
         # 6. Searching changed nothing in the file: no user, post, like or attempt.
         self.assertEqual(all_values_in(self.db_path), tables_before)
 
+    # -- timeline-flow --
+
+    def page_asks_for_a_page(self, window, before):
+        """loadOlderPosts: GET /posts?before=<the oldest id this window shows>, 0 at first"""
+        with window.open(self.base + "/posts?before=" + str(before)) as answer:
+            return json.loads(answer.read())
+
+    def page_asks_for_counts_from(self, window, from_id):
+        """checkForNewPosts: GET /likes?from=<the oldest id this window shows>"""
+        with window.open(self.base + "/likes?from=" + str(from_id)) as answer:
+            return json.loads(answer.read())
+
+    def test_the_whole_journey_of_scrolling(self):
+        clock = use_fake_clock(self)
+        aiko = self.open_window()
+        ben = self.open_window()
+        reader = self.open_window()   # not logged in: reading needs no login
+
+        # 1. Aiko signs up and posts 45 times, a minute apart, so the rate
+        #    limit never stops her.
+        self.page_signs_up(aiko, "aiko", "Aiko Tanaka")
+        for number in range(45):
+            status, post = self.page_posts(aiko, f"post {number + 1}")
+            self.assertEqual(status, 201)
+            clock.move(61)
+        every_id = [row[0] for row in self.rows("SELECT id FROM posts ORDER BY id DESC")]
+        self.assertEqual(len(every_id), 45)
+
+        # 2. The reader's page opens: the newest page, then two older pages as
+        #    the reader scrolls. Each page is newest first, and the last one is
+        #    short, so the page knows it has reached the end.
+        first = self.page_asks_for_a_page(reader, 0)
+        self.assertEqual([post["id"] for post in first], every_id[:20])
+        second = self.page_asks_for_a_page(reader, first[-1]["id"])
+        self.assertEqual([post["id"] for post in second], every_id[20:40])
+        third = self.page_asks_for_a_page(reader, second[-1]["id"])
+        self.assertEqual([post["id"] for post in third], every_id[40:])
+        self.assertLess(len(third), server.PAGE_SIZE)
+        shown = [post["id"] for post in first + second + third]
+        self.assertEqual(sorted(shown), sorted(every_id))
+        self.assertEqual(len(set(shown)), len(shown))
+        self.assertEqual(self.page_asks_for_a_page(reader, third[-1]["id"]), [])
+
+        # 3. Ben signs up and posts. The reader asks `after` the newest id of
+        #    the first page, and gets exactly that one post.
+        self.page_signs_up(ben, "ben", "Ben Ito")
+        self.page_posts(ben, "Ben is here")
+        new = self.page_asks_for_new_posts(reader, first[0]["id"])
+        self.assertEqual([post["id"] for post in new],
+                         [row[0] for row in self.rows("SELECT max(id) FROM posts")])
+        self.assertEqual(new[0]["text"], "Ben is here")
+
+        # 4. Aiko likes the third post. Asking only from the first page's oldest
+        #    post leaves it out; asking from the very oldest has it, with the
+        #    count the likes table gives.
+        post_3 = every_id[-3]
+        status, answer = self.page_presses_heart(aiko, post_3, already_liked=False)
+        self.assertEqual(status, 201)
+        near = self.page_asks_for_counts_from(aiko, first[-1]["id"])
+        self.assertNotIn(str(post_3), near["counts"])
+        self.assertNotIn(post_3, near["mine"])
+        far = self.page_asks_for_counts_from(aiko, every_id[-1])
+        self.assertEqual(far["counts"][str(post_3)],
+                         self.rows(f"SELECT count(*) FROM likes WHERE post_id = {post_3}")[0][0])
+        self.assertEqual(far["mine"], [post_3])
+        # Leaving `from` out gives the same as from the very first post.
+        self.assertEqual(self.page_asks_for_counts(aiko), far)
+
+
 
 class PageAndServerAgreeTest(unittest.TestCase):
     """AGENTS.md: "the page and the server must agree".
@@ -2322,6 +2499,46 @@ class PageAndServerAgreeTest(unittest.TestCase):
                 self.assertIn("!response.ok", functions[name])
                 if form is not None:
                     self.assertIn(f"holdForm({form}, answer.retry_after)", functions[name])
+
+    # -- timeline-flow --
+
+    def test_the_page_has_the_same_page_size(self):
+        size = re.search(r"\nconst PAGE_SIZE = (\d+);", self.page_code)
+        self.assertIsNotNone(size)
+        self.assertEqual(int(size.group(1)), server.PAGE_SIZE)
+
+    def test_the_server_answers_the_paging_requests(self):
+        for path in ("/posts?before=0", "/likes?from=0"):
+            with self.subTest(path=path):
+                self.assertNotIn(self.answer_code("GET", path), (404, 501))
+
+    def test_the_page_asks_with_before_and_from(self):
+        self.assertIn('"/posts?before="', self.page_code)
+        self.assertIn('"/likes?from="', self.page_code)
+
+    def test_the_page_has_the_flow_elements(self):
+        with open(os.path.join(HERE, "index.html"), encoding="utf-8") as page_file:
+            html = page_file.read()
+        for element_id in ("new-posts", "older-posts", "load-older"):
+            with self.subTest(element=element_id):
+                self.assertIn(f'id="{element_id}"', html)
+                self.assertIn(f'document.getElementById("{element_id}")', self.page_code)
+        self.assertIn('tabindex="-1"', html)
+
+    def test_older_posts_go_through_the_shared_pieces(self):
+        # Older posts go at the bottom through placePost, built by makePostItem,
+        # and are kept in postParts, so their hearts and who-liked lines are
+        # kept up to date. Every time on the page is refreshed, wherever it is.
+        functions = functions_in(self.page_code)
+        self.assertIn('putPost(post, "bottom")', functions["loadOlderPosts"])
+        self.assertIn("makePostItem(post)", functions["putPost"])
+        self.assertIn("placePost(", functions["putPost"])
+        self.assertIn("postParts[post.id]", functions["putPost"])
+        self.assertIn('document.querySelectorAll("time[data-relative]")',
+                      functions["refreshTimes"])
+        self.assertIn("receiveNewPosts(posts)", functions["checkForNewPosts"])
+        self.assertIn("showWaitingPosts()", functions["sendPost"])
+
 
 
     # -- search --

@@ -140,6 +140,8 @@ signing up, posting, liking and unliking, with the database file opened and read
    count goes up by one, as on the server.
 6. **Try a search.** Post `#cat`, then search for `#cat`: a post with `#catalog` is not found.
    Search for `100%`, or a Japanese word such as `東京`. Press the browser's Back button.
+7. **Scroll down in one window, post in another.** The first window does not jump: a
+   **"1 new post"** button waits at the top. Scroll to the bottom to load older posts.
 
 Each feature changes a different set of parts.
 
