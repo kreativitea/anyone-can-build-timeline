@@ -59,7 +59,7 @@ class TimelineHandler(BaseHTTPRequestHandler):
             # timeline-flow: `before` asks for one page of older posts, `after`
             # for every newer post. Which request this is, is the controller's job.
             if "before" in query and "after" in query:
-                self.send_json(400, {"error": "Ask for 'before' or 'after', not both."})
+                self.send_problem(400, Problem("before_and_after"))
                 return
             if "before" in query:
                 self.show_posts_before(query["before"][0])
@@ -86,7 +86,7 @@ class TimelineHandler(BaseHTTPRequestHandler):
                 counts, mine = likes_for(self.server.db_path, user["id"] if user else None,
                                          parse_qs(url.query, keep_blank_values=True).get("from", ["0"])[0])
             except RuleBroken as problem:
-                self.send_json(400, {"error": str(problem)})
+                self.send_problem(400, problem)
                 return
             self.send_json(200, likes_to_json(counts, mine))
         elif url.path == "/likers":
@@ -116,7 +116,7 @@ class TimelineHandler(BaseHTTPRequestHandler):
         try:
             rows = posts_before(self.server.db_path, before, viewer["id"] if viewer else None)
         except RuleBroken as problem:
-            self.send_json(400, {"error": str(problem)})
+            self.send_problem(400, problem)
             return
         self.send_json(200, posts_to_json(rows))
 
@@ -310,7 +310,7 @@ class TimelineHandler(BaseHTTPRequestHandler):
             rows, more = search_posts(self.server.db_path, query,
                                       viewer["id"] if viewer else None)
         except RuleBroken as problem:
-            self.send_json(400, {"error": str(problem)})
+            self.send_problem(400, problem)
             return
         self.send_json(200, search_to_json(rows, more))
 
@@ -335,7 +335,7 @@ class TimelineHandler(BaseHTTPRequestHandler):
         try:
             post_id = add_bookmark(self.server.db_path, user["id"], data.get("post_id"))
         except RuleBroken as problem:
-            self.send_json(400, {"error": str(problem)})
+            self.send_problem(400, problem)
             return
         self.send_json(201, bookmark_to_json(post_id, True))
 
@@ -350,7 +350,7 @@ class TimelineHandler(BaseHTTPRequestHandler):
         try:
             post_id = remove_bookmark(self.server.db_path, user["id"], data.get("post_id"))
         except RuleBroken as problem:
-            self.send_json(400, {"error": str(problem)})
+            self.send_problem(400, problem)
             return
         self.send_json(200, bookmark_to_json(post_id, False))   # 200: nothing was created
 
@@ -469,6 +469,10 @@ HIDDEN_CHARACTERS = re.compile(
 # A new rule adds its code at the end, under a comment with its feature's
 # name. A code is lower case with _: first the thing (text_, like_), then
 # what is wrong (_empty, _too_long). Never write Japanese here.
+#
+# Words with a number ("1 second", "60 seconds") are two entries, code_one and
+# code_other. The code is raised without the ending, with the number as the
+# value `count`, and the right one is chosen: Problem("post_too_fast", count=1).
 PROBLEMS = {
     # accounts
     "name_empty": "The name must not be empty.",
@@ -499,12 +503,28 @@ PROBLEMS = {
     # who-liked
     "post_ids_missing": "The request must say which posts it is about.",
     "post_ids_too_many": "One request may ask about at most {limit} posts.",
-    # rate-limit
-    "post_too_fast": "Too many posts. Please try again in {seconds} seconds.",
-    "like_too_fast": "Too many likes. Please try again in {seconds} seconds.",
-    "login_too_fast": "Too many wrong passwords for this account. "
-                      "Please try again in {seconds} seconds.",
-    "signup_too_fast": "Too many new accounts. Please try again in {seconds} seconds.",
+    # rate-limit: words with a number are two entries, _one and _other (see Problem)
+    "post_too_fast_one": "Too many posts. Please try again in {count} second.",
+    "post_too_fast_other": "Too many posts. Please try again in {count} seconds.",
+    "like_too_fast_one": "Too many likes. Please try again in {count} second.",
+    "like_too_fast_other": "Too many likes. Please try again in {count} seconds.",
+    "login_too_fast_one": "Too many wrong passwords for this account. "
+                          "Please try again in {count} second.",
+    "login_too_fast_other": "Too many wrong passwords for this account. "
+                            "Please try again in {count} seconds.",
+    "signup_too_fast_one": "Too many new accounts. Please try again in {count} second.",
+    "signup_too_fast_other": "Too many new accounts. Please try again in {count} seconds.",
+    # search
+    "search_empty": "Type a word to search for.",
+    "search_too_long": "A search must be {limit} characters or fewer.",
+    "search_too_many_words": "A search may have at most {limit} words.",
+    # timeline-flow
+    "before_and_after": "Ask for 'before' or 'after', not both.",
+    "id_bound_not_number": "'{name}' must be a whole number, 0 or more.",
+    # bookmarks
+    "bookmark_post_id_missing": "The bookmark must say which post it is for.",
+    "bookmark_already": "You have already bookmarked that post.",
+    "bookmark_not_there": "You have not bookmarked that post.",
 }
 
 # One code for a wrong name and for a wrong password, so a stranger cannot use
@@ -521,9 +541,17 @@ class Problem(Exception):
     """
 
     def __init__(self, code, **values):
-        Exception.__init__(self, PROBLEMS[code].format(**values))
+        Exception.__init__(self, problem_sentence(code, values).format(**values))
         self.code = code
         self.values = values
+
+
+def problem_sentence(code, values):
+    """The English for this code: PROBLEMS[code], or for words with a number,
+    code_one when the value `count` is 1 and code_other for any other number."""
+    if code in PROBLEMS:
+        return PROBLEMS[code]
+    return PROBLEMS[code + ("_one" if values.get("count") == 1 else "_other")]
 
 
 class RuleBroken(Problem):
@@ -550,12 +578,13 @@ class TooFast(Problem):
 
     A Problem with a code, like every refusal, but not a kind of RuleBroken,
     so it can never be sent as a 400 by mistake. The wait is also its value
-    {seconds}, so the page can say it in the reader's language.
+    {count}, so the page can say it in the reader's language ("1 second",
+    "60 seconds": the code has a _one and an _other entry).
     """
 
-    def __init__(self, code, seconds):
-        Problem.__init__(self, code, seconds=seconds)
-        self.retry_after = seconds
+    def __init__(self, code, count):
+        Problem.__init__(self, code, count=count)
+        self.retry_after = count
 
 
 def connect(db_path):
@@ -962,7 +991,7 @@ def use_allowance(db_path, action, key):
             # The wait ends when the oldest counted attempt is `seconds` old.
             # Rounded up to whole seconds, and never less than 1.
             wait = max(1, math.ceil(rows[0]["at"] + seconds - now))
-            raise TooFast(TOO_FAST[action], seconds=wait)
+            raise TooFast(TOO_FAST[action], count=wait)
         connection.execute("INSERT INTO attempts (action, key, at) VALUES (?, ?, ?)",
                            (action, key, now))
         connection.commit()
@@ -1451,12 +1480,12 @@ def check_query(query):
     """
     query = query.strip() if isinstance(query, str) else ""
     if query == "":
-        raise RuleBroken("Type a word to search for.")
+        raise RuleBroken("search_empty")
     if len(query) > MAX_QUERY:
-        raise RuleBroken(f"A search must be {MAX_QUERY} characters or fewer.")
+        raise RuleBroken("search_too_long", limit=MAX_QUERY)
     words = query.split()
     if len(words) > MAX_QUERY_WORDS:
-        raise RuleBroken(f"A search may have at most {MAX_QUERY_WORDS} words.")
+        raise RuleBroken("search_too_many_words", limit=MAX_QUERY_WORDS)
     return words
 
 
@@ -1537,7 +1566,7 @@ def check_id_bound(value, name):
         return value
     if isinstance(value, str) and POST_ID_TEXT.fullmatch(value):
         return int(value)
-    raise RuleBroken(f"'{name}' must be a whole number, 0 or more.")
+    raise RuleBroken("id_bound_not_number", name=name)
 
 
 def posts_before(db_path, before, viewer_id=None):
@@ -1570,7 +1599,7 @@ def check_bookmark_post_id(post_id):
     try:
         return int(post_id)
     except (TypeError, ValueError):
-        raise RuleBroken("The bookmark must say which post it is for.")
+        raise RuleBroken("bookmark_post_id_missing")
 
 
 def add_bookmark(db_path, user_id, post_id):
@@ -1584,17 +1613,17 @@ def add_bookmark(db_path, user_id, post_id):
     try:
         if connection.execute("SELECT id FROM posts WHERE id = ?",
                               (post_id,)).fetchone() is None:
-            raise RuleBroken("That post does not exist.")
+            raise RuleBroken("post_missing")
         if connection.execute("SELECT 1 FROM bookmarks WHERE user_id = ? AND post_id = ?",
                               (user_id, post_id)).fetchone() is not None:
-            raise RuleBroken("You have already bookmarked that post.")
+            raise RuleBroken("bookmark_already")
         try:
             connection.execute("INSERT INTO bookmarks (user_id, post_id) VALUES (?, ?)",
                                (user_id, post_id))
         except sqlite3.IntegrityError:
             # Two presses at the same moment: the check above saw nothing both
             # times. The database kept the first row and refused this one.
-            raise RuleBroken("You have already bookmarked that post.")
+            raise RuleBroken("bookmark_already")
         connection.commit()
     finally:
         connection.close()
@@ -1613,7 +1642,7 @@ def remove_bookmark(db_path, user_id, post_id):
         cursor = connection.execute("DELETE FROM bookmarks WHERE user_id = ? AND post_id = ?",
                                     (user_id, post_id))
         if cursor.rowcount == 0:
-            raise RuleBroken("You have not bookmarked that post.")
+            raise RuleBroken("bookmark_not_there")
         connection.commit()
     finally:
         connection.close()

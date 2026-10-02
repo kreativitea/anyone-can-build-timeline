@@ -102,10 +102,30 @@ function fill(template, values) {
   });
 }
 
+// "_one" or "_other": which of two keys fits this number, in the language
+// now shown. The browser's own Intl.PluralRules decides. Japanese has no
+// plural, so it always gives "_other".
+function pluralEnding(n) {
+  return new Intl.PluralRules(language).select(n) === "one" ? "_one" : "_other";
+}
+
+// The entry in words.js for this key. A key with a number may be written
+// without its ending (a server code such as "post_too_fast"): then the value
+// `count` picks key_one or key_other. undefined if there is none.
+function wordsEntry(key, values) {
+  if (WORDS[key] !== undefined) {
+    return WORDS[key];
+  }
+  if (values && values.count !== undefined) {
+    return WORDS[key + pluralEnding(values.count)];
+  }
+  return undefined;
+}
+
 // The words for this key, in the language now shown, with the values filled
 // in. If there are no words in this language yet, the English.
 function say(key, values) {
-  const entry = WORDS[key];
+  const entry = wordsEntry(key, values);
   if (entry === undefined) {
     return key;   // a mistake in the code: test_server.py checks every key
   }
@@ -119,8 +139,7 @@ function say(key, values) {
 // value {count}. `values` (optional) are more values for the same sentence,
 // for example names: "{first} and {count} others liked this".
 function sayCount(key, n, values) {
-  const form = new Intl.PluralRules(language).select(n) === "one" ? "_one" : "_other";
-  return say(key + form, Object.assign({}, values, { count: n }));
+  return say(key + pluralEnding(n), Object.assign({}, values, { count: n }));
 }
 
 // Write every word on the page in the language now shown: each element with
@@ -687,7 +706,7 @@ whenLanguageChanges(function redrawWhoLiked() {
 // own English, from showProblem). showStatus("") empties the line.
 function showStatus(key, values, fallback) {
   statusNow = { key: key, values: values || {}, fallback: fallback || "" };
-  if (WORDS[key] !== undefined) {
+  if (wordsEntry(key, values) !== undefined) {
     statusLine.textContent = say(key, values);
   } else {
     statusLine.textContent = fallback || "";
@@ -957,15 +976,8 @@ function holdForm(form, seconds) {
 // has reached the end: a page shorter than this is the last one.
 const PAGE_SIZE = 20;
 
-// The words of this feature, each one a whole sentence. (These move to
-// words.js with the Japanese words table.)
-const FLOW_WORDS = {
-  new_posts_one: "{count} new post",
-  new_posts_other: "{count} new posts",
-  show_older: "Show older posts",
-  loading_older: "Loading…",
-  no_older: "No older posts.",
-};
+// The words of this feature are in words.js: new_posts_one/_other,
+// show_older, loading_older, no_older.
 
 const newPostsButton = document.getElementById("new-posts");
 const olderPosts = document.getElementById("older-posts");
@@ -1029,8 +1041,7 @@ function updateNewPostsButton() {
   const count = waitingPosts.length;
   newPostsButton.hidden = count === 0;
   if (count > 0) {
-    const form = new Intl.PluralRules("en").select(count) === "one" ? "_one" : "_other";
-    newPostsButton.textContent = FLOW_WORDS["new_posts" + form].replace("{count}", String(count));
+    newPostsButton.textContent = sayCount("new_posts", count);
   }
 }
 
@@ -1050,13 +1061,14 @@ async function loadOlderPosts() {
     return;
   }
   loadingOlder = true;
-  loadOlderButton.textContent = FLOW_WORDS.loading_older;
+  loadOlderButton.dataset.words = "loading_older";
+  loadOlderButton.textContent = say("loading_older");
   let loaded = false;
   try {
     const response = await fetch("/posts?before=" + oldestId);
     const posts = await response.json();
     if (!response.ok) {
-      throw new Error(posts.error);
+      throw new Error(posts.code);
     }
     // The server sends them newest first: each goes at the bottom, in order.
     for (const post of posts) {
@@ -1074,18 +1086,24 @@ async function loadOlderPosts() {
     if (posts.length < PAGE_SIZE) {
       noOlderPosts = true;
       // Nothing at all if the timeline is empty: there is nothing older than nothing.
-      olderPosts.textContent = oldestId === 0 ? "" : FLOW_WORDS.no_older;
+      if (oldestId === 0) {
+        olderPosts.textContent = "";
+      } else {
+        olderPosts.dataset.words = "no_older";
+        olderPosts.textContent = say("no_older");
+      }
     }
-    if (statusLine.textContent === CANNOT_REACH) {
+    if (statusNow.key === "cannot_reach") {
       showStatus("");
     }
   } catch (error) {
     // The button stays, so the person can try again.
-    showStatus(CANNOT_REACH);
+    showStatus("cannot_reach");
   } finally {
     loadingOlder = false;
     if (!noOlderPosts) {
-      loadOlderButton.textContent = FLOW_WORDS.show_older;
+      loadOlderButton.dataset.words = "show_older";
+      loadOlderButton.textContent = say("show_older");
     }
   }
   if (olderObserver !== null) {
@@ -1490,27 +1508,8 @@ const SEARCH_LIMIT = 50;
 // make new RegExp(TAG.source, "g").
 const TAG = /#([0-9A-Za-z_々぀-ヿ㐀-鿿ｦ-ﾟ]+)/;
 
-// The words of this feature. One sentence is one template, never joined from
-// pieces. (These move to words.js with the Japanese words table.)
-const SEARCH_WORDS = {
-  search_empty: "Type a word to search for.",
-  search_too_long: "A search must be {max} characters or fewer.",
-  search_too_many_words: "A search may have at most {max} words.",
-  results_none: "No posts with “{query}”.",
-  results_one: "{count} post with “{query}”.",
-  results_other: "{count} posts with “{query}”.",
-  results_more: "Showing the newest {count} posts with “{query}”.",
-  results_start: "Type a word or #tag in the search box above.",
-  results_view: "Search results",
-  results_heart: "Open the timeline to like",
-};
-
-// The words for this key, with each {name} replaced by values[name], in one pass.
-function searchSay(key, values) {
-  return SEARCH_WORDS[key].replace(/\{(\w+)\}/g, function (all, name) {
-    return String(values[name]);
-  });
-}
+// The words of this feature are in words.js (search_..., results_...). One
+// sentence is one key, never joined from pieces.
 
 const searchForm = document.getElementById("search-form");
 const searchBox = document.getElementById("search-box");
@@ -1521,22 +1520,24 @@ const backToTimelineButton = document.getElementById("back-to-timeline");
 // The search the results now show ("" if none), and a number for each search,
 // so an older answer that arrives late never covers a newer one.
 let shownQuery = "";
+let shownAnswer = null;   // the server's answer the results now show, or null
 let searchNumber = 0;
 
-// The rules of check_query in server.py. Returns the broken rule, or "".
+// The rules of check_query in server.py, with the same codes.
+// Returns the broken rule as { key, values }, or null if none.
 // Words are split at spaces, a Japanese full-width space too, as Python does.
 function queryProblem(query) {
   const trimmed = query.trim();
   if (trimmed === "") {
-    return searchSay("search_empty", {});
+    return { key: "search_empty", values: {} };
   }
   if (characterCount(trimmed) > MAX_QUERY) {
-    return searchSay("search_too_long", { max: MAX_QUERY });
+    return { key: "search_too_long", values: { limit: MAX_QUERY } };
   }
   if (trimmed.split(/\s+/).length > MAX_QUERY_WORDS) {
-    return searchSay("search_too_many_words", { max: MAX_QUERY_WORDS });
+    return { key: "search_too_many_words", values: { limit: MAX_QUERY_WORDS } };
   }
-  return "";
+  return null;
 }
 
 // The address of a search: /?q=… The # of a tag must be written %23, or the
@@ -1560,8 +1561,8 @@ async function runSearch(query, remember) {
   searchBox.value = query;
   // A quick check on the page. The server checks the same rules again.
   const problem = queryProblem(query);
-  if (problem !== "") {
-    showStatus(problem);
+  if (problem !== null) {
+    showStatus(problem.key, problem.values);
     return;
   }
   if (remember) {
@@ -1581,14 +1582,14 @@ async function runSearch(query, remember) {
       return;   // a newer search was started while this one was asked
     }
     if (!response.ok) {
-      // The server refused the search. It says which rule was broken.
-      showStatus(answer.error);
+      // The server refused the search. Its code says which rule was broken.
+      showProblem(answer);
       return;
     }
     showStatus("");
     showResults(query, answer);
   } catch (error) {
-    showStatus(CANNOT_REACH);
+    showStatus("cannot_reach");
   }
 }
 
@@ -1597,29 +1598,44 @@ async function runSearch(query, remember) {
 // results are not kept in postParts: only the live timeline is kept up to date.
 function showResults(query, answer) {
   shownQuery = query;
+  shownAnswer = answer;
   resultsList.replaceChildren();
   for (const post of answer.posts) {
     const parts = makePostItem(post);
     // Liking is done on the timeline, where each heart is kept up to date.
     parts.likeButton.disabled = true;
-    parts.likeButton.setAttribute("aria-label", searchSay("results_heart", {}));
-    parts.likeButton.setAttribute("title", searchSay("results_heart", {}));
+    parts.likeButton.dataset.wordsAriaLabel = "results_heart";
+    parts.likeButton.dataset.wordsTitle = "results_heart";
+    parts.likeButton.setAttribute("aria-label", say("results_heart"));
+    parts.likeButton.setAttribute("title", say("results_heart"));
     resultsList.append(parts.item);
   }
-  const values = { count: answer.posts.length, query: query };
+  showResultsTitle();
+  showView("search");
+}
+
+// The line above the results: how many posts have the words. Written again
+// after a language change.
+function showResultsTitle() {
+  if (shownAnswer === null) {
+    resultsTitle.textContent = say("results_start");
+    return;
+  }
+  const count = shownAnswer.posts.length;
+  const values = { count: count, query: shownQuery };
   let words;
-  if (answer.posts.length === 0) {
-    words = searchSay("results_none", values);
-  } else if (answer.more) {
-    words = searchSay("results_more", values);
+  if (count === 0) {
+    words = say("results_none", values);
+  } else if (shownAnswer.more) {
+    words = say("results_more", values);
   } else {
-    const form = new Intl.PluralRules("en").select(answer.posts.length) === "one" ? "one" : "other";
-    words = searchSay("results_" + form, values);
+    words = sayCount("results", count, { query: shownQuery });
   }
   // textContent, never innerHTML: the search is text the person typed.
   resultsTitle.textContent = words;
-  showView("search");
 }
+
+whenLanguageChanges(showResultsTitle);
 
 // Back to the timeline: hide the results, empty the search box, and set the
 // address back to /. `remember` is false when the address already says /.
@@ -1682,16 +1698,7 @@ function searchBoxKey(event) {
 // the cookie. Bookmarks are not asked for every second: they change only when
 // you press a ☆, and the answer to that press says what is now true.
 
-// The words of this feature, each sentence whole. (These move to words.js
-// with the Japanese words table.)
-const BOOKMARK_WORDS = {
-  bookmark_add: "Bookmark this post",
-  bookmark_remove: "Remove bookmark",
-  bookmark_log_in: "Please log in to bookmark a post.",
-  bookmarks_view: "My bookmarks",
-  bookmarks_list: "Your bookmarks, newest post first",
-  bookmarks_empty: "You have no bookmarks yet. Press ☆ on a post to save it.",
-};
+// The words of this feature are in words.js (bookmark_..., bookmarks_...).
 
 // The ids of the posts this person has bookmarked. Empty when signed out.
 const bookmarked = new Set();
@@ -1721,8 +1728,8 @@ function drawBookmarkButton(button, on) {
   button.textContent = on ? "★" : "☆";
   button.classList.toggle("bookmarked", on);
   button.setAttribute("aria-pressed", on ? "true" : "false");
-  button.setAttribute("aria-label", on ? BOOKMARK_WORDS.bookmark_remove
-    : BOOKMARK_WORDS.bookmark_add);
+  button.dataset.wordsAriaLabel = on ? "bookmark_remove" : "bookmark_add";
+  button.setAttribute("aria-label", say(button.dataset.wordsAriaLabel));
 }
 
 // This post is now bookmarked (on) or not. Every ☆ of this post changes: the
@@ -1749,7 +1756,7 @@ async function loadBookmarks() {
       return;
     }
     if (!response.ok) {
-      showStatus(answer.error);
+      showProblem(answer);
       return;
     }
     bookmarked.clear();
@@ -1761,7 +1768,7 @@ async function loadBookmarks() {
     }
     showBookmarkList(answer);
   } catch (error) {
-    showStatus(CANNOT_REACH);
+    showStatus("cannot_reach");
   }
 }
 
@@ -1807,7 +1814,7 @@ function showViewsNavIfNeeded() {
 async function pressBookmark(postId) {
   // Only a person who is logged in can bookmark. The server checks this again.
   if (account === null) {
-    showStatus(BOOKMARK_WORDS.bookmark_log_in);
+    showStatus("bookmark_log_in");
     return;
   }
   if (bookmarksBusy.has(postId)) {
@@ -1823,13 +1830,14 @@ async function pressBookmark(postId) {
     });
     const answer = await response.json();
     if (response.status === 401) {
-      showSignedOut(answer.error);
+      showSignedOut("");
+      showProblem(answer);
       return;
     }
     if (!response.ok) {
       // This window had the star wrong (perhaps another tab changed it), so
       // ask the server what is true instead of guessing.
-      showStatus(answer.error);
+      showProblem(answer);
       await loadBookmarks();
       return;
     }
@@ -1843,7 +1851,7 @@ async function pressBookmark(postId) {
       bookmarksEmpty.hidden = bookmarkList.children.length > 0;
     }
   } catch (error) {
-    showStatus(CANNOT_REACH);
+    showStatus("cannot_reach");
   } finally {
     bookmarksBusy.delete(postId);
   }
@@ -1854,15 +1862,17 @@ ACTIONS.bookmark = pressBookmark;
 // Add the My bookmarks view: its list, its "none yet" line, and its button,
 // which stays hidden until someone is logged in. Opening it asks the server again.
 function setUpBookmarks() {
-  const section = addView("bookmarks", BOOKMARK_WORDS.bookmarks_view);
+  const section = addView("bookmarks", "bookmarks_view");
   bookmarkList = document.createElement("ol");
   bookmarkList.id = "bookmark-list";
   bookmarkList.className = "timeline";
-  bookmarkList.setAttribute("aria-label", BOOKMARK_WORDS.bookmarks_list);
+  bookmarkList.dataset.wordsAriaLabel = "bookmarks_list";
+  bookmarkList.setAttribute("aria-label", say("bookmarks_list"));
   bookmarksEmpty = document.createElement("p");
   bookmarksEmpty.id = "bookmarks-empty";
   bookmarksEmpty.className = "bookmarks-empty";
-  bookmarksEmpty.textContent = BOOKMARK_WORDS.bookmarks_empty;
+  bookmarksEmpty.dataset.words = "bookmarks_empty";
+  bookmarksEmpty.textContent = say("bookmarks_empty");
   bookmarksEmpty.hidden = true;
   section.append(bookmarkList, bookmarksEmpty);
   bookmarkList.addEventListener("click", clickOnTimeline);
@@ -1890,8 +1900,8 @@ setUpBookmarks();
 showView("timeline");
 // search: its own view, and its own listeners. The results list uses the
 // same click handler as the timeline, so who-liked and Show more work there.
-addView("search", searchSay("results_view", {}));
-resultsTitle.textContent = searchSay("results_start", {});
+addView("search", "results_view");
+showResultsTitle();
 resultsList.addEventListener("click", clickOnTimeline);
 searchForm.addEventListener("submit", searchSubmitted);
 searchBox.addEventListener("keydown", searchBoxKey);

@@ -247,17 +247,128 @@ const WORDS = {
   time_before_dates: {
     en: "Posted before Timeline kept dates",
   },
-  // rate-limit
-  post_too_fast: {
-    en: "Too many posts. Please try again in {seconds} seconds.",
+  // rate-limit: a word with a number is two keys, _one and _other
+  post_too_fast_one: {
+    en: "Too many posts. Please try again in {count} second.",
   },
-  like_too_fast: {
-    en: "Too many likes. Please try again in {seconds} seconds.",
+  post_too_fast_other: {
+    en: "Too many posts. Please try again in {count} seconds.",
   },
-  login_too_fast: {
-    en: "Too many wrong passwords for this account. Please try again in {seconds} seconds.",
+  like_too_fast_one: {
+    en: "Too many likes. Please try again in {count} second.",
   },
-  signup_too_fast: {
-    en: "Too many new accounts. Please try again in {seconds} seconds.",
+  like_too_fast_other: {
+    en: "Too many likes. Please try again in {count} seconds.",
+  },
+  login_too_fast_one: {
+    en: "Too many wrong passwords for this account. Please try again in {count} second.",
+  },
+  login_too_fast_other: {
+    en: "Too many wrong passwords for this account. Please try again in {count} seconds.",
+  },
+  signup_too_fast_one: {
+    en: "Too many new accounts. Please try again in {count} second.",
+  },
+  signup_too_fast_other: {
+    en: "Too many new accounts. Please try again in {count} seconds.",
+  },
+  // search: refusals
+  search_empty: {
+    en: "Type a word to search for.",
+  },
+  search_too_long: {
+    en: "A search must be {limit} characters or fewer.",
+  },
+  search_too_many_words: {
+    en: "A search may have at most {limit} words.",
+  },
+  // search: the words of the page
+  search_label: {
+    en: "Search posts",
+  },
+  search_placeholder: {
+    en: "a word or #tag",
+  },
+  search_button: {
+    en: "Search",
+  },
+  results_none: {
+    en: "No posts with “{query}”.",
+  },
+  results_one: {
+    en: "{count} post with “{query}”.",
+  },
+  results_other: {
+    en: "{count} posts with “{query}”.",
+  },
+  results_more: {
+    en: "Showing the newest {count} posts with “{query}”.",
+  },
+  results_start: {
+    en: "Type a word or #tag in the search box above.",
+  },
+  results_view: {
+    en: "Search results",
+  },
+  results_heart: {
+    en: "Open the timeline to like",
+  },
+  results_back: {
+    en: "Back to the timeline",
+  },
+  results_label: {
+    en: "Search results, newest first",
+  },
+  // timeline-flow: refusals
+  before_and_after: {
+    en: "Ask for 'before' or 'after', not both.",
+  },
+  id_bound_not_number: {
+    en: "'{name}' must be a whole number, 0 or more.",
+  },
+  // timeline-flow: the words of the page
+  new_posts_one: {
+    en: "{count} new post",
+  },
+  new_posts_other: {
+    en: "{count} new posts",
+  },
+  show_older: {
+    en: "Show older posts",
+  },
+  loading_older: {
+    en: "Loading…",
+  },
+  no_older: {
+    en: "No older posts.",
+  },
+  // bookmarks: refusals
+  bookmark_post_id_missing: {
+    en: "The bookmark must say which post it is for.",
+  },
+  bookmark_already: {
+    en: "You have already bookmarked that post.",
+  },
+  bookmark_not_there: {
+    en: "You have not bookmarked that post.",
+  },
+  // bookmarks: the words of the page
+  bookmark_add: {
+    en: "Bookmark this post",
+  },
+  bookmark_remove: {
+    en: "Remove bookmark",
+  },
+  bookmark_log_in: {
+    en: "Please log in to bookmark a post.",
+  },
+  bookmarks_view: {
+    en: "My bookmarks",
+  },
+  bookmarks_list: {
+    en: "Your bookmarks, newest post first",
+  },
+  bookmarks_empty: {
+    en: "You have no bookmarks yet. Press ☆ on a post to save it.",
   },
 };

@@ -219,7 +219,10 @@ a code, and the page shows the words for that code. Every feature follows these 
    (a time, names, a count) are written again by a function given to `whenLanguageChanges(fn)`.
    A server refusal: `showProblem(answer)`.
 6. **Words with a number** are two keys, `key_one` and `key_other`, shown with
-   `sayCount("key", n, values)`. The number is `{count}`; `values` are any others.
+   `sayCount("key", n, values)`. The number is `{count}`; `values` are any others. A refusal
+   with a number is two codes in `PROBLEMS` and `words.js`, `code_one` and `code_other`; raise it
+   without the ending, with the number as `count`: `TooFast("post_too_fast", count=1)` says
+   "1 second", and the page chooses the same way.
 7. **One sentence is one key.** Never join pieces (`say("a") + name`): write one sentence with `{name}`.
 8. **What people wrote is never a key:** posts, names, tags, place names. Use `textContent`.
 9. **A time or a date** uses `Intl.DateTimeFormat(language, …)` or `Intl.RelativeTimeFormat(language, …)`.

@@ -29,10 +29,10 @@
     <!-- Search: anyone can search, signed in or not. The results show in
          their own view, "Search results", below. -->
     <form id="search-form" role="search">
-      <label for="search-box">Search posts</label>
+      <label for="search-box" data-words="search_label">Search posts</label>
       <input id="search-box" type="search" maxlength="100" placeholder="a word or #tag"
-             autocomplete="off">
-      <button type="submit">Search</button>
+             data-words-placeholder="search_placeholder" autocomplete="off">
+      <button type="submit" data-words="search_button">Search</button>
     </form>
 
     <!-- The Colours switch. Auto follows the computer. The choice is kept in
@@ -115,16 +115,18 @@
       <ol id="timeline" class="timeline" aria-label="Posts, newest first" tabindex="-1"
           data-words-aria-label="timeline_label"></ol>
       <!-- timeline-flow: older posts load when this comes near the screen, or when pressed. -->
-      <p id="older-posts" class="older-posts"><button type="button" id="load-older" class="link-button">Show older posts</button></p>
+      <p id="older-posts" class="older-posts"><button type="button" id="load-older" class="link-button" data-words="show_older">Show older posts</button></p>
     </section>
 
     <!-- The search results view. app.js adds its button with addView("search", ...). -->
     <section data-view="search" hidden>
       <p class="results-row">
         <span id="results-title" role="status"></span>
-        <button type="button" id="back-to-timeline" class="link-button">Back to the timeline</button>
+        <button type="button" id="back-to-timeline" class="link-button"
+                data-words="results_back">Back to the timeline</button>
       </p>
-      <ol id="results-list" class="timeline" aria-label="Search results, newest first"></ol>
+      <ol id="results-list" class="timeline" aria-label="Search results, newest first"
+          data-words-aria-label="results_label"></ol>
     </section>
   </main>
 

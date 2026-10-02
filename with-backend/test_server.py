@@ -1605,6 +1605,23 @@ class ModelTests(unittest.TestCase):
                 values = {name: "x" for name in value_names(sentence)}
                 self.assertNotIn("{", sentence.format(**values))
 
+    def test_words_with_a_number_are_a_pair_chosen_by_count(self):
+        for code in server.PROBLEMS:
+            for this, other in (("_one", "_other"), ("_other", "_one")):
+                if code.endswith(this):
+                    with self.subTest(code=code):
+                        pair = code[:-len(this)] + other
+                        self.assertIn(pair, server.PROBLEMS)
+                        self.assertEqual(value_names(server.PROBLEMS[code]) | {"count"},
+                                         value_names(server.PROBLEMS[pair]) | {"count"})
+        one = server.TooFast("post_too_fast", count=1)
+        many = server.TooFast("post_too_fast", count=60)
+        self.assertEqual(str(one), "Too many posts. Please try again in 1 second.")
+        self.assertEqual(str(many), "Too many posts. Please try again in 60 seconds.")
+        self.assertEqual((one.code, one.values, one.retry_after), ("post_too_fast", {"count": 1}, 1))
+        with self.assertRaises(KeyError):
+            server.Problem("post_too_fast")   # no count: no way to choose
+
     def test_the_view_sends_the_english_the_code_and_the_values(self):
         problem = server.RuleBroken("text_too_long", limit=280)
         self.assertEqual(server.problem_to_json(problem),
@@ -1838,7 +1855,7 @@ class RealServerTest(unittest.TestCase):
         self.assertTrue(header.isdigit() and int(header) >= 1)
         self.assertEqual(answer, {"error": "Too many posts. Please try again in "
                                            + header + " seconds.",
-                                  "code": "post_too_fast", "values": {"seconds": int(header)},
+                                  "code": "post_too_fast", "values": {"count": int(header)},
                                   "retry_after": int(header)})
         self.assertEqual(len(self.get("/posts?after=0")), 5)
 
@@ -2998,9 +3015,10 @@ class PageAndServerAgreeTest(unittest.TestCase):
         problem = functions_in(self.page_code)["queryProblem"]
         self.assertIn("characterCount(trimmed) > MAX_QUERY", problem)
         self.assertIn("> MAX_QUERY_WORDS", problem)
-        for words in ("Type a word to search for.", "A search must be {max} characters or fewer.",
-                      "A search may have at most {max} words."):
-            self.assertIn(words, self.page_code)
+        # The same codes as check_query (japanese: the words are in words.js).
+        for code in ("search_empty", "search_too_long", "search_too_many_words"):
+            self.assertIn('key: "' + code + '"', problem)
+            self.assertIn(code, server.PROBLEMS)
 
     def test_search_results_go_through_the_shared_pieces(self):
         results = functions_in(self.page_code)["showResults"]
@@ -3148,10 +3166,18 @@ class PageAndServerAgreeTest(unittest.TestCase):
                 else:
                     self.assertIsInstance(first, ast.Constant, 'write the code as "a_code"')
                     codes = [first.value]
+                given = {keyword.arg for keyword in node.keywords}
                 for code in codes:
-                    self.assertIn(code, server.PROBLEMS)
-                    self.assertEqual({keyword.arg for keyword in node.keywords},
-                                     value_names(server.PROBLEMS[code]))
+                    if code in server.PROBLEMS:
+                        self.assertEqual(given, value_names(server.PROBLEMS[code]))
+                    else:
+                        # Words with a number: code_one and code_other, chosen by count.
+                        self.assertIn(code + "_one", server.PROBLEMS)
+                        self.assertIn(code + "_other", server.PROBLEMS)
+                        self.assertIn("count", given)
+                        self.assertEqual(given, value_names(server.PROBLEMS[code + "_one"])
+                                         | value_names(server.PROBLEMS[code + "_other"])
+                                         | {"count"})
         self.assertGreater(calls, 20)
         self.assertIsNone(re.search(r'\b(' + "|".join(kinds) + r')\(\s*f?"[A-Z]',
                                     self.server_code))
@@ -3186,7 +3212,7 @@ class PageAndServerAgreeTest(unittest.TestCase):
 
     def test_the_page_checks_a_rule_with_the_same_code_as_the_model(self):
         functions = functions_in(self.page_code)
-        for name in ("accountProblem", "textProblem"):
+        for name in ("accountProblem", "textProblem", "queryProblem"):
             with self.subTest(function=name):
                 keys = re.findall(r'key: "(\w+)"', functions[name])
                 self.assertTrue(keys)
@@ -3287,8 +3313,27 @@ class PageAndServerAgreeTest(unittest.TestCase):
         self.assertIn('lang="ja"', button)
 
     def test_the_server_never_translates(self):
-        self.assertIsNone(re.search(r"[\u3040-\u30ff\u3400-\u9fff\uff66-\uff9f]",
-                                    self.server_code))
+        # No Japanese in any text the server could send. A pattern given to
+        # re.compile may name Japanese letters (a #tag may be #東京): that is a
+        # rule for matching, not words. Comments and docstrings are not sent.
+        japanese = re.compile(r"[\u3040-\u30ff\u3400-\u9fff\uff66-\uff9f]")
+        tree = ast.parse(self.server_code)
+        allowed = set()
+        for node in ast.walk(tree):
+            if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                    and node.func.attr == "compile" and node.args):
+                allowed.add(id(node.args[0]))
+            if isinstance(node, (ast.Module, ast.FunctionDef, ast.ClassDef)) and node.body:
+                first = node.body[0]
+                if isinstance(first, ast.Expr) and isinstance(first.value, ast.Constant):
+                    allowed.add(id(first.value))
+        for node in ast.walk(tree):
+            if (isinstance(node, ast.Constant) and isinstance(node.value, str)
+                    and id(node) not in allowed):
+                with self.subTest(line=node.lineno):
+                    self.assertIsNone(japanese.search(node.value))
+        for sentence in server.PROBLEMS.values():
+            self.assertIsNone(japanese.search(sentence))
         self.assertNotIn("Accept-Language", self.server_code)
 
     def test_nobody_writes_japanese_before_part_b(self):
