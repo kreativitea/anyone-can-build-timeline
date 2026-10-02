@@ -133,6 +133,7 @@ function showSignedIn(who) {
   whoAccountName.textContent = "@" + who.account_name;
   signedOutSection.hidden = true;
   signedInSection.hidden = false;
+  showDraft(who);
 }
 
 // Not logged in: show the Log in and Sign up forms, and why, if there is a reason.
@@ -142,8 +143,7 @@ function showSignedOut(reason) {
   account = null;
   signedInSection.hidden = true;
   signedOutSection.hidden = false;
-  textBox.value = "";
-  updateCount();
+  hideDraft();
   showStatus(reason);
 }
 
@@ -191,6 +191,84 @@ function updateCount() {
   const length = textBox.value.length;
   countLine.textContent = length + " / " + MAX_TEXT;
   countLine.classList.toggle("too-long", length > MAX_TEXT);
+}
+
+// Drafts
+//
+// A half-written post is kept in this browser's localStorage, so it comes back
+// after a reload, a closed tab or a restart. localStorage is a small store of
+// text inside the browser, for this website only, that stays until it is
+// removed. A draft never goes to the server.
+//
+// There is one draft for each account, under its own key, so two people on
+// one computer never see each other's words. The draft is removed when the
+// post is saved, or when the person logs out.
+//
+// Storage can be blocked (a browser set to refuse site data) or full. Then
+// every use of it is caught, drafts quietly do nothing, and posting still works.
+
+// The start of every draft key. The whole key is, for example, "timeline-draft:aiko".
+const DRAFT_KEY_START = "timeline-draft:";
+
+// The key for this account's draft. An account name holds only letters,
+// numbers and _, and is unique without regard to capitals, so lower case is safe.
+function draftKey(who) {
+  return DRAFT_KEY_START + who.account_name.toLowerCase();
+}
+
+// This account's draft, or "" if there is none or storage is blocked.
+function loadDraft(who) {
+  try {
+    return localStorage.getItem(draftKey(who)) || "";
+  } catch (error) {
+    return "";
+  }
+}
+
+// Keep what is in the box now, for the person logged in. An empty box (or
+// only spaces) removes the draft instead. A draft over the limit is still
+// kept: the person may be cutting it down.
+function saveDraft() {
+  if (account === null) {
+    return;
+  }
+  try {
+    if (textBox.value.trim() === "") {
+      localStorage.removeItem(draftKey(account));
+    } else {
+      localStorage.setItem(draftKey(account), textBox.value);
+    }
+  } catch (error) {
+    // Storage is blocked or full. The draft is not kept; nothing else changes.
+  }
+}
+
+// Remove the draft of the person logged in.
+function forgetDraft() {
+  if (account === null) {
+    return;
+  }
+  try {
+    localStorage.removeItem(draftKey(account));
+  } catch (error) {
+    // Storage is blocked, so there is no draft to remove.
+  }
+}
+
+// Put this account's draft in the box, or empty the box if there is none.
+function showDraft(who) {
+  const draft = loadDraft(who);
+  textBox.value = draft;
+  updateCount();
+  if (draft !== "") {
+    showStatus("Your unsent post is back.");
+  }
+}
+
+// Empty the box while nobody is logged in. The draft stays in storage.
+function hideDraft() {
+  textBox.value = "";
+  updateCount();
 }
 
 // When the page opens, ask the server who is logged in in this window.
@@ -317,6 +395,7 @@ async function signUp(event) {
 async function logOut() {
   try {
     await fetch("/sessions", { method: "DELETE" });
+    forgetDraft();
     showSignedOut("");
     await afterAccountChange();
   } catch (error) {
@@ -359,6 +438,7 @@ async function sendPost(event) {
     // This also brings in any post from another window that came just before ours.
     showStatus("");
     textBox.value = "";
+    forgetDraft();
     updateCount();
     await checkForNewPosts();
   } catch (error) {
@@ -463,6 +543,7 @@ function clickOnTimeline(event) {
 }
 
 textBox.addEventListener("input", updateCount);
+textBox.addEventListener("input", saveDraft);
 timeline.addEventListener("click", clickOnTimeline);
 postForm.addEventListener("submit", sendPost);
 loginForm.addEventListener("submit", logIn);

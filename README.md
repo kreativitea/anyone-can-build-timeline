@@ -127,6 +127,7 @@ signing up, posting, liking and unliking, with the database file opened and read
    - show *who* liked a post, not only how many
 3. **Say what changed and why.** Which parts did your feature change: the page, the controller, the
    model, the view, the database? Why those parts, and not the others?
+4. **Try a draft.** Type half a post, close the tab, and open the page again.
 
 Each feature changes a different set of parts.
 

@@ -124,6 +124,24 @@ cannot like the same post twice · a like cannot be taken back if it was never t
 liking need a login. The server checks them even though the page checks them too, because a user
 can change anything that runs on their own device.
 
+### Drafts
+
+A half-written post is kept in the browser, so it comes back after a reload, a closed tab or a
+restart. It never goes to the server: `server.py` and `timeline.db` know nothing about drafts.
+
+- **`localStorage` here, `sessionStorage` in `page-only/`.** In `page-only/` the storage *is* the
+  timeline, and `localStorage` would make two windows look shared. Here the timeline lives on the
+  server, and a draft is one person's private note. `sessionStorage` is emptied when the tab is
+  closed, which is the main case drafts are for, so this page uses `localStorage`.
+- **One draft for each account**, under the key `timeline-draft:<account name>`, so two people on
+  one computer never see each other's words.
+- **Logging out deletes the draft**, and the box is emptied. `localStorage` is plain text on the
+  disk, and logging out means "I am leaving this computer". When the login ends by itself (the
+  session runs out), the draft is kept: the person did not choose to leave.
+- **Posting deletes the draft**, but only after the server says the post is saved. A refused post
+  keeps it.
+- If the browser blocks or fills its storage, drafts quietly do nothing and posting still works.
+
 ## 5. The data model
 
 Four tables:
@@ -268,6 +286,9 @@ and that the page has the model's limits and patterns.
 | Taking back a like that is not there could just succeed, since the end state is the same. | design | reject | A refusal with a sentence is how every other rule here answers, and the page already stops the press that would cause it. | Nothing; it is refused. |
 | `remove_like` could look for the row and then delete it. | design | accept | Two presses at once would both look, both see the row, and both try to delete it. | One `DELETE`, and `cursor.rowcount` says whether it was there. |
 | Two fast presses send two requests, because the first answer has not come back yet. | design | accept | The heart is the page's own idea of the truth, so the page has to hold it still. | A flag in `app.js`: one press at a time. |
+| A draft on a shared computer is private text left behind. | security | accept | `localStorage` is plain text that anyone at this browser can read. | The draft is deleted on log out, and the box is emptied whenever nobody is logged in. |
+| Save the draft only after the person stops typing ("debounce"). | design | reject | A draft is a few hundred characters, and saving it takes far less than a millisecond. A timer would lose the last words if the tab closed. | Nothing; it is saved on every change. |
+| Keep drafts on the server, so they follow you to another device. | product | reject | A new table and a new route, for a rare need. | Nothing; a draft stays in this browser. |
 
 ## 8. Build or borrow
 

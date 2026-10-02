@@ -974,6 +974,75 @@ class ColoursTest(unittest.TestCase):
         self.assertNotIn("data-theme", page_only)
         self.assertNotIn("localStorage", page_only)
         self.assertIn("color-scheme: light dark;", self.root_block)
+def functions_in(code):
+    """Cut app.js into its top-level functions. Gives a map: name -> body.
+
+    A top-level function starts at the left edge with `function name(` or
+    `async function name(`, and ends at the first `}` at the left edge.
+    """
+    found = {}
+    pattern = r"^(?:async )?function (\w+)\(.*?^\}"
+    for match in re.finditer(pattern, code, re.MULTILINE | re.DOTALL):
+        found[match.group(1)] = match.group(0)
+    return found
+
+
+class PageDraftTest(unittest.TestCase):
+    """Drafts live only in the page, so these tests read app.js as text.
+
+    They cannot prove a draft comes back after a reload (that would need a
+    browser). They check that the code is wired the way the plan agreed.
+    """
+
+    def setUp(self):
+        with open(os.path.join(HERE, "app.js"), encoding="utf-8") as file:
+            self.page_code = file.read()
+        self.functions = functions_in(self.page_code)
+
+    def test_a_draft_is_kept_per_account(self):
+        self.assertIn('"timeline-draft:"', self.page_code)
+        self.assertIn("account_name", self.functions["draftKey"])
+
+    def test_every_use_of_local_storage_is_inside_a_try(self):
+        users = [name for name, body in self.functions.items() if "localStorage" in body]
+        self.assertTrue(users, "no function uses localStorage")
+        for name in users:
+            with self.subTest(function=name):
+                body = self.functions[name]
+                self.assertIn("try {", body)
+                self.assertIn("catch", body)
+        # No localStorage outside a function (comments do not count).
+        outside = self.page_code
+        for body in self.functions.values():
+            outside = outside.replace(body, "")
+        outside = re.sub(r"//.*", "", outside)
+        self.assertNotIn("localStorage", outside)
+
+    def test_the_page_uses_no_session_storage(self):
+        self.assertNotIn("sessionStorage", self.page_code)
+
+    def test_the_draft_is_forgotten_only_after_a_saved_post_and_on_log_out(self):
+        # A call, not the line that defines forgetDraft itself.
+        callers = {name for name, body in self.functions.items()
+                   if re.search(r"(?<!function )forgetDraft\(\)", body)}
+        self.assertEqual(callers, {"sendPost", "logOut"})
+        send = self.functions["sendPost"]
+        self.assertGreater(send.index("forgetDraft()"), send.index("if (!response.ok)"))
+        log_out = self.functions["logOut"]
+        # Before showSignedOut, which forgets who is logged in.
+        self.assertLess(log_out.index("forgetDraft()"), log_out.index("showSignedOut("))
+
+    def test_the_box_follows_who_is_logged_in(self):
+        self.assertIn("showDraft(", self.functions["showSignedIn"])
+        self.assertIn("hideDraft()", self.functions["showSignedOut"])
+
+    def test_saving_listens_to_the_box(self):
+        self.assertIn('textBox.addEventListener("input", saveDraft)', self.page_code)
+
+    def test_a_draft_is_never_sent(self):
+        for inside in re.findall(r"JSON\.stringify\((.*?)\)", self.page_code):
+            with self.subTest(sent=inside):
+                self.assertNotIn("draft", inside.lower())
 
 
 if __name__ == "__main__":
