@@ -69,6 +69,9 @@ Without `make`, the same thing is: `cd with-backend`, then `python3 server.py`.
 
 In the Claude Code desktop app, `.claude/launch.json` starts the same server and opens it for you.
 
+To edit or delete one of your own posts, open its **⋯** menu. An edited post says *· edited*;
+press it to see the earlier words. Other windows see the change within a second.
+
 ## See the difference
 
 Open the app in two windows side by side, one of them a **private window** (Chrome: Incognito,
@@ -87,11 +90,12 @@ Stop the server with **Ctrl+C**, and both windows say *Cannot reach the server*.
 The backend keeps everything in one file, `with-backend/timeline.db`, in four tables: `users`,
 with each person once, `posts`, where each post points at its author by number, `likes`, with
 one line for each person who liked each post, and `sessions`, with one line for each logged-in
-window. `attempts` and `bookmarks` (one private line for each post a person saved) came later.
-To see what is inside:
+window. `attempts` and `bookmarks` (one private line for each post a person saved) came later,
+and so did `post_versions` (the earlier words of each edited post) and `changes` (one line for each
+post edited or deleted). To see what is inside:
 
 ```
-sqlite3 with-backend/timeline.db 'select * from users; select * from posts; select * from likes; select * from sessions; select * from bookmarks'
+sqlite3 with-backend/timeline.db 'select * from users; select * from posts; select * from likes; select * from sessions; select * from bookmarks; select * from post_versions; select * from changes'
 ```
 
 A user line is `id|name|display_name|password_salt|password_hash|password_rounds`, for example

@@ -628,3 +628,56 @@ time.post-time {
   color: var(--quiet);
   overflow-wrap: anywhere;
 }
+
+/* edit-delete */
+/* "· edited" after the time: a button that looks like quiet text. */
+.post-head .edited {
+  margin-left: 8px;
+  color: var(--quiet);
+}
+
+/* A post deleted but kept for its replies: no words, only this line. */
+.post-text.post-deleted {
+  color: var(--quiet);
+  font-style: italic;
+}
+
+/* The box for new words, with its count, Cancel and Save under it. */
+.edit-box {
+  margin-top: 6px;
+}
+
+.edit-row {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 18px;
+  margin-top: 10px;
+}
+
+.edit-row .count {
+  margin-right: auto;
+}
+
+/* The earlier versions of a post, oldest first. */
+.versions {
+  margin: 8px 0 0;
+  padding: 0 0 0 18px;
+  border-left: 3px solid var(--border);
+  font-size: 18px;
+  list-style: none;
+}
+
+.versions li {
+  margin-top: 6px;
+}
+
+.version-text {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.versions .post-time {
+  margin-left: 0;
+}

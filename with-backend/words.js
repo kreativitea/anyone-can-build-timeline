@@ -496,4 +496,60 @@ const WORDS = {
   reply_log_in: {
     en: "Please log in to reply.",
   },
+  // edit-delete: refusals
+  post_id_missing: {
+    en: "The request must say which post it is for.",
+  },
+  post_not_yours: {
+    en: "You can only change your own posts.",
+  },
+  post_deleted: {
+    en: "That post was deleted.",
+  },
+  edit_unchanged: {
+    en: "The post is the same as before.",
+  },
+  post_delete_refused: {
+    en: "That post cannot be deleted yet.",
+  },
+  reply_to_deleted: {
+    en: "That post was deleted, so it cannot be answered.",
+  },
+  // edit-delete: the words of the page
+  edit_menu: {
+    en: "Edit",
+  },
+  delete_menu: {
+    en: "Delete",
+  },
+  versions_menu: {
+    en: "Show old versions",
+  },
+  edit_save: {
+    en: "Save",
+  },
+  edit_cancel: {
+    en: "Cancel",
+  },
+  edit_box_label: {
+    en: "New words for this post",
+  },
+  edited_mark: {
+    en: "· edited",
+  },
+  edited_label: {
+    en: "Show the earlier versions of this post",
+  },
+  versions_label: {
+    en: "Earlier versions of this post",
+  },
+  versions_none: {
+    en: "No earlier versions.",
+  },
+  delete_confirm: {
+    en: "Delete this post? This cannot be undone.",
+  },
+  deleted_post: {
+    en: "This post was deleted",
+  },
 };

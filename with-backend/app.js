@@ -343,6 +343,7 @@ function removePost(postId) {
   if (parts === undefined) {
     return;
   }
+  stopWatchingText(parts.item);       // edit-delete: long-posts stops watching its text
   parts.item.remove();
   removeReplyThread(postId, parts);   // replies: its replies go with it
   delete postParts[postId];
@@ -356,6 +357,7 @@ function redrawPost(post) {
     return;
   }
   const liked = old.likeButton.getAttribute("aria-pressed") === "true";
+  stopWatchingText(old.item);   // edit-delete: the old text leaves the page
   postParts[post.id] = makePostItem(post);
   old.item.replaceWith(postParts[post.id].item);
   showLike(post.id, post.like_count, liked);
@@ -1055,6 +1057,14 @@ function makeExpandable(textElement, postId) {
   return button;
 }
 
+// A post leaves the page (removePost) or is built again (redrawPost): stop
+// watching the size of its old text, so the watcher does not keep it forever.
+function stopWatchingText(item) {
+  for (const watched of item.querySelectorAll(".post-text")) {
+    textSizeWatcher.unobserve(watched);
+  }
+}
+
 // While the text is folded, show its button only if the text really goes on
 // past 6 lines (the + 1 allows for rounding). An open post keeps its
 // Show less button until the reader closes it.
@@ -1661,6 +1671,10 @@ async function checkForNewPosts() {
   try {
     // timeline-flow (1 of 3): first the newest page, not every post ever.
     // If the server did not answer, the next second tries again.
+    // edit-delete: changes first, then posts. A post changed between the two
+    // questions is still right: it is not on the page yet, so its change is
+    // skipped, and the post then comes in as it is now.
+    await checkForChanges();
     if (!firstPageLoaded) {
       await loadOlderPosts();
       if (!firstPageLoaded) {
@@ -2653,6 +2667,372 @@ async function reloadTimeline() {
   // The newest page first, then the hearts and their counts.
   await checkForNewPosts();
 }
+
+// ---- edit-delete: change or delete your own post ----
+//
+// On your own posts, the "⋯" menu has Edit and Delete, and "Show old
+// versions" once the post has been edited. They are made only when you are
+// logged in and the post is yours (like Block, they are made again when the
+// timeline is drawn again after a login or a log-out). The server checks
+// again: only the author may change a post (own_post in server.py).
+//
+// An edited post says "· edited" after its time. Anyone can press it to see
+// the earlier words, oldest first. A deleted post that has replies stays, as
+// "This post was deleted", with its replies under it; it has no heart, no
+// Reply and no ☆.
+//
+// THE CHANGES FEED. Every second, before asking for new posts, the page asks
+// GET /changes for every change since the last one it saw. A change brings
+// the post as the server now shows it to this window: a post means "draw it
+// again", null means "take it away". The page never looks at the kind. Every
+// copy of the post is changed: on the timeline, waiting behind "new posts",
+// in the search results and in My bookmarks.
+//
+// The words of this feature are in words.js (edit_..., delete_..., versions_...,
+// edited_..., deleted_post).
+
+// The newest change this window has seen. null: "not asked yet".
+let lastChangeId = null;
+
+// Each post on the page, and the post (from the server) it was drawn from,
+// so Cancel can draw it again. A WeakMap forgets an item when it is gone.
+const postOfItem = new WeakMap();
+
+// "· edited" after the time, and the list of earlier versions it opens. A
+// post deleted but kept for its replies says so instead of its words, and
+// has no heart, no Reply and no ☆ (it can be neither liked, answered nor saved).
+// This part runs after the others, so their buttons are already there.
+addPostPart(function editedPart(post, slots, item) {
+  postOfItem.set(item, post);
+  if (post.deleted) {
+    const text = slots.body.querySelector(".post-text");
+    if (text !== null) {
+      text.dataset.words = "deleted_post";
+      text.textContent = say("deleted_post");
+      text.classList.add("post-deleted");
+    }
+    for (const gone of slots.foot.querySelectorAll(
+      ".like, .like-count, .like-summary, .likers, .reply-button, .bookmark")) {
+      gone.hidden = true;
+    }
+    return;
+  }
+  const list = document.createElement("ol");
+  list.className = "versions";
+  list.dataset.wordsAriaLabel = "versions_label";
+  list.setAttribute("aria-label", say("versions_label"));
+  list.hidden = true;
+  slots.body.append(list);
+  if (post.edited) {
+    const mark = document.createElement("button");
+    mark.type = "button";
+    mark.className = "link-button edited";
+    mark.dataset.action = "versions";
+    mark.dataset.postId = post.id;
+    mark.setAttribute("aria-expanded", "false");
+    mark.dataset.words = "edited_mark";
+    mark.textContent = say("edited_mark");
+    mark.dataset.wordsAriaLabel = "edited_label";
+    mark.setAttribute("aria-label", say("edited_label"));
+    slots.head.append(mark);
+  }
+});
+
+// Edit, Delete and Show old versions, in the "⋯" menu: only on your own post,
+// and never on a deleted one.
+addPostPart(function ownerToolsPart(post, slots) {
+  if (post.deleted || account === null || !sameAccount(post.author, account.account_name)) {
+    return;
+  }
+  addMenuItem(slots, "edit", "edit_menu");
+  addMenuItem(slots, "delete", "delete_menu");
+  if (post.edited) {
+    addMenuItem(slots, "versions", "versions_menu");
+  }
+});
+
+// Ask the server what changed since the last change this window saw.
+// Errors go up to checkForNewPosts, which says the server cannot be reached.
+async function checkForChanges() {
+  const response = await fetch("/changes" + (lastChangeId === null ? "" : "?after=" + lastChangeId));
+  const answer = await response.json();
+  if (!response.ok) {
+    throw new Error(answer.code);
+  }
+  for (const change of answer.changes) {
+    applyChange(change);
+  }
+  lastChangeId = answer.latest;
+}
+
+// One change: `post` is the post as the server now shows it, or null.
+// Every copy of the post on this page follows it. A copy being edited keeps
+// its edit box; the newest post is kept for Cancel.
+function applyChange(change) {
+  const postId = change.post_id;
+  const post = change.post;
+  // timeline-flow: a post still waiting behind "new posts" is changed there.
+  const waiting = waitingPosts.findIndex(function (other) { return other.id === postId; });
+  if (waiting !== -1) {
+    if (post === null) {
+      waitingPosts.splice(waiting, 1);
+    } else {
+      waitingPosts[waiting] = post;
+    }
+    updateNewPostsButton();
+  }
+  const copies = document.querySelectorAll('li.post[data-post-id="' + postId + '"]');
+  for (const item of Array.from(copies)) {
+    if (!item.isConnected) {
+      continue;   // already gone with the post it answered (replies)
+    }
+    if (item.dataset.editing === "true" && post !== null && !post.deleted) {
+      postOfItem.set(item, post);
+    } else {
+      showChangedPost(item, postId, post);
+    }
+  }
+  // bookmarks: the server deleted the bookmarks of a deleted post.
+  if ((post === null || post.deleted) && bookmarked.has(postId)) {
+    bookmarked.delete(postId);
+    bookmarksEmpty.hidden = bookmarkList.children.length > 0;
+  }
+}
+
+// Draw one copy of a post again (post), or take it away (null). On the live
+// timeline through removePost and redrawPost; in the other lists in place.
+// The search never finds a deleted post, and My bookmarks has lost it, so
+// there a deleted post is taken away too. In the other lists the old heart is
+// kept as it was (in the search results it is turned off).
+function showChangedPost(item, postId, post) {
+  const parts = postParts[postId];
+  if (parts !== undefined && parts.item === item) {
+    if (post === null) {
+      removePost(postId);
+    } else {
+      redrawPost(post);
+    }
+    return;
+  }
+  stopWatchingText(item);
+  if (post === null || post.deleted) {
+    item.remove();
+    return;
+  }
+  const fresh = makePostItem(post);
+  const oldHeart = item.querySelector(".like");
+  if (oldHeart !== null) {
+    fresh.likeButton.replaceWith(oldHeart);
+  }
+  item.replaceWith(fresh.item);
+}
+
+// Edit was pressed: swap the words for a box holding them, with Save and
+// Cancel. Only one edit is open at a time.
+function startEdit(postId, button) {
+  const item = button.closest(".post");
+  if (item.dataset.editing === "true") {
+    return;
+  }
+  for (const other of document.querySelectorAll('li.post[data-editing="true"]')) {
+    cancelEdit(Number(other.dataset.postId), other);
+  }
+  const menu = item.querySelector(".post-menu");
+  if (menu !== null) {
+    menu.open = false;
+  }
+  item.dataset.editing = "true";
+  const body = item.querySelector(".post-body");
+  for (const child of body.children) {
+    child.hidden = true;
+  }
+
+  const box = document.createElement("div");
+  box.className = "edit-box";
+  const words = document.createElement("textarea");
+  words.rows = 3;
+  words.value = postOfItem.get(item).text;
+  words.dataset.wordsAriaLabel = "edit_box_label";
+  words.setAttribute("aria-label", say("edit_box_label"));
+  const count = document.createElement("span");
+  count.className = "count";
+  const showCount = function () {
+    const length = characterCount(words.value);
+    count.textContent = length + " / " + MAX_TEXT;
+    count.classList.toggle("too-long", length > MAX_TEXT);
+  };
+  words.addEventListener("input", showCount);
+  showCount();
+
+  const cancel = document.createElement("button");
+  cancel.type = "button";
+  cancel.className = "link-button";
+  cancel.dataset.action = "cancelEdit";
+  cancel.dataset.postId = postId;
+  cancel.dataset.words = "edit_cancel";
+  cancel.textContent = say("edit_cancel");
+  const save = document.createElement("button");
+  save.type = "button";
+  save.dataset.action = "saveEdit";
+  save.dataset.postId = postId;
+  save.dataset.words = "edit_save";
+  save.textContent = say("edit_save");
+
+  const row = document.createElement("div");
+  row.className = "edit-row";
+  row.append(count, cancel, save);
+  box.append(words, row);
+  body.append(box);
+  words.focus();
+}
+
+// Cancel was pressed: draw the post again, as the server last showed it.
+// `button` may be the post's <li> itself (startEdit closes another edit so).
+function cancelEdit(postId, button) {
+  const item = button.closest(".post");
+  delete item.dataset.editing;
+  showChangedPost(item, postId, postOfItem.get(item));
+}
+
+// Save was pressed: send the new words. The same rules as a new post
+// (textProblem), checked here first and again by the server.
+async function sendEdit(postId, button) {
+  const item = button.closest(".post");
+  if (item.dataset.busy === "true") {
+    return;
+  }
+  const text = item.querySelector(".edit-box textarea").value;
+  const problem = textProblem(text.trim());
+  if (problem !== null) {
+    showStatus(problem.key, problem.values);
+    return;
+  }
+  // One save at a time, so two fast clicks send one request.
+  item.dataset.busy = "true";
+  try {
+    const response = await fetch("/posts", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ post_id: postId, text: text }),
+    });
+    const answer = await response.json();
+    if (response.status === 401) {
+      showSignedOut("");
+      showProblem(answer);
+      await afterAccountChange();
+      return;
+    }
+    if (!response.ok) {
+      // 400 a broken rule, 403 not yours. The code says which.
+      showProblem(answer);
+      return;
+    }
+    showStatus("");
+    delete item.dataset.editing;
+    applyChange({ post_id: postId, post: answer });
+  } catch (error) {
+    showStatus("cannot_reach");
+  } finally {
+    delete item.dataset.busy;
+  }
+}
+
+// Delete was pressed: ask once, then delete. The answer is the post as the
+// server now shows it: null when it is gone, or "This post was deleted" when
+// it is kept for its replies.
+async function deletePost(postId, button) {
+  const item = button.closest(".post");
+  if (item.dataset.busy === "true" || !confirm(say("delete_confirm"))) {
+    return;
+  }
+  item.dataset.busy = "true";
+  try {
+    const response = await fetch("/posts", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ post_id: postId }),
+    });
+    const answer = await response.json();
+    if (response.status === 401) {
+      showSignedOut("");
+      showProblem(answer);
+      await afterAccountChange();
+      return;
+    }
+    if (!response.ok) {
+      showProblem(answer);
+      return;
+    }
+    showStatus("");
+    delete item.dataset.editing;
+    applyChange({ post_id: answer.post_id, post: answer.post });
+  } catch (error) {
+    showStatus("cannot_reach");
+  } finally {
+    delete item.dataset.busy;
+  }
+}
+
+// "· edited" or "Show old versions" was pressed: open or close the earlier
+// words of the post. The list is found from the button, so this works in any
+// list of posts.
+async function toggleVersions(postId, button) {
+  const item = button.closest(".post");
+  const list = item.querySelector(".versions");
+  if (list === null) {
+    return;
+  }
+  const open = list.hidden;
+  list.hidden = !open;
+  for (const opener of item.querySelectorAll('[data-action="versions"]')) {
+    opener.setAttribute("aria-expanded", open ? "true" : "false");
+  }
+  if (!open) {
+    return;
+  }
+  const menu = item.querySelector(".post-menu");
+  if (menu !== null) {
+    menu.open = false;
+  }
+  try {
+    const response = await fetch("/versions?post_id=" + postId);
+    const answer = await response.json();
+    if (!response.ok) {
+      showProblem(answer);
+      return;
+    }
+    buildVersions(list, answer);
+  } catch (error) {
+    showStatus("cannot_reach");
+  }
+}
+
+// One row for each earlier version, oldest first: its words, and when they
+// were replaced (timeElement: "5 minutes ago", with the full date on hover).
+function buildVersions(list, versions) {
+  list.replaceChildren();
+  if (versions.length === 0) {
+    const row = document.createElement("li");
+    row.dataset.words = "versions_none";
+    row.textContent = say("versions_none");
+    list.append(row);
+    return;
+  }
+  for (const version of versions) {
+    const words = document.createElement("p");
+    words.className = "version-text";
+    words.textContent = version.text;   // what a person wrote: never a key
+    const row = document.createElement("li");
+    row.append(words, timeElement(version.replaced_at, null));
+    list.append(row);
+  }
+}
+
+ACTIONS.edit = startEdit;
+ACTIONS.saveEdit = sendEdit;
+ACTIONS.cancelEdit = cancelEdit;
+ACTIONS.delete = deletePost;
+ACTIONS.versions = toggleVersions;
 
 textBox.addEventListener("input", updateCount);
 textBox.addEventListener("input", saveDraft);

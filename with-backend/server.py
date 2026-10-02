@@ -2,8 +2,8 @@
 
 This file has three parts:
   CONTROLLER  reads each request and decides what to do
-  MODEL       the rules, and the database (eight tables: users, posts, likes, sessions,
-              attempts, bookmarks, pictures and blocks)
+  MODEL       the rules, and the database (ten tables: users, posts, likes, sessions,
+              attempts, bookmarks, pictures, blocks, post_versions and changes)
   VIEW        turns database rows into the JSON answer
 The server never translates: a refusal names its rule by a code (see PROBLEMS),
 and the page shows the words for that code in the reader's language (words.js).
@@ -94,6 +94,10 @@ class TimelineHandler(BaseHTTPRequestHandler):
             self.show_likers(parse_qs(url.query).get("post_id", [None])[0])
         elif url.path == "/likesummary":
             self.show_like_summaries(parse_qs(url.query).get("post_ids", [""])[0])
+        elif url.path == "/changes":
+            self.show_changes(parse_qs(url.query, keep_blank_values=True).get("after", [None])[0])
+        elif url.path == "/versions":
+            self.show_versions(parse_qs(url.query).get("post_id", [None])[0])
         elif url.path == "/bookmarks":
             self.show_bookmarks()
         elif url.path == "/blocks":
@@ -165,6 +169,9 @@ class TimelineHandler(BaseHTTPRequestHandler):
         if path == "/blocks":
             self.end_block()
             return
+        if path == "/posts":
+            self.take_delete()   # edit-delete
+            return
         if path != "/likes":
             self.send_nothing_here("DELETE", path)
             return
@@ -184,6 +191,15 @@ class TimelineHandler(BaseHTTPRequestHandler):
             self.send_too_fast(problem)
             return
         self.send_json(200, like_to_json(post_id, like_count))   # 200: nothing was created
+
+    def do_PATCH(self):
+        # edit-delete: PATCH means "change part of this thing". Only the text of
+        # a post changes; its author, its time and its likes stay.
+        path = urlparse(self.path).path
+        if path != "/posts":
+            self.send_nothing_here("PATCH", path)
+            return
+        self.take_edit()
 
     def read_json(self):
         """The JSON object sent with this request, or None if it was not JSON."""
@@ -469,6 +485,70 @@ class TimelineHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    # edit-delete: change or delete your own post, and the changes feed.
+
+    def take_edit(self):
+        """PATCH /posts {post_id, text}: new words for one of your own posts."""
+        data = self.read_json()
+        if data is None:
+            return
+        user = self.signed_in_user()
+        if user is None:
+            return
+        try:
+            row = edit_post(self.server.db_path, user["id"], data.get("post_id"),
+                            data.get("text"))
+        except RuleBroken as problem:
+            self.send_problem(400, problem)
+            return
+        except NotAllowed as problem:
+            self.send_problem(403, problem)
+            return
+        self.send_json(200, post_to_json(row))   # 200: nothing new was created
+
+    def take_delete(self):
+        """DELETE /posts {post_id}: delete one of your own posts."""
+        data = self.read_json()
+        if data is None:
+            return
+        user = self.signed_in_user()
+        if user is None:
+            return
+        try:
+            post_id, row = delete_post(self.server.db_path, user["id"], data.get("post_id"))
+        except RuleBroken as problem:
+            self.send_problem(400, problem)
+            return
+        except NotAllowed as problem:
+            self.send_problem(403, problem)
+            return
+        self.send_json(200, deleted_to_json(post_id, row))
+
+    def show_changes(self, after):
+        """GET /changes?after=7: every change since change 7. With no after: where the feed is.
+
+        The cookie is read only so that each change brings the post as this
+        viewer may see it (visible_to). Nobody logged in is fine.
+        """
+        viewer = self.user_or_none()
+        try:
+            latest, rows = changes_after(self.server.db_path, after,
+                                         viewer["id"] if viewer else None)
+        except RuleBroken as problem:
+            self.send_problem(400, problem)
+            return
+        self.send_json(200, changes_to_json(latest, rows))
+
+    def show_versions(self, post_id):
+        """GET /versions?post_id=3: the earlier words of a post, oldest first. Anyone may read."""
+        viewer = self.user_or_none()
+        try:
+            rows = versions_of(self.server.db_path, post_id, viewer["id"] if viewer else None)
+        except RuleBroken as problem:
+            self.send_problem(400, problem)
+            return
+        self.send_json(200, versions_to_json(rows))
+
     def send_nothing_here(self, method, path):
         """404, in one sentence for every method, so it stays true when routes are added."""
         self.send_problem(404, Problem("nothing_here", method=method, path=path))
@@ -507,7 +587,8 @@ class TimelineHandler(BaseHTTPRequestHandler):
         # own business, and the terminal may be shown on a screen in class.
         if self.command == "GET" and (self.path.startswith("/posts")
                                       or self.path.startswith("/likes")
-                                      or self.path.startswith("/search")):
+                                      or self.path.startswith("/search")
+                                      or self.path.startswith("/changes")):
             return
         BaseHTTPRequestHandler.log_message(self, format, *args)
 
@@ -519,8 +600,9 @@ class TimelineHandler(BaseHTTPRequestHandler):
 #  author by the author's id), likes (one row for each person who liked each
 #  post), sessions (one row for each window that is logged in), attempts
 #  (for the rate limits), bookmarks (one private row for each post a
-#  person saved), pictures, and blocks (one row for each person who blocked
-#  another).
+#  person saved), pictures, blocks (one row for each person who blocked
+#  another), post_versions (the earlier words of each edited post) and
+#  changes (one row for each "this post changed", for open windows to hear).
 #  A new rule goes here, never in the controller or the view.
 # ============================================================================
 
@@ -677,6 +759,13 @@ PROBLEMS = {
     "reply_parent_id_missing": "The reply must say which post it answers.",
     "reply_to_reply": "You can only reply to a post, not to a reply.",
     "reply_blocked": "You cannot reply to this post.",
+    # edit-delete
+    "post_id_missing": "The request must say which post it is for.",
+    "post_not_yours": "You can only change your own posts.",
+    "post_deleted": "That post was deleted.",
+    "edit_unchanged": "The post is the same as before.",
+    "post_delete_refused": "That post cannot be deleted yet.",
+    "reply_to_deleted": "That post was deleted, so it cannot be answered.",
 }
 
 # One code for a wrong name and for a wrong password, so a stranger cannot use
@@ -714,6 +803,21 @@ class NotSignedIn(Problem):
     """Nobody is logged in, or the login was wrong (401). The code says which."""
 
 
+class NotAllowed(Problem):
+    """The person is logged in, but this is not theirs to change (403)."""
+
+
+# edit-delete: the kinds of row the changes table may hold. The database has no
+# CHECK for this (SQLite cannot change a CHECK without rebuilding the table), so
+# record_change checks it. A feature that hides or shows a post (report) adds
+# its own kinds here, in one line, for example "hidden" and "shown".
+CHANGE_KINDS = (
+    "edited",            # new words
+    "deleted",           # removed, or kept as "This post was deleted" for its replies
+    "replies_changed",   # a reply to this post was deleted, so its reply count changed
+)
+
+
 # Rate limits: at most this many times, in this many seconds. One place for
 # every limit. A post or a like is counted for each signed-in user, a login
 # for each account name typed, and a sign-up for each address. Sign-ups are
@@ -748,7 +852,7 @@ def connect(db_path):
 
 # The newest version of the database: the number the last upgrade below sets.
 # Each new upgrade raises it by one, and the tests read it from here.
-LATEST_VERSION = 9
+LATEST_VERSION = 10
 
 
 def create_tables(db_path):
@@ -799,6 +903,8 @@ def create_tables(db_path):
         upgrade_to_block(connection)
     if version < 9:
         upgrade_to_replies(connection)
+    if version < 10:
+        upgrade_to_edit_delete(connection)
     connection.close()
 
 
@@ -1143,6 +1249,51 @@ def upgrade_to_replies(connection):
         raise
 
 
+def upgrade_to_edit_delete(connection):
+    """Version 10: edit and delete. Every row is kept.
+
+    No table is rebuilt: groundwork already gave posts.id AUTOINCREMENT, so the
+    id of a deleted post is never given to a new one.
+
+    - posts gets deleted_at: empty (NULL) for a normal post. A deleted post that
+      has replies keeps its row, so its replies stay under it; deleted_at is
+      then the time it was deleted (UTC text). Its text is "" and its place
+      NULL: the CHECK makes the database refuse a deleted post that still has
+      words.
+    - post_versions: the earlier words of each edited post, and when they were
+      replaced. ON DELETE CASCADE: when a post goes, its versions go too.
+    - changes: one row for each "this post changed". No foreign key: a deleted
+      post is gone, and its change must stay so that open windows hear about
+      it. AUTOINCREMENT, so a change id is never given twice.
+    """
+    connection.execute("BEGIN")
+    try:
+        columns = [c["name"] for c in connection.execute("PRAGMA table_info(posts)")]
+        if "deleted_at" not in columns:
+            connection.execute(
+                "ALTER TABLE posts ADD COLUMN deleted_at TEXT "
+                "CHECK (deleted_at GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T"
+                "[0-9][0-9]:[0-9][0-9]:[0-9][0-9]Z') "
+                "CHECK (deleted_at IS NULL OR (text = '' AND place IS NULL))")
+        connection.execute("CREATE TABLE IF NOT EXISTS post_versions ("
+                           "id INTEGER PRIMARY KEY, "
+                           "post_id INTEGER NOT NULL REFERENCES posts(id) ON DELETE CASCADE, "
+                           "text TEXT NOT NULL, "
+                           "replaced_at TEXT NOT NULL)")   # UTC text, like posted_at
+        connection.execute("CREATE INDEX IF NOT EXISTS post_versions_by_post "
+                           "ON post_versions (post_id)")
+        connection.execute("CREATE TABLE IF NOT EXISTS changes ("
+                           "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+                           "post_id INTEGER NOT NULL, "
+                           "kind TEXT NOT NULL, "            # one of CHANGE_KINDS
+                           "changed_at TEXT NOT NULL)")      # UTC text, like posted_at
+        connection.execute("PRAGMA user_version = 10")
+        connection.commit()
+    except BaseException:
+        connection.rollback()   # nothing is half done
+        raise
+
+
 # Each post, with its author's two names looked up in users, and how many people
 # have liked it. The view reads row["author"], row["display_name"] and row["like_count"].
 # picture_alt is the description of the post's picture, or NULL when it has none
@@ -1162,7 +1313,12 @@ POSTS_WITH_AUTHORS = ("SELECT posts.id, users.name AS author, users.display_name
                       "AND /* visible replies */ 1 = 1) AS reply_count, "
                       "(SELECT MAX(answers.id) FROM posts AS answers "
                       "WHERE answers.parent_id = posts.id "
-                      "AND /* visible replies */ 1 = 1) AS newest_reply_id "
+                      "AND /* visible replies */ 1 = 1) AS newest_reply_id, "
+                      # edit-delete: both worked out, never stored as a yes/no. A
+                      # post is edited exactly when it has an earlier version.
+                      "EXISTS (SELECT 1 FROM post_versions "
+                      "WHERE post_versions.post_id = posts.id) AS edited, "
+                      "posts.deleted_at IS NOT NULL AS deleted "
                       "FROM posts JOIN users ON users.id = posts.author_id")
 
 # replies: parent_id is the post a reply answers (NULL for a normal post), and
@@ -1630,12 +1786,14 @@ def check_reply_parent(connection, parent_id, user_id):
     have blocked this user (block). Only reads. It does not close the
     connection: the caller does.
     """
-    parent = connection.execute("SELECT parent_id FROM posts WHERE id = ?",
+    parent = connection.execute("SELECT parent_id, deleted_at FROM posts WHERE id = ?",
                                 (parent_id,)).fetchone()
     if parent is None:
         raise RuleBroken("post_missing")
     if parent["parent_id"] is not None:
         raise RuleBroken("reply_to_reply")
+    if parent["deleted_at"] is not None:   # edit-delete: kept only for its replies
+        raise RuleBroken("reply_to_deleted")
     check_not_blocked_by_author(connection, parent_id, user_id, what="reply")   # block
 
 
@@ -1718,7 +1876,9 @@ def add_like(db_path, user_id, post_id):
     """
     post_id = check_post_id(post_id)
     connection = connect(db_path)
-    if connection.execute("SELECT id FROM posts WHERE id = ?", (post_id,)).fetchone() is None:
+    # edit-delete: a post kept only for its replies has no words to like.
+    if connection.execute("SELECT id FROM posts WHERE id = ? AND deleted_at IS NULL",
+                          (post_id,)).fetchone() is None:
         connection.close()
         raise RuleBroken("post_missing")
     try:
@@ -2048,7 +2208,8 @@ def search_posts(db_path, query, viewer_id=None):
     Only reads: it never adds a user or changes a row.
     """
     words = check_query(query)
-    conditions = []
+    # edit-delete: a post kept only for its replies has no words to find.
+    conditions = ["posts.deleted_at IS NULL"]
     params = []
     for word in words:
         # The \ in ESCAPE '\' is one \ in the SQL. The word is a value (?),
@@ -2109,6 +2270,198 @@ def posts_before(db_path, before, viewer_id=None):
     return rows
 
 
+# ---- edit-delete: change or delete your own post, and the changes feed ----
+#
+# Only the author may edit or delete a post. The page shows Edit and Delete
+# only on your own posts, but the rule is here, in own_post: the database
+# cannot check it, because it does not know who is asking.
+#
+# THE CHANGES FEED. Each edit or delete adds one row to `changes`, with
+# record_change, in the same transaction as the change itself (so a change is
+# recorded if and only if it really happened). Every open window asks
+# GET /changes?after=<the newest change id it has seen> each second, before
+# it asks for new posts. A change says only WHICH post changed; the answer
+# pairs it with post_as_shown, the post as GET /posts would show it to this
+# viewer right now, or None. So the page has one rule, whatever the kind: a
+# post is there, draw it again; None, take it away.
+
+def post_as_shown(connection, post_id, viewer_id=None):
+    """The post as GET /posts would show it to this viewer right now, or None.
+
+    The one place that says whether a single post is shown. It goes through
+    select_posts, so visible_to applies (block and report change only that).
+    """
+    rows = select_posts(connection, ["posts.id = ?"], [post_id], viewer_id, "posts.id")
+    return rows[0] if rows else None
+
+
+def check_change_post_id(post_id):
+    """The id of the post to edit, delete or read the versions of, as a number, or raise RuleBroken."""
+    if isinstance(post_id, bool) or not isinstance(post_id, (int, str)) \
+            or not POST_ID_TEXT.fullmatch(str(post_id).strip()):
+        raise RuleBroken("post_id_missing")
+    return int(post_id)
+
+
+def own_post(connection, user_id, post_id):
+    """The post's row, if this user wrote it and it is not deleted.
+
+    Otherwise raise RuleBroken (no such post, or already deleted) or NotAllowed
+    (someone else's). It only reads.
+    """
+    row = connection.execute("SELECT id, author_id, text, parent_id, deleted_at "
+                             "FROM posts WHERE id = ?", (post_id,)).fetchone()
+    if row is None:
+        raise RuleBroken("post_missing")
+    if row["deleted_at"] is not None:
+        raise RuleBroken("post_deleted")
+    if row["author_id"] != user_id:
+        raise NotAllowed("post_not_yours")
+    return row
+
+
+def record_change(connection, post_id, kind):
+    """Add one row to changes. It does not commit: it is part of the caller's transaction."""
+    if kind not in CHANGE_KINDS:
+        # A mistake in the code, not a user's broken rule.
+        raise ValueError(f"record_change does not know the kind {kind!r}. "
+                         "Add it to CHANGE_KINDS.")
+    connection.execute("INSERT INTO changes (post_id, kind, changed_at) VALUES (?, ?, ?)",
+                       (post_id, kind, utc_text(utc_now())))
+
+
+def edit_post(db_path, user_id, post_id, text):
+    """Give one of this user's posts new words, keep the old ones, and return the post.
+
+    The new words follow the same rules as a new post (check_text). The post
+    keeps its place in the timeline, its time, its likes and its replies.
+    """
+    post_id = check_change_post_id(post_id)
+    text = check_text(text)
+    connection = connect(db_path)
+    try:
+        # BEGIN IMMEDIATE takes the write lock at the start, so nobody can edit
+        # or delete between "is it yours?" and the change itself.
+        connection.execute("BEGIN IMMEDIATE")
+        old = own_post(connection, user_id, post_id)
+        if old["text"] == text:
+            # So the list of earlier versions never has a step that changed nothing.
+            raise RuleBroken("edit_unchanged")
+        connection.execute("INSERT INTO post_versions (post_id, text, replaced_at) "
+                           "VALUES (?, ?, ?)", (post_id, old["text"], utc_text(utc_now())))
+        connection.execute("UPDATE posts SET text = ? WHERE id = ?", (text, post_id))
+        record_change(connection, post_id, "edited")
+        connection.commit()
+        return post_as_shown(connection, post_id, user_id)
+    except BaseException:
+        connection.rollback()   # nothing is half done
+        raise
+    finally:
+        connection.close()
+
+
+def forget_post_details(connection, post_id):
+    """Delete the rows that belong to one post: likes, earlier versions, picture, bookmarks.
+
+    Every table that points at posts is named here. (pictures, bookmarks and
+    post_versions would go by themselves when the post's row goes, ON DELETE
+    CASCADE, but a post kept for its replies keeps its row, so they are
+    deleted here by hand, in one place.) It does not commit.
+    """
+    for table in ("likes", "post_versions", "pictures", "bookmarks"):
+        connection.execute(f"DELETE FROM {table} WHERE post_id = ?", (post_id,))
+
+
+def delete_post(db_path, user_id, post_id):
+    """Delete one of this user's posts. Return (post_id, the post as now shown, or None).
+
+    Its likes, earlier versions, picture and bookmarks are deleted too: no copy
+    of its words stays. A post with replies keeps its row, with no words and no
+    place, so its replies stay under it ("This post was deleted"); the
+    database refuses to delete it anyway (replies' foreign key). A post with
+    no replies is removed completely.
+
+    A reply that is deleted changes its post's reply count, so the post gets a
+    "replies_changed" change. If that post was itself deleted and this was its
+    last reply, nothing is left to keep it for, and it is removed too.
+    All of it is one transaction.
+    """
+    post_id = check_change_post_id(post_id)
+    connection = connect(db_path)
+    try:
+        connection.execute("BEGIN IMMEDIATE")
+        row = own_post(connection, user_id, post_id)
+        forget_post_details(connection, post_id)
+        if has_replies(connection, post_id):
+            connection.execute("UPDATE posts SET text = '', place = NULL, deleted_at = ? "
+                               "WHERE id = ?", (utc_text(utc_now()), post_id))
+        else:
+            connection.execute("DELETE FROM posts WHERE id = ?", (post_id,))
+        record_change(connection, post_id, "deleted")
+        parent_id = row["parent_id"]
+        if parent_id is not None:
+            parent = connection.execute("SELECT deleted_at FROM posts WHERE id = ?",
+                                        (parent_id,)).fetchone()
+            if parent["deleted_at"] is not None and not has_replies(connection, parent_id):
+                connection.execute("DELETE FROM posts WHERE id = ?", (parent_id,))
+                record_change(connection, parent_id, "deleted")
+            else:
+                record_change(connection, parent_id, "replies_changed")
+        connection.commit()
+        return post_id, post_as_shown(connection, post_id, user_id)
+    except sqlite3.IntegrityError:
+        # Another table still points at the post without ON DELETE: nothing changed.
+        connection.rollback()
+        raise RuleBroken("post_delete_refused")
+    except BaseException:
+        connection.rollback()
+        raise
+    finally:
+        connection.close()
+
+
+def changes_after(db_path, after, viewer_id=None):
+    """Return (latest, rows): the newest change id, and every change after `after`.
+
+    `after` is the text from the request, or None. None means "just tell me
+    where the feed is": rows is empty. Each row is (change, post), oldest
+    first, where post is post_as_shown for this viewer now, or None. Read in
+    one transaction, so latest and the rows come from the same moment. Only reads.
+    """
+    if after is not None:
+        after = check_id_bound(after, "after")
+    connection = connect(db_path)
+    try:
+        connection.execute("BEGIN")
+        latest = connection.execute("SELECT COALESCE(MAX(id), 0) FROM changes").fetchone()[0]
+        rows = []
+        if after is not None:
+            for change in connection.execute("SELECT id, post_id, kind FROM changes "
+                                             "WHERE id > ? ORDER BY id", (after,)).fetchall():
+                rows.append((change, post_as_shown(connection, change["post_id"], viewer_id)))
+    finally:
+        connection.rollback()   # it only read, so there is nothing to keep
+        connection.close()
+    return latest, rows
+
+
+def versions_of(db_path, post_id, viewer_id=None):
+    """The earlier words of a post, oldest first: rows with text and replaced_at.
+
+    Anyone may read them. A post that does not exist, or that this viewer may
+    not see, has none. Only reads.
+    """
+    post_id = check_change_post_id(post_id)
+    connection = connect(db_path)
+    try:
+        if post_as_shown(connection, post_id, viewer_id) is None:
+            return []
+        return connection.execute("SELECT text, replaced_at FROM post_versions "
+                                  "WHERE post_id = ? ORDER BY id", (post_id,)).fetchall()
+    finally:
+        connection.close()
+
+
 # ---- bookmarks: a post saved by one person, for that person only ----
 #
 # Like a like, a bookmark is one row, and taking it back deletes the row. Unlike
@@ -2133,7 +2486,8 @@ def add_bookmark(db_path, user_id, post_id):
     post_id = check_bookmark_post_id(post_id)
     connection = connect(db_path)
     try:
-        if connection.execute("SELECT id FROM posts WHERE id = ?",
+        # edit-delete: a post kept only for its replies cannot be saved.
+        if connection.execute("SELECT id FROM posts WHERE id = ? AND deleted_at IS NULL",
                               (post_id,)).fetchone() is None:
             raise RuleBroken("post_missing")
         if connection.execute("SELECT 1 FROM bookmarks WHERE user_id = ? AND post_id = ?",
@@ -2304,7 +2658,35 @@ def post_to_json(row):
             "place": row["place"], "picture": picture_to_json(row),
             # replies: null, null, 0 and null for a post nobody answered.
             "parent_id": row["parent_id"], "parent_author": row["parent_author"],
-            "reply_count": row["reply_count"], "newest_reply_id": row["newest_reply_id"]}
+            "reply_count": row["reply_count"], "newest_reply_id": row["newest_reply_id"],
+            # edit-delete
+            "edited": bool(row["edited"]), "deleted": bool(row["deleted"])}
+
+
+# edit-delete
+
+def change_to_json(change, post_row):
+    """One change: which post, what kind, and the post as now shown (or None)."""
+    return {"id": change["id"], "post_id": change["post_id"], "kind": change["kind"],
+            "post": post_to_json(post_row) if post_row is not None else None}
+
+
+def changes_to_json(latest, rows):
+    return {"latest": latest, "changes": [change_to_json(c, p) for c, p in rows]}
+
+
+def deleted_to_json(post_id, post_row):
+    """The answer to a delete: the post's id, and the post as now shown (None if gone)."""
+    return {"post_id": post_id,
+            "post": post_to_json(post_row) if post_row is not None else None}
+
+
+def version_to_json(row):
+    return {"text": row["text"], "replaced_at": row["replaced_at"]}
+
+
+def versions_to_json(rows):
+    return [version_to_json(row) for row in rows]
 
 
 def picture_to_json(row):

@@ -1532,12 +1532,13 @@ class ModelTests(unittest.TestCase):
         folder = tempfile.TemporaryDirectory()
         self.addCleanup(folder.cleanup)
         self.db_path = os.path.join(folder.name, "old.db")
-        # Every later upgrade is held back too (pictures, block, replies), so the file
-        # stops before place.
+        # Every later upgrade is held back too (pictures, block, replies, edit-delete),
+        # so the file stops before place.
         with mock.patch.object(server, "upgrade_to_place", lambda connection: None), \
                 mock.patch.object(server, "upgrade_to_pictures", lambda connection: None), \
                 mock.patch.object(server, "upgrade_to_block", lambda connection: None), \
-                mock.patch.object(server, "upgrade_to_replies", lambda connection: None):
+                mock.patch.object(server, "upgrade_to_replies", lambda connection: None), \
+                mock.patch.object(server, "upgrade_to_edit_delete", lambda connection: None):
             server.create_tables(self.db_path)
         old_version = self.rows("PRAGMA user_version")[0][0]
         self.assertLess(old_version, server.LATEST_VERSION)
@@ -1560,8 +1561,8 @@ class ModelTests(unittest.TestCase):
         after = {table: self.rows("SELECT * FROM " + table + " ORDER BY 1, 2")
                  for table in tables}
         # Every old post is kept, with place NULL at the end (and then replies'
-        # parent_id, NULL too).
-        self.assertEqual(after["posts"], [row + (None, None) for row in before["posts"]])
+        # parent_id and edit-delete's deleted_at, NULL too).
+        self.assertEqual(after["posts"], [row + (None, None, None) for row in before["posts"]])
         for table in ("users", "likes", "sessions"):
             self.assertEqual(after[table], before[table])
         self.assertEqual(self.rows("PRAGMA user_version"), [(server.LATEST_VERSION,)])
@@ -2359,6 +2360,258 @@ class ModelTests(unittest.TestCase):
         with self.assertRaises(server.RuleBroken):
             server.save_reply(self.db_path, aiko, "x", post["id"], place="x" * 41)
 
+    # -- edit-delete --
+
+    def edit_delete_people(self):
+        """Aiko and Ben, fixed clocks, and one post by Aiko that Ben liked. Return all three."""
+        self.clock = use_fake_clock(self)
+        patcher = mock.patch.object(server, "utc_now", lambda: SOME_MOMENT)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        aiko = self.sign_up("aiko")
+        ben = self.sign_up("ben")
+        post_id = self.post_by_ed(aiko, "first words")["id"]
+        server.add_like(self.db_path, ben, post_id)
+        return aiko, ben, post_id
+
+    def post_by_ed(self, user_id, text, **more):
+        """A new post. The fake clock moves a minute first, so the rate limit never counts."""
+        self.clock.move(61)
+        return server.save_post(self.db_path, user_id, text, **more)
+
+    def reply_by_ed(self, user_id, parent_id, text="an answer"):
+        self.clock.move(61)
+        return server.save_reply(self.db_path, user_id, text, parent_id)
+
+    def refused_code(self, kind, function, *arguments):
+        with self.assertRaises(kind) as caught:
+            function(*arguments)
+        return caught.exception.code
+
+    def test_the_author_can_edit_and_the_old_words_are_kept(self):
+        aiko, ben, post_id = self.edit_delete_people()
+        row = server.edit_post(self.db_path, aiko, post_id, "  second words  ")
+        post = server.post_to_json(row)
+        self.assertEqual((post["text"], post["edited"], post["deleted"], post["like_count"]),
+                         ("second words", True, False, 1))
+        self.assertEqual(self.rows("SELECT post_id, text, replaced_at FROM post_versions"),
+                         [(post_id, "first words", "2026-10-02T07:42:10Z")])
+        self.assertEqual(self.rows("SELECT post_id, user_id FROM likes"), [(post_id, ben)])
+        server.edit_post(self.db_path, aiko, post_id, "third words")
+        self.assertEqual([v["text"] for v in server.versions_of(self.db_path, str(post_id))],
+                         ["first words", "second words"])
+        other = self.post_by_ed(ben, "never edited")
+        self.assertFalse(server.post_to_json(other)["edited"])
+        self.assertEqual(server.versions_of(self.db_path, other["id"]), [])
+        self.assertEqual(server.versions_of(self.db_path, 999), [])
+
+    def test_an_edit_follows_the_rules_of_a_new_post(self):
+        aiko, ben, post_id = self.edit_delete_people()
+        for text, code in (("   ", "text_empty"), ("x" * (server.MAX_TEXT + 1), "text_too_long"),
+                           ("first words", "edit_unchanged")):
+            with self.subTest(code=code):
+                self.assertEqual(self.refused_code(server.RuleBroken, server.edit_post,
+                                                   self.db_path, aiko, post_id, text), code)
+        self.assertEqual(self.refused_code(server.RuleBroken, server.edit_post,
+                                           self.db_path, aiko, 999, "no such post"),
+                         "post_missing")
+        for post_id_sent in (None, "x", True, [1], 2.5):
+            with self.subTest(post_id=post_id_sent):
+                self.assertEqual(self.refused_code(server.RuleBroken, server.edit_post,
+                                                   self.db_path, aiko, post_id_sent, "hi"),
+                                 "post_id_missing")
+        self.assertEqual(server.edit_post(self.db_path, aiko, post_id, "x" * server.MAX_TEXT)
+                         ["text"], "x" * server.MAX_TEXT)
+        self.assertEqual(len(self.rows("SELECT * FROM post_versions")), 1)
+        self.assertEqual(len(self.rows("SELECT * FROM changes")), 1)
+
+    def test_nobody_else_can_edit_or_delete_a_post(self):
+        aiko, ben, post_id = self.edit_delete_people()
+        tables = ("posts", "likes", "post_versions", "changes")
+        before = {table: self.rows("SELECT * FROM " + table) for table in tables}
+        self.assertEqual(self.refused_code(server.NotAllowed, server.edit_post,
+                                           self.db_path, ben, post_id, "Ben's words"),
+                         "post_not_yours")
+        self.assertEqual(self.refused_code(server.NotAllowed, server.delete_post,
+                                           self.db_path, ben, post_id), "post_not_yours")
+        self.assertEqual({table: self.rows("SELECT * FROM " + table) for table in tables},
+                         before)
+
+    def test_the_author_can_delete_and_nothing_of_it_stays(self):
+        aiko, ben, post_id = self.edit_delete_people()
+        server.edit_post(self.db_path, aiko, post_id, "edited words")
+        server.add_bookmark(self.db_path, ben, post_id)
+        pictured = self.post_by_ed(aiko, "with a picture", picture=as_base64(PNG),
+                                   picture_alt="a dot")["id"]
+        self.assertEqual(server.delete_post(self.db_path, aiko, post_id), (post_id, None))
+        self.assertEqual(server.delete_post(self.db_path, aiko, pictured), (pictured, None))
+        for table in ("posts", "likes", "post_versions", "bookmarks", "pictures"):
+            with self.subTest(table=table):
+                self.assertEqual(self.rows("SELECT COUNT(*) FROM " + table), [(0,)])
+        self.assertEqual(self.rows("SELECT post_id, kind FROM changes ORDER BY id"),
+                         [(post_id, "edited"), (post_id, "deleted"), (pictured, "deleted")])
+        for value in all_values_in(self.db_path):
+            self.assertNotIn("words", value)
+        self.assertEqual(self.refused_code(server.RuleBroken, server.delete_post,
+                                           self.db_path, aiko, post_id), "post_missing")
+
+    def test_the_id_of_a_deleted_post_is_never_given_again(self):
+        aiko, ben, post_id = self.edit_delete_people()
+        third = self.post_by_ed(aiko, "three")["id"]
+        server.delete_post(self.db_path, aiko, third)
+        self.assertEqual(self.post_by_ed(aiko, "four")["id"], third + 1)
+
+    def test_the_changes_feed(self):
+        aiko, ben, post_id = self.edit_delete_people()
+        self.assertEqual(server.changes_after(self.db_path, None), (0, []))
+        server.edit_post(self.db_path, aiko, post_id, "new words")
+        self.assertEqual(server.changes_after(self.db_path, None), (1, []))
+        latest, rows = server.changes_after(self.db_path, "0")
+        self.assertEqual([(c["id"], c["post_id"], c["kind"], p["text"]) for c, p in rows],
+                         [(1, post_id, "edited", "new words")])
+        server.delete_post(self.db_path, aiko, post_id)
+        latest, rows = server.changes_after(self.db_path, "1")
+        self.assertEqual((latest, [(c["kind"], p) for c, p in rows]), (2, [("deleted", None)]))
+        # Edited, then deleted: both changes now bring no post.
+        latest, rows = server.changes_after(self.db_path, "0")
+        self.assertEqual(server.changes_to_json(latest, rows)["changes"],
+                         [{"id": 1, "post_id": post_id, "kind": "edited", "post": None},
+                          {"id": 2, "post_id": post_id, "kind": "deleted", "post": None}])
+        for after in ("x", "-1", "1.5", ""):
+            with self.subTest(after=after):
+                self.assertEqual(self.refused_code(server.RuleBroken, server.changes_after,
+                                                   self.db_path, after), "id_bound_not_number")
+
+    def test_a_change_shows_the_post_as_this_viewer_may_see_it(self):
+        # block: Ben blocked Aiko, so her edited post comes to him as None.
+        aiko, ben, post_id = self.edit_delete_people()
+        server.add_block(self.db_path, ben, "aiko")
+        server.edit_post(self.db_path, aiko, post_id, "new words")
+        self.assertEqual([p for c, p in server.changes_after(self.db_path, "0", ben)[1]], [None])
+        self.assertEqual([p["text"] for c, p in server.changes_after(self.db_path, "0")[1]],
+                         ["new words"])
+        self.assertEqual(server.versions_of(self.db_path, post_id, ben), [])
+
+    def test_record_change_refuses_a_kind_it_does_not_know(self):
+        aiko, ben, post_id = self.edit_delete_people()
+        connection = server.connect(self.db_path)
+        with self.assertRaises(ValueError):
+            server.record_change(connection, post_id, "renamed")
+        connection.close()
+        self.assertEqual(self.rows("SELECT * FROM changes"), [])
+
+    def test_a_post_with_replies_is_kept_as_deleted_until_its_last_reply_goes(self):
+        aiko, ben, post_id = self.edit_delete_people()
+        server.edit_post(self.db_path, aiko, post_id, "edited words")
+        server.add_bookmark(self.db_path, ben, post_id)
+        reply_id = self.reply_by_ed(ben, post_id)["id"]
+        other_reply = self.reply_by_ed(aiko, post_id)["id"]
+
+        # 1. Aiko deletes her post. It has replies, so its row stays, with nothing in it.
+        deleted_id, row = server.delete_post(self.db_path, aiko, post_id)
+        post = server.post_to_json(row)
+        self.assertEqual((post["text"], post["place"], post["deleted"], post["edited"],
+                          post["like_count"], post["reply_count"], post["picture"]),
+                         ("", None, True, False, 0, 2, None))
+        self.assertEqual(self.rows("SELECT text, place, deleted_at FROM posts WHERE id = ?",
+                                   (post_id,)), [("", None, "2026-10-02T07:42:10Z")])
+        for table in ("likes", "post_versions", "bookmarks"):
+            with self.subTest(table=table):
+                self.assertEqual(self.rows("SELECT COUNT(*) FROM " + table), [(0,)])
+        self.assertEqual(self.rows("SELECT parent_id FROM posts WHERE id IN (?, ?)",
+                                   (reply_id, other_reply)), [(post_id,), (post_id,)])
+        # 2. It can no longer be edited, deleted, liked, saved, answered or found.
+        for function, arguments, code in (
+                (server.edit_post, (aiko, post_id, "back again"), "post_deleted"),
+                (server.delete_post, (aiko, post_id), "post_deleted"),
+                (server.add_like, (ben, post_id), "post_missing"),
+                (server.add_bookmark, (ben, post_id), "post_missing"),
+                (self.reply_by_ed, (ben, post_id), "reply_to_deleted")):
+            with self.subTest(code=code, function=function.__name__):
+                if function == self.reply_by_ed:
+                    self.assertEqual(self.refused_code(server.RuleBroken, function, *arguments),
+                                     code)
+                else:
+                    self.assertEqual(self.refused_code(server.RuleBroken, function,
+                                                       self.db_path, *arguments), code)
+        self.assertEqual(server.search_posts(self.db_path, "words"), ([], False))
+        # 3. Ben deletes his reply: Aiko's post has another reply, so it stays,
+        #    and it is told its reply count changed.
+        server.delete_post(self.db_path, ben, reply_id)
+        self.assertEqual(self.rows("SELECT post_id, kind FROM changes WHERE id > 1 ORDER BY id"),
+                         [(post_id, "deleted"), (reply_id, "deleted"),
+                          (post_id, "replies_changed")])
+        latest, rows = server.changes_after(self.db_path, "3")
+        self.assertEqual([(c["kind"], p["reply_count"]) for c, p in rows],
+                         [("replies_changed", 1)])
+        # 4. The last reply goes: nothing is left to keep the post for, so it goes too.
+        server.delete_post(self.db_path, aiko, other_reply)
+        self.assertEqual(self.rows("SELECT COUNT(*) FROM posts"), [(0,)])
+        latest, rows = server.changes_after(self.db_path, str(latest))
+        self.assertEqual([(c["post_id"], c["kind"], p) for c, p in rows],
+                         [(other_reply, "deleted", None), (post_id, "deleted", None)])
+        self.assertEqual(self.rows("PRAGMA foreign_key_check"), [])
+
+    def test_deleting_a_reply_changes_its_post_s_count(self):
+        aiko, ben, post_id = self.edit_delete_people()
+        reply_id = self.reply_by_ed(ben, post_id)["id"]
+        server.delete_post(self.db_path, ben, reply_id)
+        latest, rows = server.changes_after(self.db_path, "0")
+        self.assertEqual([(c["post_id"], c["kind"]) for c, p in rows],
+                         [(reply_id, "deleted"), (post_id, "replies_changed")])
+        self.assertEqual((rows[1][1]["reply_count"], rows[1][1]["deleted"]), (0, False))
+
+    def test_the_database_refuses_a_deleted_post_that_keeps_words(self):
+        aiko, ben, post_id = self.edit_delete_people()
+        connection = server.connect(self.db_path)
+        for sql in ("UPDATE posts SET deleted_at = '2026-10-02T07:42:10Z'",
+                    "UPDATE posts SET text = '', place = 'Osaka', "
+                    "deleted_at = '2026-10-02T07:42:10Z'",
+                    "UPDATE posts SET text = '', deleted_at = 'yesterday'"):
+            with self.subTest(sql=sql):
+                with self.assertRaises(sqlite3.IntegrityError):
+                    connection.execute(sql)
+        connection.close()
+
+    def test_the_edit_delete_upgrade_keeps_every_row(self):
+        # A database at the version before edit-delete, with rows, a reply,
+        # and an extra column and index on posts, the way another plan would add them.
+        self.db_path = os.path.join(self.folder.name, "before-edit-delete.db")
+        with mock.patch.object(server, "upgrade_to_edit_delete", lambda connection: None):
+            server.create_tables(self.db_path)
+        self.assertEqual(self.rows("PRAGMA user_version"), [(server.LATEST_VERSION - 1,)])
+        self.clock = use_fake_clock(self)
+        aiko = self.sign_up("aiko")
+        ben = self.sign_up("ben")
+        connection = server.connect(self.db_path)
+        post_id = server.insert_post(connection, aiko, "first words", place="Osaka")
+        server.insert_post(connection, ben, "an answer", parent_id=post_id)
+        connection.execute("INSERT INTO likes VALUES (?, ?)", (post_id, ben))
+        connection.execute("INSERT INTO bookmarks VALUES (?, ?)", (ben, post_id))
+        connection.commit()
+        connection.executescript("ALTER TABLE posts ADD COLUMN mood TEXT; "
+                                 "CREATE INDEX posts_by_mood ON posts (mood);")
+        connection.close()
+        tables = ("users", "posts", "likes", "sessions", "attempts", "bookmarks", "blocks")
+        before = {t: self.rows("SELECT * FROM " + t + " ORDER BY 1, 2") for t in tables}
+        server.create_tables(self.db_path)
+        after = {t: self.rows("SELECT * FROM " + t + " ORDER BY 1, 2") for t in tables}
+        after["posts"] = [row[:-1] for row in after["posts"]]   # without deleted_at
+        self.assertEqual(after, before)
+        self.assertEqual(self.rows("PRAGMA user_version"), [(server.LATEST_VERSION,)])
+        self.assertEqual(self.rows("PRAGMA foreign_key_check"), [])
+        self.assertEqual(self.rows("SELECT name FROM sqlite_master WHERE name IN "
+                                   "('posts_by_mood', 'post_versions', 'changes', "
+                                   "'post_versions_by_post', 'posts_by_parent', "
+                                   "'replies_are_one_level') ORDER BY name"),
+                         [("changes",), ("post_versions",), ("post_versions_by_post",),
+                          ("posts_by_mood",), ("posts_by_parent",), ("replies_are_one_level",)])
+        server.create_tables(self.db_path)   # twice is harmless
+        self.assertEqual(self.rows("PRAGMA user_version"), [(server.LATEST_VERSION,)])
+        with mock.patch.object(server, "utc_now", lambda: SOME_MOMENT):
+            server.edit_post(self.db_path, aiko, post_id, "still works")
+            self.assertTrue(server.delete_post(self.db_path, aiko, post_id)[1]["deleted"])
+
 
 class RealServerTest(unittest.TestCase):
 
@@ -2634,7 +2887,8 @@ class RealServerTest(unittest.TestCase):
             {key: None for key in ("id", "author", "display_name", "text", "posted_at",
                                    "old_clock_time", "like_count", "place",
                                    "picture_alt", "parent_id", "parent_author",
-                                   "reply_count", "newest_reply_id")})))
+                                   "reply_count", "newest_reply_id", "edited",
+                                   "deleted")})))
 
     def test_a_search_with_no_words_gets_400_and_a_reason(self):
         for path in ("/search", "/search?q=", "/search?q=%20%20",
@@ -3003,6 +3257,82 @@ class RealServerTest(unittest.TestCase):
         answer = json.loads(caught.exception.read())
         caught.exception.close()
         self.assertEqual((caught.exception.code, answer["code"]), (400, "reply_to_reply"))
+
+    # -- edit-delete --
+
+    def change(self, path, data, method):
+        with self.send(path, data, method) as answer:
+            return answer.status, json.loads(answer.read())
+
+    def refused_with_code(self, path, data, method):
+        with self.assertRaises(urllib.error.HTTPError) as caught:
+            self.send(path, data, method)
+        answer = json.loads(caught.exception.read())
+        caught.exception.close()
+        return caught.exception.code, answer["code"]
+
+    def test_editing_needs_a_login_and_your_own_post(self):
+        use_fake_clock(self)
+        with mock.patch.object(server, "utc_now", lambda: SOME_MOMENT):
+            self.sign_up("aiko").close()
+            post_id = json.loads(self.send("/posts", {"text": "hello"}).read())["id"]
+            me = self.window
+            self.window = urllib.request.build_opener()   # no cookie
+            self.assertEqual(self.refused_with_code("/posts", {"post_id": post_id, "text": "x"},
+                                                    "PATCH"), (401, "login_needed"))
+            self.assertEqual(self.refused_with_code("/posts", {"post_id": post_id}, "DELETE"),
+                             (401, "login_needed"))
+            self.window = urllib.request.build_opener(
+                urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
+            self.sign_up("ben", "Ben Ito").close()
+            self.assertEqual(self.refused_with_code("/posts", {"post_id": post_id, "text": "x"},
+                                                    "PATCH"), (403, "post_not_yours"))
+            self.assertEqual(self.refused_with_code("/posts", {"post_id": post_id}, "DELETE"),
+                             (403, "post_not_yours"))
+            self.window = me
+            self.assertEqual(self.refused("/posts", "text", "PATCH", "text/plain")[0], 400)
+            status, post = self.change("/posts", {"post_id": post_id, "text": "hello again"},
+                                       "PATCH")
+            self.assertEqual((status, post["text"], post["edited"]), (200, "hello again", True))
+            self.assertEqual(self.refused_with_code("/posts", {"text": "x"}, "PATCH"),
+                             (400, "post_id_missing"))
+            self.assertEqual(self.refused("/nothing", {}, "PATCH"),
+                             (404, "There is nothing to PATCH at /nothing."))
+
+    def test_delete_then_delete_again(self):
+        use_fake_clock(self)
+        with mock.patch.object(server, "utc_now", lambda: SOME_MOMENT):
+            self.sign_up().close()
+            post_id = json.loads(self.send("/posts", {"text": "hello"}).read())["id"]
+            self.assertEqual(self.change("/posts", {"post_id": post_id}, "DELETE"),
+                             (200, {"post_id": post_id, "post": None}))
+            self.assertEqual(self.refused_with_code("/posts", {"post_id": post_id}, "DELETE"),
+                             (400, "post_missing"))
+            self.assertEqual(self.get("/posts?after=0"), [])
+
+    def test_changes_and_versions_over_http(self):
+        use_fake_clock(self)
+        with mock.patch.object(server, "utc_now", lambda: SOME_MOMENT):
+            self.assertEqual(self.get("/changes"), {"latest": 0, "changes": []})
+            for path in ("/changes?after=x", "/changes?after=", "/versions?post_id=x",
+                         "/versions"):
+                with self.subTest(path=path):
+                    with self.assertRaises(urllib.error.HTTPError) as caught:
+                        self.get(path)
+                    self.assertEqual(caught.exception.code, 400)
+                    caught.exception.close()
+            self.sign_up().close()
+            post_id = json.loads(self.send("/posts", {"text": "one"}).read())["id"]
+            self.change("/posts", {"post_id": post_id, "text": "two"}, "PATCH")
+            self.change("/posts", {"post_id": post_id, "text": "three"}, "PATCH")
+            self.window = urllib.request.build_opener()   # reading needs no login
+            self.assertEqual(self.get("/versions?post_id=" + str(post_id)),
+                             [{"text": "one", "replaced_at": "2026-10-02T07:42:10Z"},
+                              {"text": "two", "replaced_at": "2026-10-02T07:42:10Z"}])
+            answer = self.get("/changes?after=1")
+            self.assertEqual(answer["latest"], 2)
+            self.assertEqual([(c["id"], c["kind"], c["post"]["text"]) for c in answer["changes"]],
+                             [(2, "edited", "three")])
 
 
 class JourneyTest(unittest.TestCase):
@@ -3761,6 +4091,130 @@ class JourneyTest(unittest.TestCase):
         self.assertEqual(self.page_asks_for_new_posts(self.open_window())[0]["reply_count"], 3)
         self.assertEqual(self.rows("SELECT COUNT(*) FROM posts WHERE parent_id = 1"), [(3,)])
 
+    # -- edit-delete --
+
+    def page_asks_for_changes(self, window, after=None):
+        """checkForChanges: GET /changes the first time, then GET /changes?after=<latest>"""
+        path = "/changes" if after is None else "/changes?after=" + str(after)
+        with window.open(self.base + path) as answer:
+            return json.loads(answer.read())
+
+    def page_edits(self, window, post_id, text):
+        """sendEdit: PATCH /posts, with the post id and the new words"""
+        return self.page_sends(window, "/posts", {"post_id": post_id, "text": text}, "PATCH")
+
+    def page_deletes(self, window, post_id):
+        """deletePost: DELETE /posts, with the post id"""
+        return self.page_sends(window, "/posts", {"post_id": post_id}, "DELETE")
+
+    def page_replies(self, window, post_id, text):
+        """sendPost while replying: POST /posts with parent_id"""
+        return self.page_sends(window, "/posts", {"text": text, "parent_id": post_id}, "POST")
+
+    def code_of(self, send, *arguments):
+        """The status and the code of a request the server refuses."""
+        with self.assertRaises(urllib.error.HTTPError) as caught:
+            send(*arguments)
+        answer = json.loads(caught.exception.read())
+        caught.exception.close()
+        return caught.exception.code, answer["code"]
+
+    def test_the_whole_journey_of_an_edit_and_a_delete(self):
+        clock = use_fake_clock(self)
+        patcher = mock.patch.object(server, "utc_now", lambda: SOME_MOMENT)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        aiko = self.open_window()
+        ben = self.open_window()
+        watcher = self.open_window()   # no login: it only watches
+
+        # 1. Aiko and Ben sign up. Aiko posts; Ben likes it.
+        self.page_signs_up(aiko, "aiko", "Aiko Tanaka")
+        self.page_signs_up(ben, "ben", "Ben Ito")
+        status, post = self.page_posts(aiko, "Lunch at noon")
+        post_id = post["id"]
+        self.page_presses_heart(ben, post_id, False)
+        self.assertEqual((post["edited"], post["deleted"]), (False, False))
+
+        # 2. The watcher opens the page: changes first, then posts.
+        latest = self.page_asks_for_changes(watcher)["latest"]
+        self.assertEqual(latest, 0)
+        self.assertEqual([p["id"] for p in self.page_asks_for_new_posts(watcher)], [post_id])
+
+        # 3. Aiko edits. The watcher hears of it, with the new words.
+        status, edited = self.page_edits(aiko, post_id, "Lunch at one")
+        self.assertEqual((status, edited["text"], edited["edited"], edited["like_count"]),
+                         (200, "Lunch at one", True, 1))
+        answer = self.page_asks_for_changes(watcher, latest)
+        self.assertEqual([(c["post_id"], c["post"]["text"], c["post"]["edited"])
+                          for c in answer["changes"]], [(post_id, "Lunch at one", True)])
+        latest = answer["latest"]
+        self.assertEqual(self.rows("SELECT text FROM posts"), [("Lunch at one",)])
+        self.assertEqual(self.rows("SELECT post_id, text FROM post_versions"),
+                         [(post_id, "Lunch at noon")])
+        self.assertEqual(self.rows("SELECT post_id, user_id FROM likes"), [(post_id, 2)])
+
+        # 4. Ben tries to edit and to delete Aiko's post: 403, and nothing changes.
+        tables = ("posts", "likes", "post_versions", "changes")
+        before = [self.rows("SELECT * FROM " + t) for t in tables]
+        self.assertEqual(self.code_of(self.page_edits, ben, post_id, "Ben was here"),
+                         (403, "post_not_yours"))
+        self.assertEqual(self.code_of(self.page_deletes, ben, post_id), (403, "post_not_yours"))
+        self.assertEqual([self.rows("SELECT * FROM " + t) for t in tables], before)
+        self.assertEqual(self.page_asks_for_changes(watcher, latest)["changes"], [])
+
+        # 5. Aiko deletes it. The watcher is told to take it away; nothing of it stays.
+        self.assertEqual(self.page_deletes(aiko, post_id),
+                         (200, {"post_id": post_id, "post": None}))
+        answer = self.page_asks_for_changes(watcher, latest)
+        self.assertEqual([(c["post_id"], c["kind"], c["post"]) for c in answer["changes"]],
+                         [(post_id, "deleted", None)])
+        latest = answer["latest"]
+        for table in ("posts", "likes", "post_versions"):
+            self.assertEqual(self.rows("SELECT * FROM " + table), [])
+
+        # 6. Aiko posts again: a larger id, so the watcher's next question brings it.
+        clock.move(61)
+        status, again = self.page_posts(aiko, "Lunch is cancelled")
+        self.assertGreater(again["id"], post_id)
+        self.assertEqual([p["id"] for p in self.page_asks_for_new_posts(watcher, post_id)],
+                         [again["id"]])
+
+        # 7. Ben replies, then Aiko deletes her post. It has a reply, so it stays
+        #    as "This post was deleted", with the reply under it.
+        status, reply = self.page_replies(ben, again["id"], "Oh no!")
+        self.assertEqual(status, 201)
+        status, answer = self.page_deletes(aiko, again["id"])
+        self.assertEqual((status, answer["post"]["deleted"], answer["post"]["text"],
+                          answer["post"]["reply_count"]), (200, True, "", 1))
+        answer = self.page_asks_for_changes(watcher, latest)
+        self.assertEqual([(c["post_id"], c["post"]["deleted"]) for c in answer["changes"]],
+                         [(again["id"], True)])
+        latest = answer["latest"]
+        self.assertEqual(self.rows("SELECT id, text, deleted_at IS NOT NULL, parent_id "
+                                   "FROM posts ORDER BY id"),
+                         [(again["id"], "", 1, None), (reply["id"], "Oh no!", 0, again["id"])])
+        shown = self.page_asks_for_new_posts(watcher, post_id)
+        self.assertEqual([(p["id"], p["deleted"]) for p in shown],
+                         [(again["id"], True), (reply["id"], False)])
+
+        # 8. Nobody can answer, like or edit a deleted post.
+        self.assertEqual(self.code_of(self.page_replies, ben, again["id"], "Still there?"),
+                         (400, "reply_to_deleted"))
+        self.assertEqual(self.code_of(self.page_presses_heart, ben, again["id"], False),
+                         (400, "post_missing"))
+        self.assertEqual(self.code_of(self.page_edits, aiko, again["id"], "back"),
+                         (400, "post_deleted"))
+
+        # 9. Ben deletes his reply, the last one: Aiko's deleted post goes too.
+        self.assertEqual(self.page_deletes(ben, reply["id"]),
+                         (200, {"post_id": reply["id"], "post": None}))
+        answer = self.page_asks_for_changes(watcher, latest)
+        self.assertEqual([(c["post_id"], c["post"]) for c in answer["changes"]],
+                         [(reply["id"], None), (again["id"], None)])
+        self.assertEqual(self.rows("SELECT * FROM posts"), [])
+        self.assertEqual(self.rows("PRAGMA foreign_key_check"), [])
+
 
 class BookmarkJourneyTest(unittest.TestCase):
     """The journey of a private bookmark, through all three levels at once.
@@ -3895,7 +4349,8 @@ class PageAndServerAgreeTest(unittest.TestCase):
         """The status the server gives this request, whether it likes it or not."""
         request = urllib.request.Request(
             self.base + path,
-            data=json.dumps({}).encode("utf-8") if method in ("POST", "DELETE") else None,
+            data=json.dumps({}).encode("utf-8") if method in ("POST", "PATCH", "DELETE")
+            else None,
             headers={"Content-Type": "application/json"},
             method=method,
         )
@@ -3911,19 +4366,21 @@ class PageAndServerAgreeTest(unittest.TestCase):
         asked = set(re.findall(r'fetch\("(/[a-z]*)', self.page_code))
         self.assertEqual(asked, {"/posts", "/likes", "/sessions", "/accounts",
                                  "/likers", "/likesummary", "/search", "/bookmarks",
-                                 "/blocks"})
+                                 "/blocks", "/changes", "/versions"})
 
     def test_the_page_names_only_the_methods_tried_below(self):
-        # A GET needs no method, so the page names only the other two.
+        # A GET needs no method, so the page names only the others.
         named = set(re.findall(r'"(GET|POST|PUT|PATCH|DELETE)"', self.page_code))
-        self.assertEqual(named, {"POST", "DELETE"})
+        self.assertEqual(named, {"POST", "PATCH", "DELETE"})
 
     def test_the_server_answers_every_request_the_page_makes(self):
         for method, path in [("GET", "/posts?after=0"), ("POST", "/posts"),
                              ("GET", "/likes"), ("POST", "/likes"), ("DELETE", "/likes"),
                              ("GET", "/sessions"), ("POST", "/sessions"),
                              ("DELETE", "/sessions"), ("POST", "/accounts"),
-                             ("GET", "/blocks"), ("POST", "/blocks"), ("DELETE", "/blocks")]:
+                             ("GET", "/blocks"), ("POST", "/blocks"), ("DELETE", "/blocks"),
+                             ("PATCH", "/posts"), ("DELETE", "/posts"), ("GET", "/changes"),
+                             ("GET", "/changes?after=0"), ("GET", "/versions?post_id=1")]:
             with self.subTest(request=method + " " + path):
                 code = self.answer_code(method, path)
                 # 400 or 401 is a fine answer here: the body is empty and nobody
@@ -4683,7 +5140,7 @@ class PageAndServerAgreeTest(unittest.TestCase):
         row = {"id": 2, "author": "ken", "display_name": "Ken", "text": "x", "posted_at": None,
                "old_clock_time": "09:00", "like_count": 0, "place": None, "picture_alt": None,
                "parent_id": 1, "parent_author": "aiko", "reply_count": 0,
-               "newest_reply_id": None}
+               "newest_reply_id": None, "edited": 0, "deleted": 0}
         sent = server.post_to_json(row)
         for name in ("parent_id", "parent_author", "reply_count", "newest_reply_id"):
             with self.subTest(name=name):
@@ -4728,6 +5185,80 @@ class PageAndServerAgreeTest(unittest.TestCase):
         for part in ('id="replying-to" hidden', 'id="replying-to-words"', 'id="cancel-reply"'):
             self.assertIn(part, form)
         self.assertIn('cancelReplyButton.addEventListener("click", cancelReply)', self.page_code)
+
+    # -- edit-delete --
+
+    def test_the_page_asks_for_changes_before_posts(self):
+        code = functions_in(self.page_code)
+        check = code["checkForNewPosts"]
+        self.assertLess(check.index("await checkForChanges();"), check.index("loadOlderPosts"))
+        self.assertLess(check.index("await checkForChanges();"), check.index('fetch("/posts'))
+        self.assertIn('fetch("/changes"', code["checkForChanges"])
+        self.assertIn("lastChangeId = answer.latest;", code["checkForChanges"])
+
+    def test_the_page_sends_exactly_post_id_and_text_for_an_edit_and_post_id_for_a_delete(self):
+        code = functions_in(self.page_code)
+        self.assertIn("JSON.stringify({ post_id: postId, text: text })", code["sendEdit"])
+        self.assertIn('method: "PATCH"', code["sendEdit"])
+        self.assertIn("textProblem(text.trim())", code["sendEdit"])
+        self.assertIn("JSON.stringify({ post_id: postId })", code["deletePost"])
+        self.assertIn('method: "DELETE"', code["deletePost"])
+        self.assertIn('confirm(say("delete_confirm"))', code["deletePost"])
+
+    def test_the_page_reads_the_names_the_changes_answers_have(self):
+        row = {"id": 1, "author": "a", "display_name": "A", "text": "t", "posted_at": None,
+               "old_clock_time": "09:00", "like_count": 0, "place": None, "picture_alt": None,
+               "parent_id": None, "parent_author": None, "reply_count": 0,
+               "newest_reply_id": None, "edited": 1, "deleted": 0}
+        changes = server.changes_to_json(3, [({"id": 3, "post_id": 1, "kind": "edited"}, row)])
+        keys = set(changes) | set(changes["changes"][0]) | set(changes["changes"][0]["post"]) \
+            | set(server.version_to_json({"text": "t", "replaced_at": "x"})) \
+            | set(server.deleted_to_json(1, None))
+        for key in ("latest", "changes", "post", "post_id", "edited", "deleted", "replaced_at"):
+            with self.subTest(key=key):
+                self.assertIn("." + key, self.page_code)
+                self.assertIn(key, keys)
+
+    def test_edit_and_delete_use_the_shared_pieces(self):
+        code = functions_in(self.page_code)
+        for action, function in (("edit", "startEdit"), ("saveEdit", "sendEdit"),
+                                 ("cancelEdit", "cancelEdit"), ("delete", "deletePost"),
+                                 ("versions", "toggleVersions")):
+            with self.subTest(action=action):
+                self.assertIn(f"ACTIONS.{action} = {function};", self.page_code)
+                self.assertNotIn(action, code["clickOnTimeline"])
+        self.assertIn("removePost(postId)", code["showChangedPost"])
+        self.assertIn("redrawPost(post)", code["showChangedPost"])
+        self.assertNotIn("edit", code["makePostItem"])
+        # The menu items only on your own posts, never on a deleted one.
+        owner = self.page_code.split("function ownerToolsPart")[1].split("\n});\n")[0]
+        self.assertIn("post.deleted", owner)
+        self.assertIn("sameAccount(post.author, account.account_name)", owner)
+        # A removed or redrawn post stops being watched by the long-posts ResizeObserver.
+        self.assertIn("textSizeWatcher.unobserve(", code["stopWatchingText"])
+        self.assertIn("stopWatchingText(parts.item);", code["removePost"])
+        self.assertIn("stopWatchingText(old.item);", code["redrawPost"])
+
+    def test_a_change_reaches_every_copy_of_a_post(self):
+        code = functions_in(self.page_code)
+        apply = code["applyChange"]
+        # timeline-flow: a post waiting behind "new posts" is changed or removed there.
+        self.assertIn("waitingPosts.splice(waiting, 1);", apply)
+        self.assertIn("waitingPosts[waiting] = post;", apply)
+        self.assertIn("updateNewPostsButton();", apply)
+        # Every copy on the page: the timeline, the search results, My bookmarks.
+        self.assertIn("li.post[data-post-id=", apply)
+        self.assertIn("bookmarked.delete(postId);", apply)
+
+    def test_a_deleted_post_has_no_heart_no_reply_and_no_star(self):
+        edited = self.page_code.split("function editedPart")[1].split("\n});\n")[0]
+        self.assertIn('say("deleted_post")', edited)
+        for selector in (".like", ".reply-button", ".bookmark"):
+            self.assertIn(selector, edited)
+        # The part runs after the parts that make those buttons.
+        for part in ("heartPart", "replyPart", "bookmarkPart", "blockPart"):
+            self.assertLess(self.page_code.index("function " + part),
+                            self.page_code.index("function editedPart"))
 
 
 class ColoursTest(unittest.TestCase):

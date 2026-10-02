@@ -626,6 +626,34 @@ post in every other way: an author, a time, a heart, a place, a picture.
 - **A draft remembers the post it answers.** The draft is now JSON, `{"v": 2, "text", "reply_to"}`.
   A draft kept before replies is plain text, and still loads.
 
+## Edit and delete
+
+- **Two new tables** (database version 10). `post_versions` keeps the earlier words of each edited
+  post, with the time they were replaced. `changes` keeps one row for each "this post changed"; it
+  has no foreign key, because a deleted post is gone and its change must stay so that open windows
+  hear about it. `posts` gets one column, `deleted_at`.
+- **No rebuild.** Groundwork already gave `posts.id` `AUTOINCREMENT`, so the id of a deleted post is
+  never given again, and `GET /posts?after=` never misses a new post.
+- **"Edited" is worked out**, from whether the post has a row in `post_versions`, never stored as a
+  yes/no. The two can never disagree.
+- **Delete removes the rows**: the post, its likes, earlier versions, picture and bookmarks, in one
+  transaction. A post with replies keeps its row with no words ("This post was deleted"), so its
+  replies stay; it goes when its last reply goes.
+- **Open windows hear about it** through `GET /changes?after=N`, asked each second before new posts.
+  Each change brings the post as this viewer would see it now, or `null`: draw it again, or take
+  it away.
+
+Where each rule is kept:
+
+| Rule | Page | Model | Database |
+|---|---|---|---|
+| Only the author edits or deletes | menu items only on your own posts | `own_post` → 403 | cannot: it does not know who asks |
+| New words follow the post rules | `textProblem` | `check_text` | `text NOT NULL` |
+| A deleted post keeps no words | "This post was deleted" | `delete_post` | `CHECK (deleted_at IS NULL OR (text = '' AND place IS NULL))` |
+| A deleted post cannot be answered | no Reply button | `check_reply_parent` (`reply_to_deleted`) | — |
+| A post with replies is not removed | — | `has_replies` | `parent_id REFERENCES posts(id)` refuses it |
+| A change is recorded only if it happened | — | `record_change` in the same transaction | — |
+
 ## 8. Build or borrow
 
 - **Built:** the page, the server and the data model.

@@ -28,11 +28,11 @@ piece of text the browser keeps and sends back by itself), never from a name in 
 | `page-only/app.js` | Checks the rules and keeps the posts in this window's `sessionStorage`. There are no likes in this version. |
 | `with-backend/index.html` | The parts of the screen: Log in and Sign up forms when signed out; "Signed in as …", Log out and the post box when signed in; the timeline. A tiny script in `<head>` that sets the colours before the page is drawn, and the Colours switch. |
 | `with-backend/style.css` | How the screen looks. Each colour is written once for light and dark, as `light-dark(LIGHT, DARK)`. |
-| `with-backend/app.js` | Asks the server who is logged in, sends sign-ups, logins, log-outs, posts, likes and likes taken back, and asks for new posts and new like counts every second. Remembers the Colours choice in `localStorage`. It keeps a half-written post in this browser's `localStorage`, one per account, removed after posting or logging out. It shows who liked each post, and asks for the names only when a count changes. It searches posts (`GET /search`) and shows the results in their own view. It asks for the newest page of posts, older pages on scroll, and holds new posts behind a "3 new posts" button while you read lower down. It sends bookmarks and bookmarks taken back, and asks for your bookmarks (never every second). It remembers the last place typed (`timeline-place`), forgotten on log out. |
+| `with-backend/app.js` | Asks the server who is logged in, sends sign-ups, logins, log-outs, posts, likes and likes taken back, and asks for new posts and new like counts every second. Remembers the Colours choice in `localStorage`. It keeps a half-written post in this browser's `localStorage`, one per account, removed after posting or logging out. It shows who liked each post, and asks for the names only when a count changes. It searches posts (`GET /search`) and shows the results in their own view. It asks for the newest page of posts, older pages on scroll, and holds new posts behind a "3 new posts" button while you read lower down. It sends bookmarks and bookmarks taken back, and asks for your bookmarks (never every second). It remembers the last place typed (`timeline-place`), forgotten on log out. It edits and deletes your own posts, shows earlier versions, and asks for changes (`GET /changes`) every second, before new posts. |
 | `with-backend/server.py` | The backend, in three labelled parts: **controller**, **model**, **view**. |
 | `with-backend/words.js` | Every word the page shows, by key (`WORDS`). English only for now; Japanese comes later. |
 | `with-backend/test_server.py` | The checks for `server.py`, and for the page and the server agreeing. |
-| `with-backend/timeline.db` | The database, in eight tables. The server creates it when it starts, and brings an older one up to date. It is not in git. |
+| `with-backend/timeline.db` | The database, in ten tables. The server creates it when it starts, and brings an older one up to date. It is not in git. |
 | `Makefile` | Short commands: `make run`, `make test`, `make reset`, `make worktree BRANCH=name`. |
 
 The Colours choice (Auto, Light or Dark) is the only thing the page keeps in `localStorage`
@@ -53,8 +53,10 @@ The three parts of `server.py`:
   `has_tag`, `search_posts`, `picture_kind`, `check_picture`, `check_alt_text`, `picture_for`,
   `not_blocked_sql`, `find_account`, `add_block`, `remove_block`, `blocks_for`,
   `check_not_blocked_by_author`, `check_parent_id`, `check_reply_parent`, `save_reply`,
-  `has_replies`, `visible_replies`, and `create_tables` with its upgrades):
-  the rules, and the database, in eight tables:
+  `has_replies`, `visible_replies`, `post_as_shown`, `check_change_post_id`, `own_post`,
+  `record_change`, `edit_post`, `forget_post_details`, `delete_post`, `changes_after`,
+  `versions_of`, and `create_tables` with its upgrades):
+  the rules, and the database, in ten tables:
   - `users`: each person once. `name` is the account name (unique, capitals ignored),
     `display_name` is the name shown, and `password_salt`, `password_hash`, `password_rounds` hold
     a hash of the password. The password itself is never kept.
@@ -77,13 +79,17 @@ The three parts of `server.py`:
   - `blocks`: one row for each person who blocked another (`blocker_id`, `blocked_id`).
     `PRIMARY KEY (blocker_id, blocked_id)` stops the same block twice, and
     `CHECK (blocker_id <> blocked_id)` stops anyone blocking themselves. Unblocking deletes the row.
+  - `post_versions`: the earlier words of each edited post, and when they were replaced (UTC),
+    `ON DELETE CASCADE`.
+  - `changes`: one row for each "this post changed", for open windows. See "The changes feed".
 
   A name is kept once, in `users`; never copy it into another table. Only sign-up
   (`create_account`) adds a user: posting, liking and reading never do. A like count is never kept
   anywhere: it is counted from the rows in `likes`, so a count and its likes can never disagree.
   Taking a like back deletes its row; nothing is marked as undone. A time is saved as UTC text by
   `utc_text`, and shown by `timeElement` in `app.js`. Errors: `RuleBroken` becomes
-  `400`, `NotSignedIn` becomes `401`, `TooFast` becomes `429`. All three are a `Problem`, made
+  `400`, `NotSignedIn` becomes `401`, `NotAllowed` (logged in, but not yours) becomes `403`,
+  `TooFast` becomes `429`. All three are a `Problem`, made
   from a code in `PROBLEMS` (the table of every refusal and its English sentence), never from a
   sentence.
 
@@ -91,7 +97,8 @@ The three parts of `server.py`:
   A person's popularity (likes on their own posts from other people) is counted from `likes`
   every time, never stored.
 - **View** (`post_to_json`, `picture_to_json`, `posts_to_json`, `account_to_json`, `like_to_json`, `likes_to_json`,
-  `likers_to_json`, `summaries_to_json`, `search_to_json`, `blocks_to_json`, `problem_to_json`, `session_cookie`, `post_to_log_line`): turns database rows into the JSON the page reads, the
+  `likers_to_json`, `summaries_to_json`, `search_to_json`, `blocks_to_json`, `change_to_json`,
+  `changes_to_json`, `deleted_to_json`, `version_to_json`, `versions_to_json`, `problem_to_json`, `session_cookie`, `post_to_log_line`): turns database rows into the JSON the page reads, the
   cookie, and the one line printed for each new post.
 
 The database knows its own version (`PRAGMA user_version`). An older `timeline.db` from before
@@ -332,13 +339,62 @@ no `parent_id`, `save_post`; a `parent_id`, `save_reply`.
 - `upgrade_to_replies` (database version 9) added the column, the index `posts_by_parent` and the
   trigger.
 
+## Edit and delete
+
+Only the author may edit or delete a post. Edit, Delete and "Show old versions" are "⋯" menu items
+(`ownerToolsPart`), made only on your own posts when you are logged in. The rule itself is in the
+model, `own_post`, which raises `NotAllowed` (`403`, code `post_not_yours`). The database cannot
+check it, because it does not know who is asking.
+
+- **Edit** (`PATCH /posts`, `{post_id, text}`): the new words follow `check_text`, like a new post.
+  The old words go into `post_versions`. The post keeps its place in the timeline, its time, its
+  likes and its replies. A post is "edited" exactly when it has a row in `post_versions`: worked
+  out in `POSTS_WITH_AUTHORS`, never stored. Anyone can read the earlier words:
+  `GET /versions?post_id=3`, oldest first (`[]` for a post the viewer may not see).
+- **Delete** (`DELETE /posts`, `{post_id}`): `forget_post_details` deletes its likes, earlier
+  versions, picture and bookmarks, all in one transaction. A post with **replies**
+  (`has_replies`) is not removed: its row stays with `text = ''`, `place` NULL and `deleted_at`
+  set, and the page shows "This post was deleted" with its replies under it, and no heart, Reply
+  or ☆. The database refuses a deleted post that still has words. A deleted post cannot be edited
+  (`post_deleted`), liked or bookmarked (`post_missing`), answered (`reply_to_deleted`, in
+  `check_reply_parent`), or found by search. When its last reply is deleted, it is removed too.
+- **Every new table that points at `posts`** must say what happens when the post is deleted
+  (`ON DELETE CASCADE` or `ON DELETE SET NULL`), and be added to `forget_post_details` if it holds
+  anything of the post's words, because a post kept for its replies keeps its row. Otherwise
+  `delete_post` is refused (`post_delete_refused`), and nothing changes.
+
+### The changes feed (shared: report and block use it too)
+
+`GET /posts?after=` only brings new posts, so an edit or a delete would never reach an open window.
+So every change adds one row to `changes`, with `record_change(connection, post_id, kind)`, **in the
+same transaction** as the change itself. Each window asks `GET /changes?after=<the newest change id
+it has seen>` every second, **before** it asks for posts (`checkForChanges`, first in
+`checkForNewPosts`). The first time it asks `GET /changes` with no `after`, which only says where the
+feed is now.
+
+- The answer is `{latest, changes: [{id, post_id, kind, post}]}`. `post` is the post **as
+  `GET /posts` would show it to this viewer right now** (`post_as_shown`, through `select_posts`),
+  or `null`.
+- The page has one rule, whatever the kind (`applyChange`): **`post` is there → draw it again;
+  `null` → take it away.** It changes every copy: on the timeline (`redrawPost`, `removePost`),
+  waiting behind "new posts" (`waitingPosts`), in the search results and in My bookmarks. `kind`
+  is for people, logs and tests; the page never reads it.
+- The kinds are in `CHANGE_KINDS`: `edited`, `deleted`, and `replies_changed` (a reply to this post
+  was deleted, so its count changed). A feature that hides or shows a post (`report`) changes
+  `visible_to`, calls `record_change(connection, post_id, "hidden")` (or `"shown"`) in the same
+  transaction, and adds its kinds to `CHANGE_KINDS` in one line. No page change is needed.
+- `changes_after(db_path, after, viewer_id)` and `post_as_shown(connection, post_id, viewer_id)`
+  take the viewer, so a change already shows a post as `block` hides it.
+- A change id only grows (`AUTOINCREMENT`), and SQLite lets one write happen at a time, so a window
+  can never see change 9 and miss change 8. Old rows are never cleared yet.
+
 ## How to run it
 
 - Page-only: open `page-only/index.html` in a browser. Nothing to start.
 - With a backend: `make run`, then open <http://localhost:8009>. Press Ctrl+C to stop.
 - Start again with an empty timeline: `make reset`.
 - See what is saved:
-  `sqlite3 with-backend/timeline.db 'select * from users; select * from posts; select * from likes; select * from sessions; select * from attempts; select * from bookmarks; select * from blocks; select post_id, kind, length(bytes), alt_text from pictures'`
+  `sqlite3 with-backend/timeline.db 'select * from users; select * from posts; select * from likes; select * from sessions; select * from attempts; select * from bookmarks; select * from blocks; select * from post_versions; select * from changes; select post_id, kind, length(bytes), alt_text from pictures'`
 
 It needs only `python3` (3.9 or newer). Do not add libraries, packages or a build step.
 Write code that runs on Python 3.9: no `match` statements, and no `X | Y` in type hints.
