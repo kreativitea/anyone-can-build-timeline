@@ -22,6 +22,15 @@
   <main>
     <h1>Timeline</h1>
 
+    <!-- Search: anyone can search, signed in or not. The results show in
+         their own view, "Search results", below. -->
+    <form id="search-form" role="search">
+      <label for="search-box">Search posts</label>
+      <input id="search-box" type="search" maxlength="100" placeholder="a word or #tag"
+             autocomplete="off">
+      <button type="submit">Search</button>
+    </form>
+
     <!-- The Colours switch. Auto follows the computer. The choice is kept in
          this browser only (localStorage), and never goes to the server. -->
     <div class="theme-row">
@@ -91,6 +100,15 @@
     <!-- One view: the timeline. Another view would be a section next to it. -->
     <section data-view="timeline">
       <ol id="timeline" class="timeline" aria-label="Posts, newest first"></ol>
+    </section>
+
+    <!-- The search results view. app.js adds its button with addView("search", ...). -->
+    <section data-view="search" hidden>
+      <p class="results-row">
+        <span id="results-title" role="status"></span>
+        <button type="button" id="back-to-timeline" class="link-button">Back to the timeline</button>
+      </p>
+      <ol id="results-list" class="timeline" aria-label="Search results, newest first"></ol>
     </section>
   </main>
 

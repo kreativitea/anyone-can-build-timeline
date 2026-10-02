@@ -61,6 +61,8 @@ class TimelineHandler(BaseHTTPRequestHandler):
             viewer = self.user_or_none()
             rows = posts_after(self.server.db_path, after, viewer["id"] if viewer else None)
             self.send_json(200, posts_to_json(rows))
+        elif url.path == "/search":
+            self.give_search(parse_qs(url.query).get("q", [""])[0])
         elif url.path == "/likes":
             # A like changes no post, so a window asks for the counts separately.
             # Anyone may read the counts; "mine" is empty for a window not logged in.
@@ -260,6 +262,21 @@ class TimelineHandler(BaseHTTPRequestHandler):
             return
         self.send_json(200, summaries_to_json(summaries))
 
+    def give_search(self, query):
+        """GET /search?q=library: the posts with every word, newest first.
+
+        Anyone may search. The viewer is read only so that visible_to applies.
+        The search is passed on as it is: checking it is the model's rule.
+        """
+        viewer = self.user_or_none()
+        try:
+            rows, more = search_posts(self.server.db_path, query,
+                                      viewer["id"] if viewer else None)
+        except RuleBroken as problem:
+            self.send_json(400, {"error": str(problem)})
+            return
+        self.send_json(200, search_to_json(rows, more))
+
     def send_nothing_here(self, method, path):
         """404, in one sentence for every method, so it stays true when routes are added."""
         self.send_json(404, {"error": f"There is nothing to {method} at {path}."})
@@ -290,8 +307,11 @@ class TimelineHandler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):
         # Each window asks for new posts and new like counts every second.
         # Printing all of those questions would fill the screen, so they are not printed.
+        # A search is not printed either: what a person searched for is their
+        # own business, and the terminal may be shown on a screen in class.
         if self.command == "GET" and (self.path.startswith("/posts")
-                                      or self.path.startswith("/likes")):
+                                      or self.path.startswith("/likes")
+                                      or self.path.startswith("/search")):
             return
         BaseHTTPRequestHandler.log_message(self, format, *args)
 
@@ -316,6 +336,18 @@ MAX_LIKERS = 50          # at most this many names in the full list; the total i
 SUMMARY_NAMES = 2        # names in the summary line ("Anika, Chika, and 10 others")
 MAX_SUMMARY_POSTS = 100  # at most this many posts in one GET /likesummary
 POST_ID_TEXT = re.compile(r"[0-9]{1,18}")   # one post id, as text
+
+# search
+MAX_QUERY = 100        # characters in a search
+MAX_QUERY_WORDS = 5    # words in a search
+SEARCH_LIMIT = 50      # at most this many posts in one answer; "more" says if there were more
+# A tag: # and then letters, digits or _. Japanese counts as letters:
+# 々 (々), hiragana and katakana with ー (぀-ヿ), kanji
+# (㐀-鿿), and half-width katakana (ｦ-ﾟ). A tag ends at the
+# first other character: a space, punctuation, or an emoji. It is written with
+# \u codes so that app.js holds exactly the same text (a test checks this).
+# This is the one tag rule: links-and-tags uses it too, and never makes its own.
+TAG = re.compile(r"#([0-9A-Za-z_々぀-ヿ㐀-鿿ｦ-ﾟ]+)")
 
 # The largest request body the server will read: 4 MB, in bytes. Enough for a
 # 2 MB picture written as text (base64 makes it about a third bigger), with room
@@ -1230,6 +1262,85 @@ def posts_after(db_path, after, viewer_id=None):
     return rows
 
 
+# ---- search ----
+
+def check_query(query):
+    """Return the words of a search, as a list, or raise RuleBroken.
+
+    Words are split at spaces (a Japanese full-width space too). A word that is
+    a whole tag, such as "#cat", stays "#cat": search_posts then wants that tag,
+    not only the letters. A lone "#" is an ordinary word.
+    """
+    query = query.strip() if isinstance(query, str) else ""
+    if query == "":
+        raise RuleBroken("Type a word to search for.")
+    if len(query) > MAX_QUERY:
+        raise RuleBroken(f"A search must be {MAX_QUERY} characters or fewer.")
+    words = query.split()
+    if len(words) > MAX_QUERY_WORDS:
+        raise RuleBroken(f"A search may have at most {MAX_QUERY_WORDS} words.")
+    return words
+
+
+def escape_like(word):
+    r"""The word, ready to go inside a LIKE pattern.
+
+    In LIKE, % means "any characters" and _ means "any one character". A \ in
+    front makes each of them mean itself, and the SQL says ESCAPE '\'. The \
+    itself is escaped first, so a \ typed in a search means a \.
+    """
+    return word.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def tags_in(text):
+    """The set of tags in a text, in small letters, without the #: {"cat", "東京"}.
+
+    #Cat and #cat are the same tag. links-and-tags may use this too.
+    """
+    return {tag.lower() for tag in TAG.findall(text or "")}
+
+
+def has_tag(text, tag):
+    """1 if the text holds this tag (without its #, in small letters), else 0.
+
+    search_posts gives this function to SQLite, so the tag rule is checked
+    inside the SQL. Then the LIMIT counts only posts that really have the tag.
+    """
+    return 1 if tag in tags_in(text) else 0
+
+
+def search_posts(db_path, query, viewer_id=None):
+    """The posts that hold every word of the search, newest first: (rows, more).
+
+    At most SEARCH_LIMIT rows; `more` is True when there were more. A tag word
+    (#cat) finds only that whole tag, so #cat does not find #catalog. Capital
+    letters A to Z do not matter (LIKE works that way); everything else must
+    match exactly. Every post goes through select_posts, so visible_to applies.
+    Only reads: it never adds a user or changes a row.
+    """
+    words = check_query(query)
+    conditions = []
+    params = []
+    for word in words:
+        # The \ in ESCAPE '\' is one \ in the SQL. The word is a value (?),
+        # never written into the SQL itself.
+        conditions.append("posts.text LIKE ? ESCAPE '\\'")
+        params.append("%" + escape_like(word) + "%")
+        if TAG.fullmatch(word):
+            conditions.append("has_tag(posts.text, ?)")
+            params.append(word[1:].lower())
+    connection = connect(db_path)
+    try:
+        # has_tag is a Python function that this connection's SQL may call.
+        connection.create_function("has_tag", 2, has_tag, deterministic=True)
+        # One more than the limit, only to learn whether there were more.
+        rows = select_posts(connection, conditions, params, viewer_id, "posts.id DESC",
+                            limit=SEARCH_LIMIT + 1)
+    finally:
+        connection.close()
+    return rows[:SEARCH_LIMIT], len(rows) > SEARCH_LIMIT
+
+
 # ============================================================================
 #  VIEW
 #  Turns database rows into the JSON the page reads, and the cookie it keeps.
@@ -1243,6 +1354,11 @@ def post_to_json(row):
 
 def posts_to_json(rows):
     return [post_to_json(row) for row in rows]
+
+
+def search_to_json(rows, more):
+    """A search answer: the posts, newest first, and whether there were more."""
+    return {"posts": posts_to_json(rows), "more": more}
 
 
 def account_to_json(user):

@@ -301,6 +301,11 @@ and that the page has the model's limits and patterns.
 | Count wrong logins by address, not by account name. | security | reject | Every request comes from `127.0.0.1` today, so five wrong passwords by anyone would stop everyone. | Counted by the lower-case account name. A stranger can hold one account for 10 minutes; a window already logged in is not touched. |
 | Rate limiting is about requests, so it belongs in the controller. | design | reject | "At most 5 posts a minute" is a rule about what a person may do, like "at most 280 characters", and the counts are rows. | `use_allowance` in the model, called from `save_post`, `add_like`, `remove_like`, `log_in` and `create_account`. |
 | Pressing during the wait should make the wait longer. | design | reject | Then the wait the server names would not be true. | Only allowed attempts are counted, and a mistake (an empty post, no such post) is refused before counting. |
+| Use SQLite's full-text search (FTS5) for search. | design | reject for now | A second copy of every post, three triggers to keep it in step with edits and deletes, an upgrade, and its `trigram` mode cannot find two-character Japanese words like 東京. | `LIKE` in one model function, `search_posts`; moving to FTS5 later changes only that function. |
+| Keep tags in a `tags` table. | design | reject | A tag is already in the text: one fact, one place. | `tags_in` finds them in the text; `has_tag` checks them inside the SQL. |
+| A search for `100%` would find every post, because `%` means "anything" in `LIKE`. | design | accept | The person meant the sign. | `escape_like`, and `ESCAPE '\'` in the SQL. |
+| Print each search in the terminal, like each post. | security | reject | A search can say what a person is worried about, and the terminal is shown on a screen in class. | `GET /search` is not printed. |
+| Filter tags in Python after the SQL. | design | reject | Then 50 `#catalog` posts would use up the limit and hide a real `#cat`. | The tag rule is a SQL function, so the `LIMIT` counts only real matches. |
 
 ## Groundwork
 
@@ -392,6 +397,42 @@ post*. Clicking the line, or the number by the heart, opens everyone who liked i
 - **Old posts have no date.** Before this, a post kept only `HH:MM`. That cannot become a real date
   honestly, so the upgrade (database version 3) moves it to `old_clock_time` and leaves `posted_at`
   empty. The page shows "15:42 · date unknown". It never guesses a date.
+
+## Search
+
+A search box at the top finds every post with a word (`library`) or a tag (`#cat`). Anyone can
+search, signed in or not. The results show newest first in their own view, **Search results**,
+with a **Back to the timeline** button.
+
+- **One route:** `GET /search?q=library%20late` answers `200 {"posts": [...], "more": false}`, each
+  post exactly as `GET /posts` gives it. An empty search, one over 100 characters, or one of more
+  than 5 words gets `400` and the rule it broke. It is its own path, not a second meaning of
+  `GET /posts?after=`, which every window asks every second.
+- **At most 50 results, no paging.** `"more": true` says there were more, and the page says
+  "Showing the newest 50 posts with …".
+- **`LIKE`, not a search index.** `LIKE '%word%'` asks SQLite "does the text contain this?". It reads
+  every post each time, but this timeline is far too small for that to matter, and it needs no new
+  table, no upgrade, and nothing to keep in step when a post is edited or deleted. In a `LIKE`
+  pattern `%` means "any characters" and `_` means "any one character", so `escape_like` puts `\`
+  in front of `%`, `_` and `\` itself, and the SQL says `ESCAPE '\'`: a search for `100%` finds
+  "100%". Every word must appear, in any order. A–Z ignore capitals.
+- **Tags are found in the text, not kept in a table.** A tag is already in the post, so a table
+  would be a second copy of one fact. `TAG` (in `server.py`, and the same text in `app.js`) says
+  what a tag is: `#` and then letters, digits, `_`, or Japanese (hiragana, katakana, kanji, `々`,
+  half-width katakana). A tag search `#cat` uses `LIKE '%#cat%'` and then the SQL function `has_tag`
+  (the Python `tags_in` rule, given to SQLite), so `#cat` does not find `#catalog`, and the 50-post
+  limit counts only real matches.
+- **Japanese works** because `LIKE` looks for characters, not words: `東京` is found inside
+  `東京は雨です`. A Japanese full-width space splits words. It is exact otherwise: full-width `ＡＢＣ`
+  is not `ABC`, and hiragana is not katakana.
+- **Every list goes through `select_posts`**, so `visible_to` applies to search too. Searching only
+  reads: it never adds a user or changes a row.
+- **The address says the search:** `/?q=%23cat`. The browser's Back and Forward work, and a link to
+  a search opens with the search done. `links-and-tags` will make each `#tag` a link to that address,
+  and call `searchFor("#cat")` on a click.
+- **Results do not update by themselves**, and their hearts are greyed out ("Open the timeline to
+  like"): a heart is kept up to date only on the live timeline. Searches are not printed in the
+  server's terminal, because what a person searched for is their own business.
 
 ## 8. Build or borrow
 

@@ -20,6 +20,7 @@ import threading
 import unittest
 from unittest import mock
 import urllib.error
+import urllib.parse
 import urllib.request
 from datetime import datetime, timedelta, timezone
 from unittest import mock
@@ -1204,6 +1205,121 @@ class ModelTests(unittest.TestCase):
                                    "AND name = 'attempts_by_key'"), [("attempts_by_key",)])
         server.save_post(self.db_path, aiko, "still works")
 
+    # -- search --
+    # Posts are added straight with insert_post here, so 51 posts do not meet
+    # the rate limit, and every post gets the same fixed time.
+
+    def posts_saying(self, *texts):
+        """Add one post for each text, by one person, oldest first. Return their ids."""
+        found = self.rows("SELECT id FROM users WHERE name = 'searcher'")
+        author = found[0][0] if found else self.person("searcher")
+        connection = server.connect(self.db_path)
+        ids = [server.insert_post(connection, author, text,
+                                  posted_at=server.utc_text(SOME_MOMENT))
+               for text in texts]
+        connection.commit()
+        connection.close()
+        return ids
+
+    def found(self, query):
+        """The texts a search finds, in the order it gives them."""
+        rows, more = server.search_posts(self.db_path, query)
+        return [row["text"] for row in rows]
+
+    def test_a_word_is_found_and_capitals_do_not_matter(self):
+        self.posts_saying("the library is open", "no match here")
+        self.assertEqual(self.found("Library"), ["the library is open"])
+        self.assertEqual(self.found("LIBRARY"), ["the library is open"])
+
+    def test_search_results_are_newest_first(self):
+        self.posts_saying("cat one", "cat two", "cat three")
+        self.assertEqual(self.found("cat"), ["cat three", "cat two", "cat one"])
+
+    def test_percent_underscore_and_backslash_mean_themselves(self):
+        self.posts_saying("100% sure", "100 sure", "a_b", "axb", "back\\slash", "backslash")
+        self.assertEqual(self.found("100%"), ["100% sure"])
+        self.assertEqual(self.found("a_b"), ["a_b"])
+        self.assertEqual(self.found("k\\s"), ["back\\slash"])
+        self.assertEqual(server.escape_like("1\\0%_"), "1\\\\0\\%\\_")
+
+    def test_every_word_must_appear_in_any_order(self):
+        self.posts_saying("the library is open late tonight", "the library is closed",
+                          "late again")
+        self.assertEqual(self.found("late library"), ["the library is open late tonight"])
+
+    def test_a_bad_search_is_refused_with_its_own_sentence(self):
+        for query, words in (("", "Type a word to search for."),
+                             ("   ", "Type a word to search for."),
+                             (None, "Type a word to search for."),
+                             ("x" * (server.MAX_QUERY + 1),
+                              f"A search must be {server.MAX_QUERY} characters or fewer."),
+                             ("a b c d e f",
+                              f"A search may have at most {server.MAX_QUERY_WORDS} words.")):
+            with self.subTest(query=query):
+                with self.assertRaises(server.RuleBroken) as caught:
+                    server.search_posts(self.db_path, query)
+                self.assertEqual(str(caught.exception), words)
+        # At the limits is fine.
+        self.assertEqual(self.found("x" * server.MAX_QUERY), [])
+        self.assertEqual(self.found("a b c d e"), [])
+
+    def test_a_tag_finds_only_that_whole_tag(self):
+        self.posts_saying("I love my #cat", "#Cat again", "a #catalog", "a cat", "#cat_food")
+        self.assertEqual(self.found("#cat"), ["#Cat again", "I love my #cat"])
+        self.assertEqual(self.found("#CAT"), ["#Cat again", "I love my #cat"])
+        # A lone # is an ordinary word.
+        self.assertEqual(len(self.found("#")), 4)
+
+    def test_tags_in_gives_small_letters_without_the_hash(self):
+        self.assertEqual(server.tags_in("#Cat and #東京 は雨, #カレー! #cat"),
+                         {"cat", "東京", "カレー"})
+        self.assertEqual(server.tags_in("#東京は雨"), {"東京は雨"})
+        self.assertEqual(server.tags_in("no tags # here"), set())
+
+    def test_japanese_words_and_tags_are_found(self):
+        self.posts_saying("東京は雨です", "#東京 は雨", "大阪は晴れ")
+        self.assertEqual(self.found("東京"), ["#東京 は雨", "東京は雨です"])
+        self.assertEqual(self.found("#東京"), ["#東京 は雨"])
+        # A Japanese full-width space splits words too.
+        self.assertEqual(self.found("東京\u3000雨"), ["#東京 は雨", "東京は雨です"])
+
+    def test_at_most_the_limit_and_more_says_so(self):
+        self.posts_saying(*["cat " + str(number) for number in range(server.SEARCH_LIMIT)])
+        rows, more = server.search_posts(self.db_path, "cat")
+        self.assertEqual((len(rows), more), (server.SEARCH_LIMIT, False))
+        self.posts_saying("cat newest")
+        rows, more = server.search_posts(self.db_path, "cat")
+        self.assertEqual((len(rows), more), (server.SEARCH_LIMIT, True))
+        self.assertEqual(rows[0]["text"], "cat newest")
+
+    def test_the_tag_rule_is_inside_the_limit(self):
+        # Many #catalog posts that LIKE finds but the tag rule refuses must not
+        # use up the limit: the one real #cat post is still found.
+        self.posts_saying("#cat first")
+        self.posts_saying(*["#catalog " + str(number)
+                            for number in range(server.SEARCH_LIMIT + 5)])
+        rows, more = server.search_posts(self.db_path, "#cat")
+        self.assertEqual(([row["text"] for row in rows], more), (["#cat first"], False))
+
+    def test_searching_changes_no_row(self):
+        aiko = self.person("aiko")
+        post = self.post_by(aiko, "cat")
+        self.like(aiko, post)
+        before = all_values_in(self.db_path)
+        counts = self.counts_of_every_table()
+        for query in ("cat", "#cat", "nothing", "a_b%"):
+            server.search_posts(self.db_path, query)
+            server.search_posts(self.db_path, query, viewer_id=aiko)
+        self.assertEqual(self.counts_of_every_table(), counts)
+        self.assertEqual(all_values_in(self.db_path), before)
+
+    def test_search_answer_has_posts_and_more(self):
+        self.posts_saying("cat")
+        rows, more = server.search_posts(self.db_path, "cat")
+        answer = server.search_to_json(rows, more)
+        self.assertEqual(set(answer), {"posts", "more"})
+        self.assertEqual(answer["posts"], server.posts_to_json(rows))
+
 
 class RealServerTest(unittest.TestCase):
 
@@ -1458,6 +1574,40 @@ class RealServerTest(unittest.TestCase):
             self.send("/posts", {"text": f"post {number}"}).close()
         self.window = urllib.request.build_opener()   # a window with no cookie
         self.assertEqual(self.refused("/posts", {"text": "hello"})[0], 401)
+
+    # -- search --
+
+    def test_anyone_can_search_without_a_cookie(self):
+        self.sign_up().close()
+        self.send("/posts", {"text": "my #cat is asleep"}).close()
+        self.send("/posts", {"text": "a catalog came"}).close()
+        self.window = urllib.request.build_opener()   # a window with no cookie
+        answer = self.get("/search?q=cat")
+        self.assertEqual(set(answer), {"posts", "more"})
+        self.assertEqual([post["text"] for post in answer["posts"]],
+                         ["a catalog came", "my #cat is asleep"])
+        self.assertFalse(answer["more"])
+        # The # written as %23, as the page does with encodeURIComponent.
+        answer = self.get("/search?q=%23cat")
+        self.assertEqual([post["text"] for post in answer["posts"]], ["my #cat is asleep"])
+        self.assertEqual(set(answer["posts"][0]), set(server.post_to_json(
+            {key: None for key in ("id", "author", "display_name", "text", "posted_at",
+                                   "old_clock_time", "like_count")})))
+
+    def test_a_search_with_no_words_gets_400_and_a_reason(self):
+        for path in ("/search", "/search?q=", "/search?q=%20%20",
+                     "/search?q=a+b+c+d+e+f"):
+            with self.subTest(path=path):
+                with self.assertRaises(urllib.error.HTTPError) as caught:
+                    self.get(path)
+                self.assertEqual(caught.exception.code, 400)
+                self.assertTrue(json.loads(caught.exception.read())["error"])
+                caught.exception.close()
+
+    def test_a_search_is_not_printed_in_the_terminal(self):
+        with mock.patch("http.server.BaseHTTPRequestHandler.log_message") as printed:
+            self.get("/search?q=secret")
+        printed.assert_not_called()
 
 
 class JourneyTest(unittest.TestCase):
@@ -1857,6 +2007,67 @@ class JourneyTest(unittest.TestCase):
         for value in all_values_in(self.db_path):
             self.assertNotIn(PASSWORD, value)
 
+    # -- search --
+
+    def page_searches(self, window, query):
+        """runSearch: GET /search?q=<the search, written with encodeURIComponent>"""
+        url = self.base + "/search?q=" + urllib.parse.quote(query, safe="")
+        with window.open(url) as answer:
+            return answer.status, json.loads(answer.read())
+
+    def ids_sql_finds(self, *likes):
+        """The post ids whose text is LIKE every pattern, newest first, read from the file."""
+        where = " AND ".join("text LIKE ?" for _ in likes)
+        connection = server.connect(self.db_path)
+        ids = [row[0] for row in connection.execute(
+            "SELECT id FROM posts WHERE " + where + " ORDER BY id DESC", likes)]
+        connection.close()
+        return ids
+
+    def test_the_whole_journey_of_a_search(self):
+        use_fake_clock(self)
+        aiko = self.open_window()
+        ben = self.open_window()
+        stranger = self.open_window()   # never signs up
+
+        # 1. Two people sign up and post: one tag, and one word that only starts the same.
+        self.page_signs_up(aiko, "aiko", "Aiko Tanaka")
+        self.page_signs_up(ben, "ben", "Ben")
+        status, cat_post = self.page_posts(aiko, "My #cat sleeps all day")
+        self.assertEqual(status, 201)
+        status, catalog_post = self.page_posts(ben, "The new catalog came")
+        self.assertEqual(status, 201)
+        self.page_presses_heart(ben, cat_post["id"], already_liked=False)
+        tables_before = all_values_in(self.db_path)
+
+        # 2. Someone who is not logged in searches for the tag: only Aiko's post.
+        status, answer = self.page_searches(stranger, "#cat")
+        self.assertEqual(status, 200)
+        self.assertEqual([post["id"] for post in answer["posts"]], [cat_post["id"]])
+        self.assertEqual(answer["posts"][0]["like_count"], 1)
+        self.assertEqual(answer["posts"][0]["author"], "aiko")
+        self.assertFalse(answer["more"])
+        # SQL on the file agrees: #cat is in only that post.
+        self.assertEqual(self.ids_sql_finds("%#cat%"), [cat_post["id"]])
+
+        # 3. The word "cat" finds both, newest first, as SQL does.
+        status, answer = self.page_searches(aiko, "cat")
+        self.assertEqual([post["id"] for post in answer["posts"]], self.ids_sql_finds("%cat%"))
+        self.assertEqual(len(answer["posts"]), 2)
+
+        # 4. Two words: both must appear.
+        status, answer = self.page_searches(ben, "day sleeps")
+        self.assertEqual([post["id"] for post in answer["posts"]],
+                         self.ids_sql_finds("%day%", "%sleeps%"))
+        self.assertEqual([post["id"] for post in answer["posts"]], [cat_post["id"]])
+
+        # 5. An empty search is refused, with the reason the page shows.
+        code, reason = self.is_refused(self.page_searches, stranger, "   ")
+        self.assertEqual((code, reason), (400, "Type a word to search for."))
+
+        # 6. Searching changed nothing in the file: no user, post, like or attempt.
+        self.assertEqual(all_values_in(self.db_path), tables_before)
+
 
 class PageAndServerAgreeTest(unittest.TestCase):
     """AGENTS.md: "the page and the server must agree".
@@ -1902,7 +2113,7 @@ class PageAndServerAgreeTest(unittest.TestCase):
     def test_the_page_asks_only_for_routes_the_server_answers(self):
         asked = set(re.findall(r'fetch\("(/[a-z]*)', self.page_code))
         self.assertEqual(asked, {"/posts", "/likes", "/sessions", "/accounts",
-                                 "/likers", "/likesummary"})
+                                 "/likers", "/likesummary", "/search"})
 
     def test_the_page_names_only_the_methods_tried_below(self):
         # A GET needs no method, so the page names only the other two.
@@ -1973,7 +2184,8 @@ class PageAndServerAgreeTest(unittest.TestCase):
         self.assertEqual(re.findall(r"(?<!function )\baddMenuItem\(", self.page_code), [])
         with open(os.path.join(HERE, "index.html"), encoding="utf-8") as page_file:
             self.assertIn('<nav id="views" aria-label="Views" hidden>', page_file.read())
-        self.assertEqual(re.findall(r'\baddView\("', self.page_code), ['addView("'])
+        # The timeline is the first view; search adds the second.
+        self.assertEqual(re.findall(r'\baddView\("(\w+)"', self.page_code), ["timeline", "search"])
 
     def test_posts_with_authors_is_used_only_in_select_posts_and_post_by_id(self):
         # Read server.py as Python, and count each use of POSTS_WITH_AUTHORS by
@@ -2111,6 +2323,49 @@ class PageAndServerAgreeTest(unittest.TestCase):
                 if form is not None:
                     self.assertIn(f"holdForm({form}, answer.retry_after)", functions[name])
 
+
+    # -- search --
+
+    def test_the_server_answers_the_search_request(self):
+        self.assertNotIn(self.answer_code("GET", "/search?q=x"), (404, 501))
+
+    def test_the_page_has_the_same_tag_pattern_and_search_limits(self):
+        self.assertIn(server.TAG.pattern, self.page_code)
+        for name in ("MAX_QUERY", "MAX_QUERY_WORDS", "SEARCH_LIMIT"):
+            with self.subTest(limit=name):
+                self.assertIn(f"const {name} = {getattr(server, name)};", self.page_code)
+        with open(os.path.join(HERE, "index.html"), encoding="utf-8") as page_file:
+            self.assertIn(f'maxlength="{server.MAX_QUERY}"', page_file.read())
+
+    def test_the_page_has_search_for_for_links_and_tags(self):
+        functions = functions_in(self.page_code)
+        self.assertIn("searchFor", functions)
+        self.assertIn('fetch("/search?q=" + encodeURIComponent(query))', functions["runSearch"])
+        self.assertIn('"/?q=" + encodeURIComponent(query)', functions["searchAddress"])
+        self.assertIn("window.addEventListener(\"popstate\", searchFromAddress);", self.page_code)
+        self.assertIn("\nsearchFromAddress();\n", self.page_code)
+
+    def test_the_page_checks_the_same_search_rules(self):
+        problem = functions_in(self.page_code)["queryProblem"]
+        self.assertIn("characterCount(trimmed) > MAX_QUERY", problem)
+        self.assertIn("> MAX_QUERY_WORDS", problem)
+        for words in ("Type a word to search for.", "A search must be {max} characters or fewer.",
+                      "A search may have at most {max} words."):
+            self.assertIn(words, self.page_code)
+
+    def test_search_results_go_through_the_shared_pieces(self):
+        results = functions_in(self.page_code)["showResults"]
+        self.assertIn("makePostItem(post)", results)
+        self.assertNotIn("postParts", results)
+        self.assertIn("likeButton.disabled = true", results)
+        self.assertIn('showView("search")', results)
+        self.assertIn('resultsList.addEventListener("click", clickOnTimeline);', self.page_code)
+        self.assertNotIn("search", functions_in(self.page_code)["makePostItem"])
+
+    def test_search_reads_posts_through_select_posts(self):
+        search = re.search(r"\ndef search_posts\(.*?\n(?=\n\n)", self.server_code,
+                           re.DOTALL).group(0)
+        self.assertIn("select_posts(", search)
 
 class ColoursTest(unittest.TestCase):
     """The Colours switch (Auto, Light, Dark) and the colours themselves.

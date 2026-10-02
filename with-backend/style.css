@@ -418,3 +418,45 @@ button {
 time.post-time {
   cursor: help;
 }
+
+/* search: the search box under the title, and the results view. Only
+   with-backend/ has search, but both copies of this file stay the same. */
+#search-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+#search-form label {
+  flex-basis: 100%;
+  margin: 0;
+}
+
+#search-form input {
+  flex: 1 1 240px;
+  width: auto;
+}
+
+/* "3 posts with “cat”" and "Back to the timeline", on one line if they fit. */
+.results-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0 0 12px;
+  overflow-wrap: anywhere;
+}
+
+/* A heart in the results cannot be pressed: liking is on the timeline. */
+.like:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.like:disabled:hover {
+  border-color: var(--border);
+  color: var(--quiet);
+}

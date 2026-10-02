@@ -28,7 +28,7 @@ piece of text the browser keeps and sends back by itself), never from a name in 
 | `page-only/app.js` | Checks the rules and keeps the posts in this window's `sessionStorage`. There are no likes in this version. |
 | `with-backend/index.html` | The parts of the screen: Log in and Sign up forms when signed out; "Signed in as …", Log out and the post box when signed in; the timeline. A tiny script in `<head>` that sets the colours before the page is drawn, and the Colours switch. |
 | `with-backend/style.css` | How the screen looks. Each colour is written once for light and dark, as `light-dark(LIGHT, DARK)`. |
-| `with-backend/app.js` | Asks the server who is logged in, sends sign-ups, logins, log-outs, posts, likes and likes taken back, and asks for new posts and new like counts every second. Remembers the Colours choice in `localStorage`. It keeps a half-written post in this browser's `localStorage`, one per account, removed after posting or logging out. It shows who liked each post, and asks for the names only when a count changes. |
+| `with-backend/app.js` | Asks the server who is logged in, sends sign-ups, logins, log-outs, posts, likes and likes taken back, and asks for new posts and new like counts every second. Remembers the Colours choice in `localStorage`. It keeps a half-written post in this browser's `localStorage`, one per account, removed after posting or logging out. It shows who liked each post, and asks for the names only when a count changes. It searches posts (`GET /search`) and shows the results in their own view. |
 | `with-backend/server.py` | The backend, in three labelled parts: **controller**, **model**, **view**. |
 | `with-backend/test_server.py` | The checks for `server.py`, and for the page and the server agreeing. |
 | `with-backend/timeline.db` | The database, in four tables. The server creates it when it starts, and brings an older one up to date. It is not in git. |
@@ -47,7 +47,8 @@ The three parts of `server.py`:
   `hash_password`, `hash_token`, `create_account`, `log_in`, `user_for_session`, `log_out`,
   `start_session`, `account_for`, `save_post`, `posts_after`, `add_like`, `remove_like`,
   `like_count_for`, `likes_for`, `who_liked`, `check_post_ids`, `like_summaries`, `utc_now`,
-  `utc_text`, `use_allowance`, `forget_attempts`, `clock`, and `create_tables` with its upgrades):
+  `utc_text`, `use_allowance`, `forget_attempts`, `clock`, `check_query`, `escape_like`, `tags_in`,
+  `has_tag`, `search_posts`, and `create_tables` with its upgrades):
   the rules, and the database, in five tables:
   - `users`: each person once. `name` is the account name (unique, capitals ignored),
     `display_name` is the name shown, and `password_salt`, `password_hash`, `password_rounds` hold
@@ -70,7 +71,7 @@ The three parts of `server.py`:
   A person's popularity (likes on their own posts from other people) is counted from `likes`
   every time, never stored.
 - **View** (`post_to_json`, `posts_to_json`, `account_to_json`, `like_to_json`, `likes_to_json`,
-  `likers_to_json`, `summaries_to_json`, `session_cookie`, `post_to_log_line`): turns database rows into the JSON the page reads, the
+  `likers_to_json`, `summaries_to_json`, `search_to_json`, `session_cookie`, `post_to_log_line`): turns database rows into the JSON the page reads, the
   cookie, and the one line printed for each new post.
 
 The database knows its own version (`PRAGMA user_version`). An older `timeline.db` from before
@@ -130,6 +131,31 @@ same functions as every other feature. Use them; do not go around them.
 - A request body bigger than `MAX_REQUEST_BYTES` (4 MB) gets `413` before it is read.
 - A path the server does not know gets `404` with one sentence: "There is nothing to {method} at
   {path}."
+
+## Search
+
+`GET /search?q=…` finds every post that holds every word of the search (at most 5 words, 100
+characters), newest first, at most `SEARCH_LIMIT` (50), with `"more": true` when there were more.
+Anyone may search. Searches are never printed in the terminal.
+
+- **Model:** `search_posts` uses `LIKE '%word%'`, with `escape_like` so `%`, `_` and `\` mean
+  themselves. It reads through `select_posts`, so `visible_to` applies. A word that is a whole tag
+  (`#cat`) must be that tag: `has_tag`, a SQL function made from `tags_in`, checks it inside the
+  SQL, so the limit counts only real matches.
+- **`TAG` is the one tag rule.** It is in `server.py` and, as exactly the same text, in `app.js`
+  (a test checks they match). It covers English letters, digits, `_` and Japanese. `tags_in(text)`
+  gives the set of tags in a text, in small letters, without the `#`. Never write a second tag
+  pattern: use these.
+- **The contract for `links-and-tags`** (and any feature that wants to open a search):
+  - Call `searchFor(query)` in `app.js`, for example `searchFor("#cat")`. It puts the search in the
+    box, changes the address, asks the server, and shows the **Search results** view.
+  - The address of a search is `/?q=` + `encodeURIComponent(query)`, for example `/?q=%23cat`. A tag
+    link is `<a href="/?q=%23cat">` made with `createElement`; its click calls
+    `event.preventDefault()` and then `searchFor`. Opening the address in a new tab runs the search
+    too (`searchFromAddress`), and Back and Forward work (`popstate`).
+- **Page:** results are built with `makePostItem` into their own list, `#results-list`, never into
+  `postParts`, and shown with `showView("search")`. Their hearts are disabled: liking is done on the
+  timeline. The results list uses `clickOnTimeline` too, so other buttons in a post work there.
 
 ## Rate limits
 

@@ -1121,6 +1121,215 @@ function addView(name, words) {
   return section;
 }
 
+// ---- search: find every post with a word or a #tag ----
+//
+// The search box is at the top, for everyone, signed in or not. The results
+// are shown in their own view, "Search results", newest first, at most
+// SEARCH_LIMIT of them. They are a snapshot: they do not update by themselves,
+// while the timeline underneath keeps updating every second.
+//
+// A search has its own address, /?q=… (for example /?q=%23cat), so the
+// browser's Back and Forward buttons work, and a link to a search can be
+// opened in a new tab.
+//
+// The contract for links-and-tags: a #tag in a post is a link to
+// "/?q=" + encodeURIComponent("#" + tag). A click on it calls
+// event.preventDefault() and then searchFor("#" + tag). Which characters make
+// a tag is TAG, below; links-and-tags uses it and never makes its own.
+
+// The same rules as the model in server.py, with the same names.
+const MAX_QUERY = 100;
+const MAX_QUERY_WORDS = 5;
+const SEARCH_LIMIT = 50;
+// A tag: # and then letters, digits or _, with Japanese counted as letters.
+// Exactly the same text as TAG in server.py (a test checks this). It has no
+// "g" flag, so it keeps no state between uses; to find every tag in a text,
+// make new RegExp(TAG.source, "g").
+const TAG = /#([0-9A-Za-z_々぀-ヿ㐀-鿿ｦ-ﾟ]+)/;
+
+// The words of this feature. One sentence is one template, never joined from
+// pieces. (These move to words.js with the Japanese words table.)
+const SEARCH_WORDS = {
+  search_empty: "Type a word to search for.",
+  search_too_long: "A search must be {max} characters or fewer.",
+  search_too_many_words: "A search may have at most {max} words.",
+  results_none: "No posts with “{query}”.",
+  results_one: "{count} post with “{query}”.",
+  results_other: "{count} posts with “{query}”.",
+  results_more: "Showing the newest {count} posts with “{query}”.",
+  results_start: "Type a word or #tag in the search box above.",
+  results_view: "Search results",
+  results_heart: "Open the timeline to like",
+};
+
+// The words for this key, with each {name} replaced by values[name], in one pass.
+function searchSay(key, values) {
+  return SEARCH_WORDS[key].replace(/\{(\w+)\}/g, function (all, name) {
+    return String(values[name]);
+  });
+}
+
+const searchForm = document.getElementById("search-form");
+const searchBox = document.getElementById("search-box");
+const resultsTitle = document.getElementById("results-title");
+const resultsList = document.getElementById("results-list");
+const backToTimelineButton = document.getElementById("back-to-timeline");
+
+// The search the results now show ("" if none), and a number for each search,
+// so an older answer that arrives late never covers a newer one.
+let shownQuery = "";
+let searchNumber = 0;
+
+// The rules of check_query in server.py. Returns the broken rule, or "".
+// Words are split at spaces, a Japanese full-width space too, as Python does.
+function queryProblem(query) {
+  const trimmed = query.trim();
+  if (trimmed === "") {
+    return searchSay("search_empty", {});
+  }
+  if (characterCount(trimmed) > MAX_QUERY) {
+    return searchSay("search_too_long", { max: MAX_QUERY });
+  }
+  if (trimmed.split(/\s+/).length > MAX_QUERY_WORDS) {
+    return searchSay("search_too_many_words", { max: MAX_QUERY_WORDS });
+  }
+  return "";
+}
+
+// The address of a search: /?q=… The # of a tag must be written %23, or the
+// browser would read it as the start of a #fragment.
+function searchAddress(query) {
+  return "/?q=" + encodeURIComponent(query);
+}
+
+// Search, and show the results. THE CONTRACT for links-and-tags: call
+// searchFor("#cat") to show every post with #cat. It puts the search in the
+// box, so the person sees what was searched, and gives it its own address.
+function searchFor(query) {
+  runSearch(query, true);
+}
+
+// Do one search. `remember` is true when the address should change to this
+// search (a new entry for the Back button); false when the address already
+// says it (the page was opened at /?q=…, or Back or Forward was pressed).
+async function runSearch(query, remember) {
+  query = query.trim();
+  searchBox.value = query;
+  // A quick check on the page. The server checks the same rules again.
+  const problem = queryProblem(query);
+  if (problem !== "") {
+    showStatus(problem);
+    return;
+  }
+  if (remember) {
+    // The same search again only refreshes it; it is not a second Back step.
+    if (location.pathname + location.search === searchAddress(query)) {
+      history.replaceState(null, "", searchAddress(query));
+    } else {
+      history.pushState(null, "", searchAddress(query));
+    }
+  }
+  searchNumber = searchNumber + 1;
+  const thisSearch = searchNumber;
+  try {
+    const response = await fetch("/search?q=" + encodeURIComponent(query));
+    const answer = await response.json();
+    if (thisSearch !== searchNumber) {
+      return;   // a newer search was started while this one was asked
+    }
+    if (!response.ok) {
+      // The server refused the search. It says which rule was broken.
+      showStatus(answer.error);
+      return;
+    }
+    showStatus("");
+    showResults(query, answer);
+  } catch (error) {
+    showStatus(CANNOT_REACH);
+  }
+}
+
+// Fill the results view with the posts the server found, and show it. Each
+// post is built by makePostItem, so it looks the same as on the timeline. The
+// results are not kept in postParts: only the live timeline is kept up to date.
+function showResults(query, answer) {
+  shownQuery = query;
+  resultsList.replaceChildren();
+  for (const post of answer.posts) {
+    const parts = makePostItem(post);
+    // Liking is done on the timeline, where each heart is kept up to date.
+    parts.likeButton.disabled = true;
+    parts.likeButton.setAttribute("aria-label", searchSay("results_heart", {}));
+    parts.likeButton.setAttribute("title", searchSay("results_heart", {}));
+    resultsList.append(parts.item);
+  }
+  const values = { count: answer.posts.length, query: query };
+  let words;
+  if (answer.posts.length === 0) {
+    words = searchSay("results_none", values);
+  } else if (answer.more) {
+    words = searchSay("results_more", values);
+  } else {
+    const form = new Intl.PluralRules("en").select(answer.posts.length) === "one" ? "one" : "other";
+    words = searchSay("results_" + form, values);
+  }
+  // textContent, never innerHTML: the search is text the person typed.
+  resultsTitle.textContent = words;
+  showView("search");
+}
+
+// Back to the timeline: hide the results, empty the search box, and set the
+// address back to /. `remember` is false when the address already says /.
+function showTimeline(remember) {
+  searchBox.value = "";
+  showView("timeline");
+  if (remember && location.search !== "") {
+    history.pushState(null, "", "/");
+  }
+}
+
+// When the page opens, and when Back or Forward is pressed: do what the
+// address says. /?q=cat searches for cat; any other address shows the timeline.
+function searchFromAddress() {
+  const query = new URLSearchParams(location.search).get("q");
+  if (query !== null && query.trim() !== "") {
+    runSearch(query, false);
+  } else {
+    showTimeline(false);
+  }
+}
+
+// A view button was pressed (in <nav id="views">): keep the address in step.
+// The results view has the address of the search it shows; every other view is /.
+function viewChosen(event) {
+  const button = event.target.closest("[data-show-view]");
+  if (button === null) {
+    return;
+  }
+  if (button.dataset.showView === "search" && shownQuery !== "") {
+    if (location.pathname + location.search !== searchAddress(shownQuery)) {
+      history.pushState(null, "", searchAddress(shownQuery));
+    }
+    searchBox.value = shownQuery;
+  } else if (button.dataset.showView !== "search") {
+    showTimeline(true);
+    showView(button.dataset.showView);
+  }
+}
+
+// The search form was sent.
+function searchSubmitted(event) {
+  event.preventDefault();
+  searchFor(searchBox.value);
+}
+
+// Escape in the search box goes back to the timeline, when results are shown.
+function searchBoxKey(event) {
+  if (event.key === "Escape" && location.search !== "") {
+    showTimeline(true);
+  }
+}
+
 textBox.addEventListener("input", updateCount);
 textBox.addEventListener("input", saveDraft);
 timeline.addEventListener("click", clickOnTimeline);
@@ -1132,6 +1341,19 @@ themeSwitch.value = savedTheme();
 themeSwitch.addEventListener("change", chooseTheme);
 addView("timeline", "Timeline");
 showView("timeline");
+// search: its own view, and its own listeners. The results list uses the
+// same click handler as the timeline, so who-liked and Show more work there.
+addView("search", searchSay("results_view", {}));
+resultsTitle.textContent = searchSay("results_start", {});
+resultsList.addEventListener("click", clickOnTimeline);
+searchForm.addEventListener("submit", searchSubmitted);
+searchBox.addEventListener("keydown", searchBoxKey);
+backToTimelineButton.addEventListener("click", function () {
+  showTimeline(true);
+});
+viewsNav.addEventListener("click", viewChosen);
+window.addEventListener("popstate", searchFromAddress);
+searchFromAddress();
 updateCount();
 askWhoIAm();
 keepChecking();

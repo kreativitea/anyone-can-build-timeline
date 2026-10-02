@@ -138,6 +138,8 @@ signing up, posting, liking and unliking, with the database file opened and read
    **Show more** under them. Press it, then **Show less**. Make the window narrow, and see a
    shorter post fold too. Press Tab to reach the button with the keyboard. Type an emoji 😀: the
    count goes up by one, as on the server.
+6. **Try a search.** Post `#cat`, then search for `#cat`: a post with `#catalog` is not found.
+   Search for `100%`, or a Japanese word such as `東京`. Press the browser's Back button.
 
 Each feature changes a different set of parts.
 
