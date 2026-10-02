@@ -2,32 +2,35 @@
    This file is the same in page-only/ and with-backend/, so both versions look the same.
    The type is large because the page is read from the back of a room. */
 
-/* The colours, in one place. Dark is the default. */
+/* The colours, in one place. Each colour is written once, as
+   light-dark(LIGHT, DARK). The browser uses the first one when the page is in
+   light mode and the second one in dark mode.
+   "light dark" means: follow the computer. That is the Auto choice, and it is
+   what page-only/ always uses, because it has no switch.
+   A new colour must be written the same way; a test in test_server.py checks it. */
 :root {
-  --background: #002b36;
-  --card: #073642;
-  --text: #eee8d5;
-  --quiet: #a7b5b5;
-  --author: #e6b422;
-  --button: #1d6fa8;
-  --button-text: #ffffff;
-  --warning: #ff8a7a;
-  --border: #586e75;
+  color-scheme: light dark;
+  --background: light-dark(#fdf6e3, #002b36);
+  --card: light-dark(#ffffff, #073642);
+  --text: light-dark(#002b36, #eee8d5);
+  --quiet: light-dark(#4f5f63, #a7b5b5);
+  --author: light-dark(#7a5a00, #e6b422);
+  --button: light-dark(#1d6fa8, #1d6fa8);
+  --button-text: light-dark(#ffffff, #ffffff);
+  --warning: light-dark(#b3261e, #ff8a7a);
+  /* The edge of a box or a button: at least 3 to 1 against the background and
+     the cards, so the edge can be seen. */
+  --border: light-dark(#748384, #748a90);
 }
 
-/* The same colours for a computer set to light mode. */
-@media (prefers-color-scheme: light) {
-  :root {
-    --background: #fdf6e3;
-    --card: #ffffff;
-    --text: #002b36;
-    --quiet: #4f5f63;
-    --author: #7a5a00;
-    --button: #1d6fa8;
-    --button-text: #ffffff;
-    --warning: #b3261e;
-    --border: #93a1a1;
-  }
+/* Light or Dark chosen by hand with the Colours switch (with-backend/ only).
+   Each one only changes color-scheme; the colours above follow by themselves. */
+:root[data-theme="light"] {
+  color-scheme: light;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
 }
 
 * {
@@ -251,4 +254,32 @@ button {
 
 .like-count {
   color: var(--quiet);
+}
+
+/* dark-mode: the Colours switch under the title. Only with-backend/ has it,
+   but both copies of this file stay the same. */
+.theme-row {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  margin: -8px 0 16px;
+}
+
+.theme-row label {
+  margin: 0;
+}
+
+.theme-row select {
+  padding: 6px 12px;
+  border: 2px solid var(--border);
+  border-radius: 10px;
+  background: var(--card);
+  color: var(--text);
+  font: inherit;
+}
+
+.theme-row select:focus {
+  outline: 3px solid var(--author);
+  outline-offset: 2px;
 }

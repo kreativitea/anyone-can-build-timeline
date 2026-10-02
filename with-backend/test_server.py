@@ -572,6 +572,12 @@ class RealServerTest(unittest.TestCase):
                                                   "password": "not the password"})
         self.assertEqual((code, reason), (401, server.WRONG_LOGIN))
 
+    def test_the_served_page_has_the_colours_switch(self):
+        with self.window.open(self.base + "/") as answer:
+            page = answer.read().decode("utf-8")
+        self.assertIn('id="theme"', page)
+        self.assertIn('localStorage.getItem("timeline-theme")', page)
+
 
 class JourneyTest(unittest.TestCase):
     """One whole journey, through all three levels at once.
@@ -868,6 +874,106 @@ class PageAndServerAgreeTest(unittest.TestCase):
         with open(os.path.join(HERE, "style.css"), "rb") as one:
             with open(os.path.join(HERE, "..", "page-only", "style.css"), "rb") as other:
                 self.assertEqual(one.read(), other.read())
+
+
+
+class ColoursTest(unittest.TestCase):
+    """The Colours switch (Auto, Light, Dark) and the colours themselves.
+
+    The switch lives only in the browser: it never talks to the server. So these
+    tests read style.css, index.html and app.js as text, and check the things
+    that would break quietly, without anyone seeing an error.
+    """
+
+    def read(self, *path):
+        with open(os.path.join(HERE, *path), encoding="utf-8") as file:
+            return file.read()
+
+    def setUp(self):
+        self.css = self.read("style.css")
+        self.html = self.read("index.html")
+        self.page_code = self.read("app.js")
+        # The first :root { ... } block: the colours, in one place.
+        self.root_block = re.search(r":root \{(.*?)\}", self.css, re.DOTALL).group(1)
+        # Every colour, as {name: (light, dark)}.
+        self.colours = {
+            name: (light, dark) for name, light, dark in re.findall(
+                r"--([\w-]+): light-dark\((#[0-9a-f]{6}), (#[0-9a-f]{6})\);", self.root_block)
+        }
+
+    # The WCAG contrast ratio: how different two colours look, from 1 (the
+    # same) to 21 (black on white). 4.5 is the rule for normal text, and 3 for
+    # the edge of a box or a button.
+    def brightness(self, colour):
+        def channel(part):
+            value = int(colour[part:part + 2], 16) / 255
+            if value <= 0.03928:
+                return value / 12.92
+            return ((value + 0.055) / 1.055) ** 2.4
+        return 0.2126 * channel(1) + 0.7152 * channel(3) + 0.0722 * channel(5)
+
+    def contrast(self, one, other):
+        lighter, darker = sorted([self.brightness(one), self.brightness(other)], reverse=True)
+        return (lighter + 0.05) / (darker + 0.05)
+
+    def check_contrast(self, pairs, at_least):
+        for mode, which in (("light", 0), ("dark", 1)):
+            for front, back in pairs:
+                with self.subTest(mode=mode, front=front, back=back):
+                    ratio = self.contrast(self.colours[front][which], self.colours[back][which])
+                    self.assertGreaterEqual(ratio, at_least)
+
+    def test_every_colour_has_a_light_and_a_dark_value(self):
+        names = re.findall(r"--([\w-]+):", self.root_block)
+        self.assertGreater(len(names), 0)
+        # A colour written any other way (one value only, or a typo) is not in
+        # self.colours, so this fails and names it.
+        self.assertEqual(sorted(names), sorted(self.colours))
+
+    def test_every_colour_used_is_defined(self):
+        for name in set(re.findall(r"var\(--([\w-]+)\)", self.css)):
+            with self.subTest(colour=name):
+                self.assertIn(name, self.colours)
+
+    def test_text_is_easy_to_read_in_both_modes(self):
+        pairs = [(front, back) for front in ("text", "quiet", "author", "warning")
+                 for back in ("background", "card")]
+        pairs.append(("button-text", "button"))
+        self.check_contrast(pairs, 4.5)
+
+    def test_the_edges_of_boxes_can_be_seen_in_both_modes(self):
+        self.check_contrast([("border", "background"), ("border", "card")], 3)
+
+    def test_there_are_exactly_three_choices(self):
+        self.assertEqual(re.findall(r'<option value="(\w+)">', self.html),
+                         ["auto", "light", "dark"])
+        self.assertIn(':root[data-theme="light"]', self.css)
+        self.assertIn(':root[data-theme="dark"]', self.css)
+
+    def test_the_choice_is_used_before_the_page_is_drawn(self):
+        head = self.html[:self.html.index("</head>")]
+        script = head.index("<script>")
+        self.assertLess(script, head.index('<link rel="stylesheet"'))
+        script_code = head[script:head.index("</script>")]
+        self.assertIn("localStorage.getItem", script_code)
+        self.assertIn("try {", script_code)
+        self.assertIn("catch (error)", script_code)
+
+    def test_the_head_script_and_app_js_agree(self):
+        self.assertIn('localStorage.getItem("timeline-theme")', self.html)
+        self.assertIn('const THEME_KEY = "timeline-theme";', self.page_code)
+        for code in (self.html, self.page_code):
+            self.assertIn('theme === "light" || theme === "dark"', code)
+
+    def test_the_switch_has_a_label(self):
+        self.assertIn('<label for="theme">', self.html)
+        self.assertIn('<select id="theme">', self.html)
+
+    def test_page_only_follows_the_computer(self):
+        page_only = self.read("..", "page-only", "index.html")
+        self.assertNotIn("data-theme", page_only)
+        self.assertNotIn("localStorage", page_only)
+        self.assertIn("color-scheme: light dark;", self.root_block)
 
 
 if __name__ == "__main__":

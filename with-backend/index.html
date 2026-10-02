@@ -4,11 +4,34 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Timeline</title>
+  <script>
+    // Before the page is drawn: use the colours chosen in this browser, if any.
+    // The same key and the same two values as savedTheme() in app.js.
+    try {
+      var theme = localStorage.getItem("timeline-theme");
+      if (theme === "light" || theme === "dark") {
+        document.documentElement.dataset.theme = theme;
+      }
+    } catch (error) {
+      // Storage can be blocked (some private windows). Then follow the computer.
+    }
+  </script>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <main>
     <h1>Timeline</h1>
+
+    <!-- The Colours switch. Auto follows the computer. The choice is kept in
+         this browser only (localStorage), and never goes to the server. -->
+    <div class="theme-row">
+      <label for="theme">Colours</label>
+      <select id="theme">
+        <option value="auto">Auto (follow this computer)</option>
+        <option value="light">Light</option>
+        <option value="dark">Dark</option>
+      </select>
+    </div>
 
     <!-- Shown when nobody is logged in in this window. Both start hidden: the
          page asks the server who is logged in, then shows one of the two. -->

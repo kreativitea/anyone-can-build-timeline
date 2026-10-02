@@ -136,5 +136,11 @@ section 5 of `DESIGN.md` for the two parts that matter most — the three places
 the same post twice, and why only the last of them is a guarantee; and why taking a like back
 deletes a row instead of marking one.
 
+**Colours that stay.** Choose *Dark* in the Colours switch under the title, then reload the page,
+or close the tab and open it again: it is still dark. Now open the browser's developer tools, find
+*Local Storage* for this address, and see the key `timeline-theme`. Delete it and reload: the page
+goes back to *Auto* and follows the computer. `localStorage` stays after the tab closes; the
+`sessionStorage` that `page-only/` uses for its posts lasts only as long as one window.
+
 Keep the three parts of `server.py` separate. A new rule goes in the model. `make test` must pass
 when you finish.

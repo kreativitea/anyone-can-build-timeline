@@ -43,6 +43,12 @@ When the page opens, it asks the server who is logged in, then shows one of the 
 server answers *401* (nobody is logged in), the page shows the signed-out view and the server's
 reason, and empties the post box.
 
+A **Colours** switch sits just under the title, for everyone, signed in or not. It has three
+choices: *Auto* follows the computer's light or dark setting, *Light* and *Dark* stay the same
+whatever the computer says. The choice is remembered in this browser (`localStorage`), not on the
+server, so another browser or device has its own choice. A tiny script in `<head>` uses the saved
+choice before the page is drawn, so the page never flashes the wrong colours.
+
 `page-only/` is a demo with its own simpler screen: two name boxes, the post box and the timeline,
 with no login and no hearts.
 

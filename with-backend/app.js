@@ -41,6 +41,11 @@ const statusLine = document.getElementById("status");
 const timeline = document.getElementById("timeline");
 const postForm = document.getElementById("post-form");
 
+// The key for the Colours choice in localStorage. The same key as the small
+// script in index.html, which uses it before the page is drawn.
+const THEME_KEY = "timeline-theme";
+const themeSwitch = document.getElementById("theme");
+
 // The id of the newest post this window has shown. 0 means "none yet".
 let lastId = 0;
 
@@ -410,6 +415,45 @@ async function pressHeart(postId) {
   }
 }
 
+// The Colours choice saved in this browser: "light", "dark", or "auto" when
+// there is none (or storage is blocked, or it holds something else).
+function savedTheme() {
+  try {
+    const theme = localStorage.getItem(THEME_KEY);
+    if (theme === "light" || theme === "dark") {
+      return theme;
+    }
+  } catch (error) {
+    // Storage is blocked: nothing was saved.
+  }
+  return "auto";
+}
+
+// Tell the CSS which colours to use. Auto is no data-theme at all.
+function useTheme(theme) {
+  if (theme === "light" || theme === "dark") {
+    document.documentElement.dataset.theme = theme;
+  } else {
+    delete document.documentElement.dataset.theme;
+  }
+}
+
+// The Colours switch changed: use the new colours now, and remember them.
+function chooseTheme() {
+  const theme = themeSwitch.value;
+  useTheme(theme);
+  try {
+    if (theme === "light" || theme === "dark") {
+      localStorage.setItem(THEME_KEY, theme);
+    } else {
+      localStorage.removeItem(THEME_KEY);
+    }
+  } catch (error) {
+    // Storage is blocked: the colours still change in this tab, but are not
+    // remembered. Nothing to tell the person; it is not their mistake.
+  }
+}
+
 // One handler for the whole timeline, so a post added later works too.
 function clickOnTimeline(event) {
   const button = event.target.closest(".like");
@@ -424,5 +468,7 @@ postForm.addEventListener("submit", sendPost);
 loginForm.addEventListener("submit", logIn);
 signupForm.addEventListener("submit", signUp);
 logoutButton.addEventListener("click", logOut);
+themeSwitch.value = savedTheme();
+themeSwitch.addEventListener("change", chooseTheme);
 askWhoIAm();
 keepChecking();

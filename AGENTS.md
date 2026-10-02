@@ -26,13 +26,16 @@ piece of text the browser keeps and sends back by itself), never from a name in 
 | `page-only/index.html` | The demo screen: two name boxes, post box, Post button, timeline. No login. |
 | `page-only/style.css` | An exact copy of `with-backend/style.css`. Change that one, then copy it here. |
 | `page-only/app.js` | Checks the rules and keeps the posts in this window's `sessionStorage`. There are no likes in this version. |
-| `with-backend/index.html` | The parts of the screen: Log in and Sign up forms when signed out; "Signed in as …", Log out and the post box when signed in; the timeline. |
-| `with-backend/style.css` | How the screen looks. |
-| `with-backend/app.js` | Asks the server who is logged in, sends sign-ups, logins, log-outs, posts, likes and likes taken back, and asks for new posts and new like counts every second. |
+| `with-backend/index.html` | The parts of the screen: Log in and Sign up forms when signed out; "Signed in as …", Log out and the post box when signed in; the timeline. A tiny script in `<head>` that sets the colours before the page is drawn, and the Colours switch. |
+| `with-backend/style.css` | How the screen looks. Each colour is written once for light and dark, as `light-dark(LIGHT, DARK)`. |
+| `with-backend/app.js` | Asks the server who is logged in, sends sign-ups, logins, log-outs, posts, likes and likes taken back, and asks for new posts and new like counts every second. Remembers the Colours choice in `localStorage`. |
 | `with-backend/server.py` | The backend, in three labelled parts: **controller**, **model**, **view**. |
 | `with-backend/test_server.py` | The checks for `server.py`, and for the page and the server agreeing. |
 | `with-backend/timeline.db` | The database, in four tables. The server creates it when it starts, and brings an older one up to date. It is not in git. |
 | `Makefile` | Short commands: `make run`, `make test`, `make reset`, `make worktree BRANCH=name`. |
+
+The Colours choice (Auto, Light or Dark) is the only thing the page keeps in `localStorage`
+(storage in the browser that stays after the tab closes). It never goes to the server.
 
 The three parts of `server.py`:
 
