@@ -73,6 +73,7 @@ Several branches are built at the same time, and they all touch the same few fil
 | `long-posts` | Posts up to 500 characters |
 | `place` | Where a post was written |
 | `japanese` | The app in Japanese as well as English |
+| `classic-style` | The look of classic (2009–2014) Twitter, in our own colours: one card, letter circles, names in blue |
 
 Already done, so no plan: the live character count, refusing empty or too-long posts, and unique
 account names (part of `accounts`).
