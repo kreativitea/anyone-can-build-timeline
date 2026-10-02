@@ -552,4 +552,45 @@ const WORDS = {
   deleted_post: {
     en: "This post was deleted",
   },
+  // report: refusals, the same codes and English as PROBLEMS in server.py
+  report_own_post: {
+    en: "You cannot report your own post.",
+  },
+  report_too_early: {
+    en: "You can report a post only after you have posted something before it.",
+  },
+  report_already: {
+    en: "You have already reported that post.",
+  },
+  report_not_there: {
+    en: "You have not reported that post.",
+  },
+  report_reason_not_text: {
+    en: "The reason must be text.",
+  },
+  report_reason_too_long: {
+    en: "The reason must be {limit} characters or fewer.",
+  },
+  // report: the words of the page
+  report_menu: {
+    en: "Report",
+  },
+  report_take_back_menu: {
+    en: "Take back my report",
+  },
+  report_ask_reason: {
+    en: "Why are you reporting this post? (optional)",
+  },
+  report_log_in: {
+    en: "Please log in to report a post.",
+  },
+  report_sent: {
+    en: "Thank you. Your report was sent.",
+  },
+  report_taken_back: {
+    en: "Your report was taken back.",
+  },
+  report_hidden_note: {
+    en: "Hidden from others: several people reported it.",
+  },
 };

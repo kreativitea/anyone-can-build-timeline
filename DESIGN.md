@@ -331,6 +331,12 @@ and that the page has the model's limits and patterns.
 | Blocking could just hide the posts in the page. | security | reject | The posts would still be sent to the browser, and anyone can read what their browser receives. | The server leaves them out, inside `visible_to`. |
 | Blocking should also hide your posts from the blocked person. | product | reject | Reading is open to everyone: the blocked person can log out, or open a private window, and read them at once. It would only look like protection. | They cannot like (or reply to) your posts; that the server can really stop. |
 | Filter tags in Python after the SQL. | design | reject | Then 50 `#catalog` posts would use up the limit and hide a real `#cat`. | The tag rule is a SQL function, so the `LIMIT` counts only real matches. |
+| Keep a `hidden` flag on `posts`, set at the third report. | design | reject | It would stay set if a report were taken back or the limit raised. Two copies of one fact. | Hidden is counted from `reports` every time. |
+| Accounts are free, so one person can make three and hide anyone's post. | security | accept, in part | The cheapest attack should not work. | Only someone who posted before the post may report it. Planning ahead still works; real identity is out of scope. |
+| Two reports at once could both see "two reports" and both miss that the post is now hidden. | design | accept | The server is threaded. | `add_report` and `remove_report` use `BEGIN IMMEDIATE`, so the count before and after cannot change in between. |
+| Ask `GET /reports` every second, so open windows hide a post at once. | design | reject | The changes feed already carries "this post changed" to every window. | A "hidden" or "shown" change, only when a post crosses the limit. |
+| Show the number of reports, so people know a post is close to being hidden. | product | reject | "One more and it is gone" invites the last report. | Nothing; only hidden or not. |
+| The author could un-hide a post by editing one letter. | design | reject | Reports belong to the post's id. | Editing keeps the reports. |
 
 ## Groundwork
 
@@ -653,6 +659,45 @@ Where each rule is kept:
 | A deleted post cannot be answered | no Reply button | `check_reply_parent` (`reply_to_deleted`) | — |
 | A post with replies is not removed | — | `has_replies` | `parent_id REFERENCES posts(id)` refuses it |
 | A change is recorded only if it happened | — | `record_change` in the same transaction | — |
+
+## Reports
+
+- **Report is in the "⋯" menu** of other people's posts, for someone logged in. The page asks for
+  an optional reason with the browser's own `prompt()` box (Cancel sends nothing; an empty answer
+  means no reason). Pressing it again ("Take back my report") deletes the report.
+- **A table, `reports (post_id, user_id, reason)`** (database version 11). When its post is
+  deleted its rows go too (`ON DELETE CASCADE`, and `forget_post_details` for a post kept for its
+  replies).
+- **Hidden is counted, never stored.** A post with `HIDE_AFTER_REPORTS` (3) reports or more is left
+  out of every list of posts by `not_hidden_sql`, one line in `visible_to`, beside block's. So the
+  timeline, search, bookmarks, pictures and reply counts all obey it. Its author still sees it,
+  faded, with "Hidden from others: several people reported it." (`hidden_by_reports`, worked out
+  in `POSTS_WITH_AUTHORS`; only the author is ever sent a hidden post). Taking a report back shows
+  the post again with no extra code, and changing the number applies to every post at once.
+- **Who may report.** Not the author, and only someone who had posted before the post (they have
+  a post with a smaller id). This stops the cheapest attack: make three new accounts now and hide a
+  post that is on the timeline now. Someone who plans ahead (makes accounts, posts with each, then
+  waits) can still do it; nothing short of real identity stops that.
+- **No count and no names are shown.** `GET /reports` gives three lists of ids: posts hidden from
+  you, your own hidden posts, and the posts you reported. A count would say "one more and it is
+  gone"; names would invite revenge. The reason is read only by the person running the server.
+- **How open windows hear about it.** When a report, or a report taken back, moves a post across
+  the limit (2 → 3 or 3 → 2, and only then), the model records a "hidden" or "shown" change in the
+  changes feed. Each window gets the post as it would see it now: `null` for everyone but the
+  author, who keeps it. The page asks `GET /reports` only when it opens, after a login or log-out,
+  and after a press, never every second.
+- **Un-hiding.** There are no admins. The person running the server clears a post's reports with
+  one line: `sqlite3 with-backend/timeline.db 'delete from reports where post_id = 12'`.
+
+Where each rule is kept:
+
+| Rule | Page | Model | Database |
+|---|---|---|---|
+| One report per person per post | "Take back my report" once reported | `add_report` (`report_already`) | `PRIMARY KEY (post_id, user_id)` |
+| Not your own post | no Report item on your own posts | `check_report_rules` (`report_own_post`) | cannot: it does not know who asks |
+| Only after posting before it | — (the page may not have every older post) | `check_report_rules` (`report_too_early`) | — |
+| A reason is 200 characters at most | `MAX_REASON` | `check_reason` | `CHECK (length(reason) <= 200)` |
+| Three reports hide a post, except from its author | — | `not_hidden_sql` in `visible_to` | counted, never stored |
 
 ## 8. Build or borrow
 

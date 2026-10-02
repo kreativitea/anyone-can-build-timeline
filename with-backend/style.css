@@ -681,3 +681,19 @@ time.post-time {
 .versions .post-time {
   margin-left: 0;
 }
+
+/* report */
+/* The author's own post that several people reported: faded, with a note
+   above the text. Nobody else is sent the post at all. */
+.hidden-by-reports .post-text,
+.hidden-by-reports .post-author,
+.hidden-by-reports .post-handle,
+.hidden-by-reports .post-time {
+  opacity: 0.6;
+}
+
+.hidden-note {
+  margin: 6px 0 0;
+  color: var(--warning);
+  font-size: 18px;
+}

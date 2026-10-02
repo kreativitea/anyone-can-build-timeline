@@ -32,7 +32,7 @@ piece of text the browser keeps and sends back by itself), never from a name in 
 | `with-backend/server.py` | The backend, in three labelled parts: **controller**, **model**, **view**. |
 | `with-backend/words.js` | Every word the page shows, by key (`WORDS`). English only for now; Japanese comes later. |
 | `with-backend/test_server.py` | The checks for `server.py`, and for the page and the server agreeing. |
-| `with-backend/timeline.db` | The database, in ten tables. The server creates it when it starts, and brings an older one up to date. It is not in git. |
+| `with-backend/timeline.db` | The database, in eleven tables. The server creates it when it starts, and brings an older one up to date. It is not in git. |
 | `Makefile` | Short commands: `make run`, `make test`, `make reset`, `make worktree BRANCH=name`. |
 
 The Colours choice (Auto, Light or Dark) is the only thing the page keeps in `localStorage`
@@ -55,8 +55,10 @@ The three parts of `server.py`:
   `check_not_blocked_by_author`, `check_parent_id`, `check_reply_parent`, `save_reply`,
   `has_replies`, `visible_replies`, `post_as_shown`, `check_change_post_id`, `own_post`,
   `record_change`, `edit_post`, `forget_post_details`, `delete_post`, `changes_after`,
-  `versions_of`, and `create_tables` with its upgrades):
-  the rules, and the database, in ten tables:
+  `versions_of`, `not_hidden_sql`, `report_count`, `check_reason`, `check_report_rules`,
+  `record_visibility_change`, `add_report`, `remove_report`, `reports_for`, and `create_tables`
+  with its upgrades):
+  the rules, and the database, in eleven tables:
   - `users`: each person once. `name` is the account name (unique, capitals ignored),
     `display_name` is the name shown, and `password_salt`, `password_hash`, `password_rounds` hold
     a hash of the password. The password itself is never kept.
@@ -82,6 +84,9 @@ The three parts of `server.py`:
   - `post_versions`: the earlier words of each edited post, and when they were replaced (UTC),
     `ON DELETE CASCADE`.
   - `changes`: one row for each "this post changed", for open windows. See "The changes feed".
+  - `reports`: one row for each person who reported each post, with an optional reason (200
+    characters at most, also a `CHECK`). `PRIMARY KEY (post_id, user_id)`: one report each.
+    `ON DELETE CASCADE`. See "Reports".
 
   A name is kept once, in `users`; never copy it into another table. Only sign-up
   (`create_account`) adds a user: posting, liking and reading never do. A like count is never kept
@@ -98,7 +103,7 @@ The three parts of `server.py`:
   every time, never stored.
 - **View** (`post_to_json`, `picture_to_json`, `posts_to_json`, `account_to_json`, `like_to_json`, `likes_to_json`,
   `likers_to_json`, `summaries_to_json`, `search_to_json`, `blocks_to_json`, `change_to_json`,
-  `changes_to_json`, `deleted_to_json`, `version_to_json`, `versions_to_json`, `problem_to_json`, `session_cookie`, `post_to_log_line`): turns database rows into the JSON the page reads, the
+  `changes_to_json`, `report_to_json`, `reports_to_json`, `deleted_to_json`, `version_to_json`, `versions_to_json`, `problem_to_json`, `session_cookie`, `post_to_log_line`): turns database rows into the JSON the page reads, the
   cookie, and the one line printed for each new post.
 
 The database knows its own version (`PRAGMA user_version`). An older `timeline.db` from before
@@ -128,7 +133,7 @@ same functions as every other feature. Use them; do not go around them.
   calls `ACTIONS[action](postId, button)`. To add a button, add `ACTIONS.yourAction = yourFunction`.
   Never edit `clickOnTimeline`.
 - `addMenuItem(slots, action, words)` adds a button to a post's "⋯" menu. A menu with nothing in it
-  is hidden, so today no post shows "⋯".
+  is hidden.
 - A **view** is a `<section data-view="name">`. `addView(name, words)` adds one, with its button
   in `<nav id="views">`; `showView(name)` shows it and hides the others. The nav stays hidden while
   there is only one view (the timeline).
@@ -388,13 +393,38 @@ feed is now.
 - A change id only grows (`AUTOINCREMENT`), and SQLite lets one write happen at a time, so a window
   can never see change 9 and miss change 8. Old rows are never cleared yet.
 
+## Reports
+
+A signed-in person can report someone else's post from its "⋯" menu (`reportPart`,
+`ACTIONS.report`), with an optional reason (`prompt()`), and take the report back. **A post is
+hidden when `HIDE_AFTER_REPORTS` (3) people report it; this is counted from `reports`, never
+stored.** Its author still sees it, faded, with a note: `hidden_by_reports` in each post is worked
+out in `POSTS_WITH_AUTHORS`, and only the author is ever sent a hidden post.
+
+- **The rule is one line in `visible_to`:** `not_hidden_sql(viewer_id)`, beside block's. So every
+  list that goes through `select_posts` obeys it: the timeline, search, bookmarks, pictures (404),
+  reply counts and the changes feed. Any query that lists posts uses `visible_to`.
+- **Who may report** (`check_report_rules`): the post exists and is not deleted (`post_missing`);
+  not your own (`report_own_post`); you have a post with a smaller id (`report_too_early`). Once
+  per person (`report_already`, and the primary key). The reason: `check_reason`
+  (`report_reason_not_text`, `report_reason_too_long`). Taking back one you do not have:
+  `report_not_there`.
+- Routes: `POST /reports` and `DELETE /reports` (`{post_id, reason}`), and `GET /reports`
+  (`{hidden, mine_hidden, reported}`: ids only, never a count, never who reported).
+- **The changes feed:** `record_visibility_change` calls `record_change(…, "hidden")` when a post
+  goes from 2 reports to 3, and `"shown"` from 3 to 2, in the same transaction. No other step
+  writes a change. The page asks `GET /reports` only when it opens, after a login or log-out, and
+  after a press; never every second.
+- Un-hide a post (the person running the server):
+  `sqlite3 with-backend/timeline.db 'delete from reports where post_id = 12'`
+
 ## How to run it
 
 - Page-only: open `page-only/index.html` in a browser. Nothing to start.
 - With a backend: `make run`, then open <http://localhost:8009>. Press Ctrl+C to stop.
 - Start again with an empty timeline: `make reset`.
 - See what is saved:
-  `sqlite3 with-backend/timeline.db 'select * from users; select * from posts; select * from likes; select * from sessions; select * from attempts; select * from bookmarks; select * from blocks; select * from post_versions; select * from changes; select post_id, kind, length(bytes), alt_text from pictures'`
+  `sqlite3 with-backend/timeline.db 'select * from users; select * from posts; select * from likes; select * from sessions; select * from attempts; select * from bookmarks; select * from blocks; select * from post_versions; select * from changes; select * from reports; select post_id, kind, length(bytes), alt_text from pictures'`
 
 It needs only `python3` (3.9 or newer). Do not add libraries, packages or a build step.
 Write code that runs on Python 3.9: no `match` statements, and no `X | Y` in type hints.

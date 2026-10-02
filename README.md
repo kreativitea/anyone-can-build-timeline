@@ -95,7 +95,7 @@ and so did `post_versions` (the earlier words of each edited post) and `changes`
 post edited or deleted). To see what is inside:
 
 ```
-sqlite3 with-backend/timeline.db 'select * from users; select * from posts; select * from likes; select * from sessions; select * from bookmarks; select * from post_versions; select * from changes'
+sqlite3 with-backend/timeline.db 'select * from users; select * from posts; select * from likes; select * from sessions; select * from bookmarks; select * from post_versions; select * from changes; select * from reports'
 ```
 
 A user line is `id|name|display_name|password_salt|password_hash|password_rounds`, for example
@@ -110,6 +110,15 @@ in `old_clock_time`. A like line is just
 the database keep "post 3 has 5 likes". The number on screen is counted from these lines every time
 it is asked for, so the count and the likes can never disagree. Taking a like back deletes its line,
 and the count reads one lower because there is one line fewer to count.
+
+A `reports` line is `post_id|user_id|reason`: one line for each person who reported each post. A
+post with three or more lines here is hidden from everyone except its author. There is no "hidden"
+column anywhere: it is counted. Nobody in the app can un-hide a post, but the person running the
+server can clear every report on post 12 with:
+
+```
+sqlite3 with-backend/timeline.db 'delete from reports where post_id = 12'
+```
 
 To start again with an empty timeline, stop the server and run `make reset`.
 
@@ -157,6 +166,11 @@ signing up, posting, liking and unliking, with the database file opened and read
    first window, open **Blocked accounts** and press **Unblock**: their posts come back.
 10. **Reply to a post.** Press **Reply** under a post in one window, write, and press **Post**.
     Watch the reply appear under the post in another window, and the post say "1 reply".
+11. **Report a post.** Make four accounts in four windows (a private window has its own cookies).
+    Post once with three of them, then post with the fourth. Report the fourth person's post from
+    the other three (the "⋯" menu, then **Report**): it disappears from every other open window,
+    and from a window that is not logged in. The author still sees it, faded, with a note. Take one
+    report back, and it comes back for everyone.
 
 Each feature changes a different set of parts.
 

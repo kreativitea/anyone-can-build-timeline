@@ -1538,7 +1538,8 @@ class ModelTests(unittest.TestCase):
                 mock.patch.object(server, "upgrade_to_pictures", lambda connection: None), \
                 mock.patch.object(server, "upgrade_to_block", lambda connection: None), \
                 mock.patch.object(server, "upgrade_to_replies", lambda connection: None), \
-                mock.patch.object(server, "upgrade_to_edit_delete", lambda connection: None):
+                mock.patch.object(server, "upgrade_to_edit_delete", lambda connection: None), \
+                mock.patch.object(server, "upgrade_to_report", lambda connection: None):
             server.create_tables(self.db_path)
         old_version = self.rows("PRAGMA user_version")[0][0]
         self.assertLess(old_version, server.LATEST_VERSION)
@@ -2577,9 +2578,11 @@ class ModelTests(unittest.TestCase):
         # A database at the version before edit-delete, with rows, a reply,
         # and an extra column and index on posts, the way another plan would add them.
         self.db_path = os.path.join(self.folder.name, "before-edit-delete.db")
-        with mock.patch.object(server, "upgrade_to_edit_delete", lambda connection: None):
+        # report (the next version) is held back too, so the file stops before edit-delete.
+        with mock.patch.object(server, "upgrade_to_edit_delete", lambda connection: None), \
+                mock.patch.object(server, "upgrade_to_report", lambda connection: None):
             server.create_tables(self.db_path)
-        self.assertEqual(self.rows("PRAGMA user_version"), [(server.LATEST_VERSION - 1,)])
+        self.assertEqual(self.rows("PRAGMA user_version"), [(server.LATEST_VERSION - 2,)])
         self.clock = use_fake_clock(self)
         aiko = self.sign_up("aiko")
         ben = self.sign_up("ben")
@@ -2611,6 +2614,222 @@ class ModelTests(unittest.TestCase):
         with mock.patch.object(server, "utc_now", lambda: SOME_MOMENT):
             server.edit_post(self.db_path, aiko, post_id, "still works")
             self.assertTrue(server.delete_post(self.db_path, aiko, post_id)[1]["deleted"])
+
+    # -- report --
+    #
+    # People are made with SQL (self.person), so no password is hashed.
+
+    def report_people(self, first=("ben", "chika", "dai")):
+        """Ben, Chika and Dai each post first; then Aiko posts the target. Emi never posts."""
+        people = {name: self.person(name) for name in ("aiko", "ben", "chika", "dai", "emi")}
+        for name in first:
+            self.post_by(people[name], name + " was here first")
+        target = self.post_by(people["aiko"], "the target")
+        return people, target
+
+    def report_three_times(self, people, target):
+        for name in ("ben", "chika", "dai"):
+            server.add_report(self.db_path, people[name], target)
+
+    def seen_by(self, viewer_id, post_id):
+        return post_id in [row["id"] for row in server.posts_after(self.db_path, 0, viewer_id)]
+
+    def report_refused(self, *arguments):
+        with self.assertRaises(server.RuleBroken) as caught:
+            server.add_report(self.db_path, *arguments)
+        return caught.exception.code
+
+    def test_a_report_is_one_row_with_its_reason_or_null(self):
+        people, target = self.report_people()
+        server.add_report(self.db_path, people["ben"], target, "  rude  ")
+        server.add_report(self.db_path, people["chika"], target)
+        server.add_report(self.db_path, people["dai"], target, "   ")
+        self.assertEqual(self.rows("SELECT post_id, user_id, reason FROM reports ORDER BY user_id"),
+                         [(target, people["ben"], "rude"), (target, people["chika"], None),
+                          (target, people["dai"], None)])
+
+    def test_the_same_person_cannot_report_the_same_post_twice(self):
+        people, target = self.report_people()
+        server.add_report(self.db_path, people["ben"], target)
+        self.assertEqual(self.report_refused(people["ben"], target), "report_already")
+        # Even past every check in the code, the database refuses a second row.
+        connection = server.connect(self.db_path)
+        with self.assertRaises(sqlite3.IntegrityError):
+            connection.execute("INSERT INTO reports (post_id, user_id) VALUES (?, ?)",
+                               (target, people["ben"]))
+        connection.close()
+        self.assertEqual(self.rows("SELECT COUNT(*) FROM reports"), [(1,)])
+
+    def test_your_own_post_or_a_missing_post_cannot_be_reported(self):
+        people, target = self.report_people()
+        for user, post_id, code in ((people["aiko"], target, "report_own_post"),
+                                    (people["ben"], 99, "post_missing"),
+                                    (people["ben"], "x", "post_id_missing"),
+                                    (people["ben"], None, "post_id_missing")):
+            with self.subTest(post_id=post_id):
+                self.assertEqual(self.report_refused(user, post_id), code)
+        self.assertEqual(self.rows("SELECT * FROM reports"), [])
+
+    def test_you_can_report_only_after_posting_before_the_post(self):
+        people, target = self.report_people()
+        self.assertEqual(self.report_refused(people["emi"], target), "report_too_early")
+        self.post_by(people["emi"], "my first post")                  # newer than the target
+        self.assertEqual(self.report_refused(people["emi"], target), "report_too_early")
+        later = self.post_by(people["aiko"], "a later post")          # newer than Emi's post
+        server.add_report(self.db_path, people["emi"], later)
+        self.assertEqual(self.rows("SELECT post_id, user_id FROM reports"),
+                         [(later, people["emi"])])
+
+    def test_a_reason_may_be_200_characters_and_no_more(self):
+        people, target = self.report_people()
+        for reason, code in (("a" * (server.MAX_REASON + 1), "report_reason_too_long"),
+                             (42, "report_reason_not_text"), (["a list"], "report_reason_not_text")):
+            with self.subTest(reason=reason):
+                self.assertEqual(self.report_refused(people["ben"], target, reason), code)
+        server.add_report(self.db_path, people["ben"], target, "a" * server.MAX_REASON)
+        self.assertEqual(self.rows("SELECT length(reason) FROM reports"), [(200,)])
+        # The database refuses 201 too, with its CHECK.
+        connection = server.connect(self.db_path)
+        with self.assertRaises(sqlite3.IntegrityError):
+            connection.execute("INSERT INTO reports VALUES (?, ?, ?)",
+                               (target, people["chika"], "a" * 201))
+        connection.close()
+
+    def test_three_reports_hide_a_post_from_everyone_but_its_author(self):
+        people, target = self.report_people()
+        server.add_report(self.db_path, people["ben"], target)
+        server.add_report(self.db_path, people["chika"], target)
+        for viewer in (None, people["ben"], people["emi"], people["aiko"]):
+            self.assertTrue(self.seen_by(viewer, target))   # two are not enough
+        server.add_report(self.db_path, people["dai"], target)
+        for viewer in (None, people["ben"], people["emi"]):
+            with self.subTest(viewer=viewer):
+                self.assertFalse(self.seen_by(viewer, target))
+        self.assertTrue(self.seen_by(people["aiko"], target))
+        # Only the author is sent it, so only the author ever sees hidden_by_reports true.
+        mine = [row for row in server.posts_after(self.db_path, 0, people["aiko"])
+                if row["id"] == target][0]
+        self.assertTrue(server.post_to_json(mine)["hidden_by_reports"])
+        self.assertFalse(any(server.post_to_json(row)["hidden_by_reports"]
+                             for row in server.posts_after(self.db_path, 0, None)))
+        # The other posts are still there for everyone, and the row is kept.
+        self.assertEqual(len(server.posts_after(self.db_path, 0, None)), 3)
+        self.assertEqual(self.rows("SELECT text FROM posts WHERE id = ?", (target,)),
+                         [("the target",)])
+
+    def test_taking_a_report_back_shows_the_post_again(self):
+        people, target = self.report_people()
+        self.report_three_times(people, target)
+        self.assertEqual(server.remove_report(self.db_path, people["dai"], target), target)
+        self.assertTrue(self.seen_by(None, target))
+        for user in (people["dai"], people["emi"]):   # twice, and never at all
+            with self.subTest(user=user):
+                with self.assertRaises(server.RuleBroken) as caught:
+                    server.remove_report(self.db_path, user, target)
+                self.assertEqual(caught.exception.code, "report_not_there")
+
+    def test_reports_for_gives_the_three_lists(self):
+        people, target = self.report_people()
+        dai_post = 3   # Chika posted before it (post 2)
+        self.report_three_times(people, target)
+        server.add_report(self.db_path, people["chika"], dai_post)
+        self.assertEqual(server.reports_for(self.db_path, None), ([target], [], []))
+        self.assertEqual(server.reports_for(self.db_path, people["aiko"]), ([], [target], []))
+        self.assertEqual(server.reports_for(self.db_path, people["chika"]),
+                         ([target], [], [dai_post, target]))
+        self.assertEqual(server.reports_for(self.db_path, people["emi"]), ([target], [], []))
+
+    def test_hidden_is_counted_never_stored(self):
+        columns = [row[1] for row in self.rows("PRAGMA table_info(posts)")]
+        self.assertFalse([c for c in columns if "hidden" in c or "report" in c or "count" in c])
+        self.assertEqual([row[1] for row in self.rows("PRAGMA table_info(reports)")],
+                         ["post_id", "user_id", "reason"])
+
+    def test_report_and_block_are_each_one_condition_in_visible_to(self):
+        sql, params = server.visible_to(7)
+        for piece_sql, piece_params in (server.not_blocked_sql(7), server.not_hidden_sql(7)):
+            self.assertIn("(" + piece_sql + ")", sql)
+        self.assertEqual(params, server.not_blocked_sql(7)[1] + server.not_hidden_sql(7)[1])
+
+    def test_a_hidden_post_is_in_no_search_and_its_picture_is_not_given(self):
+        people = {name: self.person(name) for name in ("aiko", "ben", "chika", "dai")}
+        for name in ("ben", "chika", "dai"):
+            self.post_by(people[name], "first")
+        target = self.picture_post(people["aiko"], text="my #cat")["id"]
+        self.report_three_times(people, target)
+        rows, more = server.search_posts(self.db_path, "#cat", people["ben"])
+        self.assertEqual(rows, [])
+        self.assertEqual([row["id"] for row in
+                          server.search_posts(self.db_path, "#cat", people["aiko"])[0]], [target])
+        for viewer in (None, people["ben"]):
+            self.assertIsNone(server.picture_for(self.db_path, target, viewer))
+        self.assertIsNotNone(server.picture_for(self.db_path, target, people["aiko"]))
+
+    def test_crossing_the_limit_writes_hidden_and_shown_changes(self):
+        people, target = self.report_people(first=("ben", "chika", "dai", "emi"))
+        news = "SELECT post_id, kind FROM changes ORDER BY id"
+        server.add_report(self.db_path, people["ben"], target)
+        server.add_report(self.db_path, people["chika"], target)
+        self.assertEqual(self.rows(news), [])                        # still shown
+        server.add_report(self.db_path, people["dai"], target)
+        self.assertEqual(self.rows(news), [(target, "hidden")])      # 2 -> 3
+        server.add_report(self.db_path, people["emi"], target)
+        self.assertEqual(len(self.rows(news)), 1)                    # 3 -> 4: no news
+        server.remove_report(self.db_path, people["emi"], target)
+        self.assertEqual(len(self.rows(news)), 1)                    # 4 -> 3: no news
+        server.remove_report(self.db_path, people["dai"], target)
+        self.assertEqual(self.rows(news), [(target, "hidden"), (target, "shown")])   # 3 -> 2
+        # A refused report writes nothing.
+        with self.assertRaises(server.RuleBroken):
+            server.add_report(self.db_path, people["ben"], target)
+        self.assertEqual(len(self.rows(news)), 2)
+
+    def test_the_hidden_change_keeps_the_post_for_its_author_only(self):
+        people, target = self.report_people()
+        latest = server.changes_after(self.db_path, None)[0]
+        self.report_three_times(people, target)
+        for viewer, shown in ((people["aiko"], True), (people["ben"], False), (None, False)):
+            with self.subTest(viewer=viewer):
+                rows = server.changes_after(self.db_path, str(latest), viewer)[1]
+                self.assertEqual([(change["kind"], post is not None) for change, post in rows],
+                                 [("hidden", shown)])
+
+    def test_a_deleted_post_takes_its_reports_with_it(self):
+        people, target = self.report_people()
+        server.add_report(self.db_path, people["ben"], target)
+        server.delete_post(self.db_path, people["aiko"], target)
+        self.assertEqual(self.rows("SELECT * FROM reports"), [])
+        # And a post kept for its replies: its reports go too, and it cannot be reported.
+        people_post = self.post_by(people["aiko"], "kept for its reply")
+        self.post_by(people["ben"], "ben again")
+        server.add_report(self.db_path, people["ben"], people_post)
+        server.save_reply(self.db_path, people["ben"], "an answer", people_post)
+        server.delete_post(self.db_path, people["aiko"], people_post)
+        self.assertEqual(self.rows("SELECT * FROM reports"), [])
+        self.assertEqual(self.report_refused(people["chika"], people_post), "post_missing")
+
+    def test_the_report_upgrade_keeps_every_row(self):
+        # A database from just before report, with rows in every table.
+        aiko = self.sign_up("aiko")
+        ben = self.sign_up("ben")
+        post_id = server.save_post(self.db_path, aiko, "hello")["id"]
+        server.add_like(self.db_path, ben, post_id)
+        server.edit_post(self.db_path, aiko, post_id, "hello again")
+        connection = sqlite3.connect(self.db_path)
+        connection.executescript(f"DROP TABLE reports; "
+                                 f"PRAGMA user_version = {server.LATEST_VERSION - 1};")
+        connection.close()
+        tables = ("users", "posts", "likes", "sessions", "attempts", "post_versions", "changes")
+        before = {table: self.rows("SELECT * FROM " + table + " ORDER BY 1, 2")
+                  for table in tables}
+        server.create_tables(self.db_path)
+        after = {table: self.rows("SELECT * FROM " + table + " ORDER BY 1, 2")
+                 for table in tables}
+        self.assertEqual(after, before)
+        self.assertEqual(self.rows("PRAGMA user_version"), [(server.LATEST_VERSION,)])
+        self.assertEqual(self.rows("PRAGMA foreign_key_check"), [])
+        self.assertEqual(self.rows("SELECT * FROM reports"), [])
+        server.create_tables(self.db_path)   # twice is harmless
 
 
 class RealServerTest(unittest.TestCase):
@@ -2888,6 +3107,7 @@ class RealServerTest(unittest.TestCase):
                                    "old_clock_time", "like_count", "place",
                                    "picture_alt", "parent_id", "parent_author",
                                    "reply_count", "newest_reply_id", "edited",
+                                   "hidden_by_reports",
                                    "deleted")})))
 
     def test_a_search_with_no_words_gets_400_and_a_reason(self):
@@ -3333,6 +3553,20 @@ class RealServerTest(unittest.TestCase):
             self.assertEqual(answer["latest"], 2)
             self.assertEqual([(c["id"], c["kind"], c["post"]["text"]) for c in answer["changes"]],
                              [(2, "edited", "three")])
+
+    # -- report --
+
+    def test_a_report_without_a_cookie_gets_401_and_not_json_gets_400(self):
+        self.assertEqual(self.refused("/reports", {"post_id": 1})[0], 401)
+        self.assertEqual(self.refused("/reports", {"post_id": 1}, method="DELETE")[0], 401)
+        self.sign_up().close()
+        code, reason = self.refused("/reports", {"post_id": 1}, content_type="text/plain")
+        self.assertEqual(code, 400)
+        self.assertIn("JSON", reason)
+
+    def test_anyone_may_ask_which_posts_are_hidden(self):
+        self.assertEqual(self.get("/reports"),
+                         {"hidden": [], "mine_hidden": [], "reported": []})
 
 
 class JourneyTest(unittest.TestCase):
@@ -4215,6 +4449,111 @@ class JourneyTest(unittest.TestCase):
         self.assertEqual(self.rows("SELECT * FROM posts"), [])
         self.assertEqual(self.rows("PRAGMA foreign_key_check"), [])
 
+    # -- report --
+
+    def page_reports(self, window, post_id, reason=None):
+        """pressReport: POST /reports, with the post and the reason (null if none)"""
+        return self.page_sends(window, "/reports", {"post_id": post_id, "reason": reason},
+                               "POST")
+
+    def page_takes_report_back(self, window, post_id):
+        """pressReport: DELETE /reports"""
+        return self.page_sends(window, "/reports", {"post_id": post_id, "reason": None},
+                               "DELETE")
+
+    def page_asks_for_reports(self, window):
+        """askForReports: GET /reports, on opening, after a login and after a press"""
+        with window.open(self.base + "/reports") as answer:
+            return json.loads(answer.read())
+
+    def ids_seen(self, window):
+        return [post["id"] for post in self.page_asks_for_new_posts(window)]
+
+    def test_the_whole_journey_of_a_report(self):
+        windows = {}
+        for name in ("aiko", "ben", "chika", "dai", "emi"):
+            windows[name] = self.open_window()
+            self.page_signs_up(windows[name], name, name.title())
+        aiko, ben, chika, dai, emi = (windows[n] for n in ("aiko", "ben", "chika", "dai", "emi"))
+        stranger = self.open_window()   # nobody logged in
+        for name in ("ben", "chika", "dai"):
+            self.page_posts(windows[name], name + " was here first")
+        status, post = self.page_posts(aiko, "the target")
+        target = post["id"]
+        reports = "SELECT user_id, reason FROM reports ORDER BY user_id"
+        ids = dict(self.rows("SELECT name, id FROM users"))
+        # Every window has asked the changes feed where it is, as checkForChanges does.
+        latest = {name: self.page_asks_for_changes(w)["latest"]
+                  for name, w in (("aiko", aiko), ("ben", ben), ("stranger", stranger))}
+
+        # Aiko cannot report her own post.
+        code, answer = self.is_refused(self.page_reports, aiko, target)
+        self.assertEqual((code, answer), (400, "You cannot report your own post."))
+        self.assertEqual(self.rows(reports), [])
+
+        # Ben reports it, with a reason; a second time is refused; he takes it back.
+        self.assertEqual(self.page_reports(ben, target, "spam"),
+                         (201, {"post_id": target, "reported": True}))
+        self.assertEqual(self.rows(reports), [(ids["ben"], "spam")])
+        self.assertEqual(self.is_refused(self.page_reports, ben, target)[0], 400)
+        self.assertEqual(self.rows(reports), [(ids["ben"], "spam")])
+        self.assertEqual(self.page_takes_report_back(ben, target),
+                         (200, {"post_id": target, "reported": False}))
+        self.assertEqual(self.rows(reports), [])
+        self.assertEqual(self.rows("SELECT COUNT(*) FROM changes"), [(0,)])   # never crossed
+
+        # Ben, Chika and Dai report it: three rows, and one "hidden" change.
+        for window in (ben, chika, dai):
+            self.assertEqual(self.page_reports(window, target)[0], 201)
+        self.assertEqual(len(self.rows(reports)), 3)
+        self.assertEqual(self.rows("SELECT post_id, kind FROM changes"), [(target, "hidden")])
+
+        # Open windows hear it from the changes feed: Ben's and the stranger's
+        # get no post (applyChange takes it away); Aiko's gets her post, faded.
+        for name, window in (("ben", ben), ("stranger", stranger)):
+            changes = self.page_asks_for_changes(window, latest[name])["changes"]
+            self.assertEqual([(c["post_id"], c["kind"], c["post"]) for c in changes],
+                             [(target, "hidden", None)])
+        changes = self.page_asks_for_changes(aiko, latest["aiko"])["changes"]
+        self.assertEqual([(c["post_id"], c["kind"]) for c in changes], [(target, "hidden")])
+        self.assertEqual(changes[0]["post"]["text"], "the target")
+        self.assertTrue(changes[0]["post"]["hidden_by_reports"])
+
+        # Emi has never posted, so she cannot report it.
+        code, answer = self.is_refused(self.page_reports, emi, target)
+        self.assertEqual(code, 400)
+        self.assertIn("only after you have posted", answer)
+        self.assertEqual(len(self.rows(reports)), 3)
+
+        # Hidden from Ben, Emi and a window not logged in; Aiko still sees it.
+        for window in (ben, emi, stranger):
+            self.assertNotIn(target, self.ids_seen(window))
+        self.assertIn(target, self.ids_seen(aiko))
+        self.assertEqual(self.page_asks_for_reports(ben),
+                         {"hidden": [target], "mine_hidden": [], "reported": [target]})
+        self.assertEqual(self.page_asks_for_reports(aiko),
+                         {"hidden": [], "mine_hidden": [target], "reported": []})
+        self.assertEqual(self.page_asks_for_reports(stranger),
+                         {"hidden": [target], "mine_hidden": [], "reported": []})
+        self.assertEqual(self.rows(f"SELECT text FROM posts WHERE id = {target}"),
+                         [("the target",)])
+
+        # Dai takes his report back: a "shown" change, and everyone sees it again.
+        latest_now = self.page_asks_for_changes(ben)["latest"]
+        self.page_takes_report_back(dai, target)
+        changes = self.page_asks_for_changes(ben, latest_now)["changes"]
+        self.assertEqual([(c["kind"], c["post"]["text"]) for c in changes],
+                         [("shown", "the target")])
+        self.assertFalse(changes[0]["post"]["hidden_by_reports"])
+        for window in (ben, emi, stranger, aiko):
+            self.assertIn(target, self.ids_seen(window))
+        self.assertEqual(len(self.rows(reports)), 2)
+
+        # A "user_id" in the JSON is ignored: Dai reports as Dai, from the cookie.
+        self.page_sends(dai, "/reports", {"post_id": target, "user_id": ids["ben"]}, "POST")
+        self.assertEqual(self.rows("SELECT user_id FROM reports ORDER BY user_id"),
+                         [(ids["ben"],), (ids["chika"],), (ids["dai"],)])
+
 
 class BookmarkJourneyTest(unittest.TestCase):
     """The journey of a private bookmark, through all three levels at once.
@@ -4366,7 +4705,7 @@ class PageAndServerAgreeTest(unittest.TestCase):
         asked = set(re.findall(r'fetch\("(/[a-z]*)', self.page_code))
         self.assertEqual(asked, {"/posts", "/likes", "/sessions", "/accounts",
                                  "/likers", "/likesummary", "/search", "/bookmarks",
-                                 "/blocks", "/changes", "/versions"})
+                                 "/blocks", "/changes", "/versions", "/reports"})
 
     def test_the_page_names_only_the_methods_tried_below(self):
         # A GET needs no method, so the page names only the others.
@@ -4380,7 +4719,8 @@ class PageAndServerAgreeTest(unittest.TestCase):
                              ("DELETE", "/sessions"), ("POST", "/accounts"),
                              ("GET", "/blocks"), ("POST", "/blocks"), ("DELETE", "/blocks"),
                              ("PATCH", "/posts"), ("DELETE", "/posts"), ("GET", "/changes"),
-                             ("GET", "/changes?after=0"), ("GET", "/versions?post_id=1")]:
+                             ("GET", "/changes?after=0"), ("GET", "/versions?post_id=1"),
+                             ("GET", "/reports"), ("POST", "/reports"), ("DELETE", "/reports")]:
             with self.subTest(request=method + " " + path):
                 code = self.answer_code(method, path)
                 # 400 or 401 is a fine answer here: the body is empty and nobody
@@ -5140,7 +5480,8 @@ class PageAndServerAgreeTest(unittest.TestCase):
         row = {"id": 2, "author": "ken", "display_name": "Ken", "text": "x", "posted_at": None,
                "old_clock_time": "09:00", "like_count": 0, "place": None, "picture_alt": None,
                "parent_id": 1, "parent_author": "aiko", "reply_count": 0,
-               "newest_reply_id": None, "edited": 0, "deleted": 0}
+               "newest_reply_id": None, "edited": 0, "deleted": 0,
+               "hidden_by_reports": 0}
         sent = server.post_to_json(row)
         for name in ("parent_id", "parent_author", "reply_count", "newest_reply_id"):
             with self.subTest(name=name):
@@ -5209,7 +5550,8 @@ class PageAndServerAgreeTest(unittest.TestCase):
         row = {"id": 1, "author": "a", "display_name": "A", "text": "t", "posted_at": None,
                "old_clock_time": "09:00", "like_count": 0, "place": None, "picture_alt": None,
                "parent_id": None, "parent_author": None, "reply_count": 0,
-               "newest_reply_id": None, "edited": 1, "deleted": 0}
+               "newest_reply_id": None, "edited": 1, "deleted": 0,
+               "hidden_by_reports": 0}
         changes = server.changes_to_json(3, [({"id": 3, "post_id": 1, "kind": "edited"}, row)])
         keys = set(changes) | set(changes["changes"][0]) | set(changes["changes"][0]["post"]) \
             | set(server.version_to_json({"text": "t", "replaced_at": "x"})) \
@@ -5259,6 +5601,46 @@ class PageAndServerAgreeTest(unittest.TestCase):
         for part in ("heartPart", "replyPart", "bookmarkPart", "blockPart"):
             self.assertLess(self.page_code.index("function " + part),
                             self.page_code.index("function editedPart"))
+
+    # -- report --
+
+    def test_the_page_has_the_same_reason_limit_as_the_model(self):
+        self.assertIn(f"const MAX_REASON = {server.MAX_REASON};", self.page_code)
+        # The database's CHECK says the same number.
+        self.assertIn(f"length(reason) <= {server.MAX_REASON}", self.server_code)
+
+    def test_report_is_a_menu_item_and_an_action(self):
+        functions = functions_in(self.page_code)
+        self.assertIn('addMenuItem(slots, "report", "report_menu")', self.page_code)
+        self.assertIn("ACTIONS.report = pressReport;", self.page_code)
+        self.assertIn('prompt(say("report_ask_reason"))', functions["pressReport"])
+        self.assertIn("showProblem(answer)", functions["pressReport"])
+        # Only on another person's post, when logged in (the page's report_own_post).
+        part = self.page_code.split("function reportPart")[1].split("\n});\n")[0]
+        self.assertIn("sameAccount(post.author, account.account_name)", part)
+        self.assertIn("account !== null", part)
+
+    def test_the_page_does_not_ask_for_reports_every_second(self):
+        # Open windows hear about a hidden post from the changes feed instead.
+        functions = functions_in(self.page_code)
+        for name in ("checkForNewPosts", "checkForChanges", "keepChecking"):
+            self.assertNotIn("/reports", functions[name])
+            self.assertNotIn("askForReports", functions[name])
+        self.assertIn("askForReports", functions["afterAccountChange"])
+        self.assertIn("askForReports", functions["pressReport"])
+        # A post hidden from this person goes the way a change with no post does.
+        self.assertIn("applyChange({ post_id: postId, post: null })", functions["showReports"])
+
+    def test_the_page_reads_the_names_the_reports_answers_have(self):
+        names = set(server.reports_to_json([], [], [])) | {"hidden_by_reports"}
+        self.assertEqual(names, {"hidden", "mine_hidden", "reported", "hidden_by_reports"})
+        for name in ("answer.hidden", "answer.mine_hidden", "answer.reported",
+                     "post.hidden_by_reports"):
+            self.assertIn(name, self.page_code)
+
+    def test_the_hidden_and_shown_kinds_are_known(self):
+        self.assertIn("hidden", server.CHANGE_KINDS)
+        self.assertIn("shown", server.CHANGE_KINDS)
 
 
 class ColoursTest(unittest.TestCase):

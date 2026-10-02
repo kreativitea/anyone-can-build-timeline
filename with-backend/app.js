@@ -1717,6 +1717,7 @@ async function afterAccountChange() {
   loginPasswordBox.value = "";
   signupPasswordBox.value = "";
   await reloadTimeline();
+  await askForReports();   // report: who is asking changed
 }
 
 // Log in with an account name and password.
@@ -2751,6 +2752,150 @@ addPostPart(function ownerToolsPart(post, slots) {
   }
 });
 
+// ---- report: three reports hide a post from everyone but its author ----
+//
+// "Report" is an item in the "⋯" menu of other people's posts, only for
+// someone logged in (made again when the timeline is drawn again after a
+// login or a log-out, like Block). Pressing it asks for an optional reason
+// with the browser's own prompt() box, then sends POST /reports. Pressing it
+// again ("Take back my report") sends DELETE /reports.
+//
+// When three people have reported a post, the server stops sending it to
+// everyone but its author. The author still sees it, faded, with a note
+// (post.hidden_by_reports). An open window hears that a post was hidden or
+// shown again from the changes feed, like an edit: nothing here asks every
+// second. GET /reports is asked only when the page opens, after a login or a
+// log-out, and after a press, for "which did I report" and "which of mine are
+// hidden".
+//
+// The words of this feature are in words.js (report_...).
+
+// The same limit as MAX_REASON in server.py.
+const MAX_REASON = 200;
+
+// The posts this person has reported, as the server last said.
+let reportedNow = new Set();
+
+// One report or take-back at a time, so a fast second press does not send it twice.
+let reportBusy = false;
+
+// The note for a hidden post (shown only to its author), and, only for someone
+// logged in and only on another person's post (the page's copy of the rule
+// report_own_post), a Report item in the "⋯" menu.
+addPostPart(function reportPart(post, slots, item) {
+  const note = document.createElement("p");
+  note.className = "hidden-note";
+  note.dataset.words = "report_hidden_note";
+  note.textContent = say("report_hidden_note");
+  slots.body.prepend(note);
+  item.dataset.hiddenByReports = post.hidden_by_reports ? "true" : "false";
+  if (!post.deleted && account !== null && !sameAccount(post.author, account.account_name)) {
+    addMenuItem(slots, "report", "report_menu");
+  }
+  drawReportState(item);
+});
+
+// Draw one copy of a post as the report state says: the menu item's words,
+// and the faded look with its note.
+function drawReportState(item) {
+  const button = item.querySelector('[data-action="report"]');
+  if (button !== null) {
+    const reported = reportedNow.has(Number(item.dataset.postId));
+    button.dataset.words = reported ? "report_take_back_menu" : "report_menu";
+    button.textContent = say(button.dataset.words);
+    button.setAttribute("aria-pressed", reported ? "true" : "false");
+  }
+  const hidden = item.dataset.hiddenByReports === "true";
+  item.classList.toggle("hidden-by-reports", hidden);
+  item.querySelector(".hidden-note").hidden = !hidden;
+}
+
+// The server's answer to GET /reports. A post hidden from this person is
+// taken away everywhere (the same as a change with no post); every other copy
+// is drawn again.
+function showReports(answer) {
+  reportedNow = new Set(answer.reported);
+  for (const postId of answer.hidden) {
+    applyChange({ post_id: postId, post: null });
+  }
+  for (const item of document.querySelectorAll("li.post[data-post-id]")) {
+    item.dataset.hiddenByReports = answer.mine_hidden.includes(Number(item.dataset.postId))
+      ? "true" : "false";
+    drawReportState(item);
+  }
+}
+
+// Ask the server which posts are hidden and which this person reported.
+async function askForReports() {
+  try {
+    const response = await fetch("/reports");
+    const answer = await response.json();
+    if (response.ok) {
+      showReports(answer);
+    }
+  } catch (error) {
+    showStatus("cannot_reach");
+  }
+}
+
+// Report was pressed: report the post, or take the report back if this
+// person already did. The method says which: POST adds, DELETE takes away.
+async function pressReport(postId, button) {
+  // The server checks all of these again.
+  if (account === null) {
+    showStatus("report_log_in");
+    return;
+  }
+  if (reportBusy) {
+    return;
+  }
+  const reported = button.getAttribute("aria-pressed") === "true";
+  // A report taken back has no reason: null.
+  let reason = null;
+  if (!reported) {
+    // Cancel gives null: then nothing is sent. An empty answer means "no reason".
+    reason = prompt(say("report_ask_reason"));
+    if (reason === null) {
+      return;
+    }
+    if (characterCount(reason.trim()) > MAX_REASON) {
+      showStatus("report_reason_too_long", { limit: MAX_REASON });
+      return;
+    }
+  }
+  // The rule "you must have posted before it" (report_too_early) is checked
+  // only by the server: this window may not have every older post on screen.
+  reportBusy = true;
+  button.closest(".post-menu").open = false;
+  try {
+    const response = await fetch("/reports", {
+      method: reported ? "DELETE" : "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ post_id: postId, reason: reason }),
+    });
+    const answer = await response.json();
+    if (response.status === 401) {
+      // The login has ended. Show the Log in form, and the server's reason.
+      showSignedOut("");
+      showProblem(answer);
+      await reloadTimeline();
+    } else if (!response.ok) {
+      // The server refused it, and says which rule was broken.
+      showProblem(answer);
+    } else {
+      showStatus(reported ? "report_taken_back" : "report_sent");
+    }
+    // Whatever happened, ask the server what is true now.
+    await askForReports();
+  } catch (error) {
+    showStatus("cannot_reach");
+  } finally {
+    reportBusy = false;
+  }
+}
+
+ACTIONS.report = pressReport;
+
 // Ask the server what changed since the last change this window saw.
 // Errors go up to checkForNewPosts, which says the server cannot be reached.
 async function checkForChanges() {
@@ -3073,6 +3218,7 @@ loadOlderButton.addEventListener("click", loadOlderPosts);
 // Who is logged in first, then the posts: so the first posts are drawn with
 // the right Block items in their menus (block).
 askWhoIAm().then(function () {
+  askForReports();   // report
   watchTheBottom();
   keepChecking();
 });

@@ -2,8 +2,8 @@
 
 This file has three parts:
   CONTROLLER  reads each request and decides what to do
-  MODEL       the rules, and the database (ten tables: users, posts, likes, sessions,
-              attempts, bookmarks, pictures, blocks, post_versions and changes)
+  MODEL       the rules, and the database (eleven tables: users, posts, likes, sessions,
+              attempts, bookmarks, pictures, blocks, post_versions, changes and reports)
   VIEW        turns database rows into the JSON answer
 The server never translates: a refusal names its rule by a code (see PROBLEMS),
 and the page shows the words for that code in the reader's language (words.js).
@@ -102,6 +102,8 @@ class TimelineHandler(BaseHTTPRequestHandler):
             self.show_bookmarks()
         elif url.path == "/blocks":
             self.show_blocks()
+        elif url.path == "/reports":
+            self.show_reports()
         elif url.path.startswith("/pictures/"):
             self.send_picture(url.path)
         elif url.path == "/sessions":
@@ -131,7 +133,8 @@ class TimelineHandler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         path = urlparse(self.path).path
-        if path not in ("/posts", "/likes", "/accounts", "/sessions", "/bookmarks", "/blocks"):
+        if path not in ("/posts", "/likes", "/accounts", "/sessions", "/bookmarks", "/blocks",
+                        "/reports"):
             self.send_nothing_here("POST", path)
             return
         data = self.read_json()
@@ -150,6 +153,8 @@ class TimelineHandler(BaseHTTPRequestHandler):
                 self.take_bookmark(data)
             elif path == "/blocks":
                 self.take_block(data)
+            elif path == "/reports":
+                self.take_report(data)
             else:
                 self.take_post(data)
         except TooFast as problem:
@@ -168,6 +173,9 @@ class TimelineHandler(BaseHTTPRequestHandler):
             return
         if path == "/blocks":
             self.end_block()
+            return
+        if path == "/reports":
+            self.drop_report()
             return
         if path == "/posts":
             self.take_delete()   # edit-delete
@@ -437,6 +445,43 @@ class TimelineHandler(BaseHTTPRequestHandler):
             return
         self.send_json(200, account_to_json(unblocked))   # 200: nothing was created
 
+    # report: POST /reports reports a post, DELETE /reports takes the report back,
+    # GET /reports says which posts are hidden. Who reports is the person logged
+    # in, from the cookie, never from the JSON.
+
+    def take_report(self, data):
+        user = self.signed_in_user()
+        if user is None:
+            return
+        try:
+            post_id = add_report(self.server.db_path, user["id"], data.get("post_id"),
+                                 data.get("reason"))
+        except RuleBroken as problem:
+            self.send_problem(400, problem)
+            return
+        self.send_json(201, report_to_json(post_id, True))
+
+    def drop_report(self):
+        data = self.read_json()
+        if data is None:
+            return
+        user = self.signed_in_user()
+        if user is None:
+            return
+        try:
+            post_id = remove_report(self.server.db_path, user["id"], data.get("post_id"))
+        except RuleBroken as problem:
+            self.send_problem(400, problem)
+            return
+        self.send_json(200, report_to_json(post_id, False))   # 200: nothing was created
+
+    def show_reports(self):
+        """GET /reports: anyone may ask. Not logged in, "mine_hidden" and "reported" are empty."""
+        user = self.user_or_none()
+        hidden, mine_hidden, reported = reports_for(self.server.db_path,
+                                                    user["id"] if user else None)
+        self.send_json(200, reports_to_json(hidden, mine_hidden, reported))
+
     def show_blocks(self):
         """GET /blocks: everyone this person has blocked. 401 when nobody is logged in."""
         user = self.signed_in_user()
@@ -595,14 +640,15 @@ class TimelineHandler(BaseHTTPRequestHandler):
 
 # ============================================================================
 #  MODEL
-#  The rules, and the database. Six tables: users (each person once, with
+#  The rules, and the database. Eleven tables: users (each person once, with
 #  both names and a salted password hash), posts (each post points at its
 #  author by the author's id), likes (one row for each person who liked each
 #  post), sessions (one row for each window that is logged in), attempts
 #  (for the rate limits), bookmarks (one private row for each post a
 #  person saved), pictures, blocks (one row for each person who blocked
 #  another), post_versions (the earlier words of each edited post) and
-#  changes (one row for each "this post changed", for open windows to hear).
+#  changes (one row for each "this post changed", for open windows to hear)
+#  and reports (one row for each person who reported each post).
 #  A new rule goes here, never in the controller or the view.
 # ============================================================================
 
@@ -766,6 +812,13 @@ PROBLEMS = {
     "edit_unchanged": "The post is the same as before.",
     "post_delete_refused": "That post cannot be deleted yet.",
     "reply_to_deleted": "That post was deleted, so it cannot be answered.",
+    # report
+    "report_own_post": "You cannot report your own post.",
+    "report_too_early": "You can report a post only after you have posted something before it.",
+    "report_already": "You have already reported that post.",
+    "report_not_there": "You have not reported that post.",
+    "report_reason_not_text": "The reason must be text.",
+    "report_reason_too_long": "The reason must be {limit} characters or fewer.",
 }
 
 # One code for a wrong name and for a wrong password, so a stranger cannot use
@@ -815,6 +868,7 @@ CHANGE_KINDS = (
     "edited",            # new words
     "deleted",           # removed, or kept as "This post was deleted" for its replies
     "replies_changed",   # a reply to this post was deleted, so its reply count changed
+    "hidden", "shown",   # report: the post just reached, or just fell below, HIDE_AFTER_REPORTS
 )
 
 
@@ -852,7 +906,7 @@ def connect(db_path):
 
 # The newest version of the database: the number the last upgrade below sets.
 # Each new upgrade raises it by one, and the tests read it from here.
-LATEST_VERSION = 10
+LATEST_VERSION = 11
 
 
 def create_tables(db_path):
@@ -905,6 +959,8 @@ def create_tables(db_path):
         upgrade_to_replies(connection)
     if version < 10:
         upgrade_to_edit_delete(connection)
+    if version < 11:
+        upgrade_to_report(connection)
     connection.close()
 
 
@@ -1294,6 +1350,38 @@ def upgrade_to_edit_delete(connection):
         raise
 
 
+def upgrade_to_report(connection):
+    """Version 11: the reports table. Every row in every other table is kept.
+
+    One row for each person who reported each post. There is no "hidden"
+    column anywhere: a post is hidden when it has HIDE_AFTER_REPORTS rows here,
+    and that is counted every time (see not_hidden_sql).
+    """
+    connection.execute("BEGIN")
+    try:
+        # PRIMARY KEY (post_id, user_id): one report per person per post. The
+        # database refuses a second one, even if every check in the code is got
+        # around. post_id comes first, so counting one post's reports is fast.
+        # ON DELETE CASCADE: when a post goes, its reports go with it.
+        # The CHECK: the database refuses a reason over 200 characters too.
+        connection.execute("CREATE TABLE IF NOT EXISTS reports ("
+                           "post_id INTEGER NOT NULL REFERENCES posts(id) ON DELETE CASCADE, "
+                           "user_id INTEGER NOT NULL REFERENCES users(id), "
+                           "reason TEXT CHECK (reason IS NULL OR length(reason) <= 200), "
+                           "PRIMARY KEY (post_id, user_id))")
+        connection.execute("PRAGMA user_version = 11")
+        connection.commit()
+    except BaseException:
+        connection.rollback()   # nothing is half done
+        raise
+
+
+# report: a post is hidden from everyone but its author when this many
+# different people have reported it. Counted from the rows in reports every
+# time, never kept as a flag (see not_hidden_sql).
+HIDE_AFTER_REPORTS = 3
+
+
 # Each post, with its author's two names looked up in users, and how many people
 # have liked it. The view reads row["author"], row["display_name"] and row["like_count"].
 # picture_alt is the description of the post's picture, or NULL when it has none
@@ -1318,7 +1406,11 @@ POSTS_WITH_AUTHORS = ("SELECT posts.id, users.name AS author, users.display_name
                       # post is edited exactly when it has an earlier version.
                       "EXISTS (SELECT 1 FROM post_versions "
                       "WHERE post_versions.post_id = posts.id) AS edited, "
-                      "posts.deleted_at IS NOT NULL AS deleted "
+                      "posts.deleted_at IS NOT NULL AS deleted, "
+                      # report: worked out, never stored. Only the author is ever
+                      # sent a hidden post, so only the author ever sees this true.
+                      "(SELECT COUNT(*) FROM reports WHERE reports.post_id = posts.id) "
+                      f">= {HIDE_AFTER_REPORTS} AS hidden_by_reports "
                       "FROM posts JOIN users ON users.id = posts.author_id")
 
 # replies: parent_id is the post a reply answers (NULL for a normal post), and
@@ -2093,6 +2185,7 @@ def visible_to(viewer_id):
     """
     conditions = [
         not_blocked_sql(viewer_id),   # block: not by someone the viewer blocked
+        not_hidden_sql(viewer_id),    # report: not reported by HIDE_AFTER_REPORTS people
     ]
     sql = " AND ".join("(" + piece + ")" for piece, _ in conditions)
     params = [value for _, values in conditions for value in values]
@@ -2361,14 +2454,14 @@ def edit_post(db_path, user_id, post_id, text):
 
 
 def forget_post_details(connection, post_id):
-    """Delete the rows that belong to one post: likes, earlier versions, picture, bookmarks.
+    """Delete the rows that belong to one post: likes, earlier versions, picture, bookmarks, reports.
 
     Every table that points at posts is named here. (pictures, bookmarks and
     post_versions would go by themselves when the post's row goes, ON DELETE
     CASCADE, but a post kept for its replies keeps its row, so they are
     deleted here by hand, in one place.) It does not commit.
     """
-    for table in ("likes", "post_versions", "pictures", "bookmarks"):
+    for table in ("likes", "post_versions", "pictures", "bookmarks", "reports"):
         connection.execute(f"DELETE FROM {table} WHERE post_id = ?", (post_id,))
 
 
@@ -2418,6 +2511,171 @@ def delete_post(db_path, user_id, post_id):
         raise
     finally:
         connection.close()
+
+
+# ---- report: three reports hide a post from everyone but its author ----
+#
+# A post is hidden when HIDE_AFTER_REPORTS different people have reported it.
+# This is counted from the rows in reports every time, never kept as a flag,
+# like a like count. So taking a report back shows the post again by itself,
+# and changing the number applies to every post at once.
+
+MAX_REASON = 200
+
+
+def not_hidden_sql(viewer_id):
+    """A piece of a WHERE, as (sql, params): the post has fewer than HIDE_AFTER_REPORTS reports.
+
+    Its author still sees it. viewer_id is None for a window that is not
+    logged in, and "author_id IS NULL" is never true, so that window does not.
+    It is one line in visible_to, so every list of posts obeys it.
+    """
+    return ("(SELECT COUNT(*) FROM reports WHERE reports.post_id = posts.id) < ? "
+            "OR posts.author_id IS ?", [HIDE_AFTER_REPORTS, viewer_id])
+
+
+def report_count(connection, post_id):
+    """How many people have reported this post. Counted, never stored."""
+    return connection.execute("SELECT COUNT(*) FROM reports WHERE post_id = ?",
+                              (post_id,)).fetchone()[0]
+
+
+def check_reason(reason):
+    """Return the reason without extra spaces, or None if there is none, or raise RuleBroken."""
+    if reason is None:
+        return None
+    if not isinstance(reason, str):
+        raise RuleBroken("report_reason_not_text")
+    reason = reason.strip()
+    if reason == "":
+        return None
+    if len(reason) > MAX_REASON:
+        raise RuleBroken("report_reason_too_long", limit=MAX_REASON)
+    return reason
+
+
+def check_report_rules(connection, user_id, post_id):
+    """Raise RuleBroken if this user may not report this post.
+
+    The rules the database cannot hold: the post exists and is not deleted;
+    it is not your own post; and you had posted before it (you have a post
+    with a smaller id). The last rule stops the cheapest attack: making three
+    new accounts now, to hide a post that is on the timeline now.
+    """
+    post = connection.execute("SELECT author_id FROM posts WHERE id = ? AND deleted_at IS NULL",
+                              (post_id,)).fetchone()
+    if post is None:
+        raise RuleBroken("post_missing")
+    if post["author_id"] == user_id:
+        raise RuleBroken("report_own_post")
+    earlier = connection.execute("SELECT 1 FROM posts WHERE author_id = ? AND id < ? LIMIT 1",
+                                 (user_id, post_id)).fetchone()
+    if earlier is None:
+        raise RuleBroken("report_too_early")
+
+
+def record_visibility_change(connection, post_id, before, after):
+    """Tell open windows when a post crosses HIDE_AFTER_REPORTS, through the changes feed.
+
+    `before` and `after` are its report counts. From under the limit to the
+    limit: "hidden". From the limit to under it: "shown". Any other step (the
+    first report, or the fourth) changes nothing anyone sees, so no change is
+    written. Each window then gets the post as it would see it now
+    (post_as_shown): null for everyone but the author, who keeps it. The
+    change row is only news: whether a post is hidden is still counted.
+    """
+    if before < HIDE_AFTER_REPORTS <= after:
+        record_change(connection, post_id, "hidden")
+    elif after < HIDE_AFTER_REPORTS <= before:
+        record_change(connection, post_id, "shown")
+
+
+def add_report(db_path, user_id, post_id, reason=None):
+    """Save one report by this user, and return the post's id.
+
+    The same person twice on one post is refused: first by the look here, and
+    in the end by the database itself (PRIMARY KEY), like a second like.
+    """
+    post_id = check_change_post_id(post_id)
+    reason = check_reason(reason)
+    connection = connect(db_path)
+    try:
+        # BEGIN IMMEDIATE takes the write lock at once, so the count before and
+        # after this report cannot be changed by another report in between.
+        connection.execute("BEGIN IMMEDIATE")
+        check_report_rules(connection, user_id, post_id)
+        if connection.execute("SELECT 1 FROM reports WHERE post_id = ? AND user_id = ?",
+                              (post_id, user_id)).fetchone() is not None:
+            raise RuleBroken("report_already")
+        before = report_count(connection, post_id)
+        try:
+            connection.execute("INSERT INTO reports (post_id, user_id, reason) VALUES (?, ?, ?)",
+                               (post_id, user_id, reason))
+        except sqlite3.IntegrityError:
+            raise RuleBroken("report_already")
+        record_visibility_change(connection, post_id, before, before + 1)
+        connection.commit()
+    except BaseException:
+        connection.rollback()   # nothing is half done
+        raise
+    finally:
+        connection.close()
+    return post_id
+
+
+def remove_report(db_path, user_id, post_id):
+    """Take this user's report back, and return the post's id.
+
+    A report is a row, so taking it back deletes the row. If that brings the
+    post under HIDE_AFTER_REPORTS, everyone sees it again, with no other code.
+    """
+    post_id = check_change_post_id(post_id)
+    connection = connect(db_path)
+    try:
+        connection.execute("BEGIN IMMEDIATE")
+        before = report_count(connection, post_id)
+        cursor = connection.execute("DELETE FROM reports WHERE post_id = ? AND user_id = ?",
+                                    (post_id, user_id))
+        if cursor.rowcount == 0:
+            raise RuleBroken("report_not_there")
+        record_visibility_change(connection, post_id, before, before - 1)
+        connection.commit()
+    except BaseException:
+        connection.rollback()
+        raise
+    finally:
+        connection.close()
+    return post_id
+
+
+def reports_for(db_path, user_id):
+    """Three lists of post ids: (hidden, mine_hidden, reported).
+
+    hidden: posts hidden from this viewer (other people's hidden posts).
+    mine_hidden: this user's own posts that are hidden from others.
+    reported: the posts this user has reported.
+    The last two are empty when user_id is None. Never a count and never who
+    reported: a count would say "one more and it is gone", and names would
+    invite revenge. Only reads.
+    """
+    connection = connect(db_path)
+    try:
+        connection.execute("BEGIN")   # one moment, so the three lists agree
+        rows = connection.execute(
+            "SELECT posts.id, posts.author_id FROM posts "
+            "WHERE (SELECT COUNT(*) FROM reports WHERE reports.post_id = posts.id) >= ? "
+            "ORDER BY posts.id", (HIDE_AFTER_REPORTS,)).fetchall()
+        reported = []
+        if user_id is not None:
+            reported = [row["post_id"] for row in connection.execute(
+                "SELECT post_id FROM reports WHERE user_id = ? ORDER BY post_id", (user_id,))]
+    finally:
+        connection.rollback()   # it only read, so there is nothing to keep
+        connection.close()
+    hidden = [row["id"] for row in rows if user_id is None or row["author_id"] != user_id]
+    mine_hidden = [row["id"] for row in rows
+                   if user_id is not None and row["author_id"] == user_id]
+    return hidden, mine_hidden, reported
 
 
 def changes_after(db_path, after, viewer_id=None):
@@ -2660,7 +2918,9 @@ def post_to_json(row):
             "parent_id": row["parent_id"], "parent_author": row["parent_author"],
             "reply_count": row["reply_count"], "newest_reply_id": row["newest_reply_id"],
             # edit-delete
-            "edited": bool(row["edited"]), "deleted": bool(row["deleted"])}
+            "edited": bool(row["edited"]), "deleted": bool(row["deleted"]),
+            # report: true only on the author's own hidden post (nobody else gets it)
+            "hidden_by_reports": bool(row["hidden_by_reports"])}
 
 
 # edit-delete
@@ -2673,6 +2933,16 @@ def change_to_json(change, post_row):
 
 def changes_to_json(latest, rows):
     return {"latest": latest, "changes": [change_to_json(c, p) for c, p in rows]}
+
+
+def report_to_json(post_id, reported):
+    """report: the answer to a report, or to a report taken back."""
+    return {"post_id": post_id, "reported": reported}
+
+
+def reports_to_json(hidden, mine_hidden, reported):
+    """report: the answer to GET /reports. Three lists of post ids, and no counts."""
+    return {"hidden": hidden, "mine_hidden": mine_hidden, "reported": reported}
 
 
 def deleted_to_json(post_id, post_row):
