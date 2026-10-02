@@ -593,4 +593,69 @@ const WORDS = {
   report_hidden_note: {
     en: "Hidden from others: several people reported it.",
   },
+  // reply-email: refusals, the same codes and English as PROBLEMS in server.py
+  email_empty: {
+    en: "The email address must not be empty.",
+  },
+  email_too_long: {
+    en: "The email address must be {limit} characters or fewer.",
+  },
+  email_not_valid: {
+    en: "That does not look like an email address.",
+  },
+  email_hidden: {
+    en: "The email address must not have hidden characters or line breaks.",
+  },
+  email_link_wrong: {
+    en: "This confirm link is wrong or too old. Add your address again.",
+  },
+  email_missing: {
+    en: "You have no email address saved.",
+  },
+  confirm_email_too_fast_one: {
+    en: "Too many confirm emails. Please try again in {count} second.",
+  },
+  confirm_email_too_fast_other: {
+    en: "Too many confirm emails. Please try again in {count} seconds.",
+  },
+  // reply-email: the words of the page
+  email_heading: {
+    en: "Email",
+  },
+  email_label: {
+    en: "Your email address",
+  },
+  email_save: {
+    en: "Save",
+  },
+  email_remove: {
+    en: "Remove",
+  },
+  email_state_none: {
+    en: "No email address saved.",
+  },
+  email_state_unconfirmed: {
+    en: "Not confirmed yet. Open the link in the confirm email sent to {email}.",
+  },
+  email_state_confirmed: {
+    en: "Confirmed: {email}",
+  },
+  reply_emails_label: {
+    en: "Email me when someone replies",
+  },
+  email_saved: {
+    en: "Saved. Now open the link in the confirm email.",
+  },
+  email_confirmed: {
+    en: "Your email address is confirmed.",
+  },
+  email_removed: {
+    en: "Your email address is removed.",
+  },
+  reply_emails_on: {
+    en: "Reply emails are on.",
+  },
+  reply_emails_off: {
+    en: "Reply emails are off.",
+  },
 };

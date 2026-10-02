@@ -733,6 +733,44 @@ Writing a post does not change: you type plain words.
 - **An `@name` search finds the text `@aiko`** (posts that mention aiko), not the posts aiko wrote.
   The page does not ask whether the account exists.
 
+## Reply emails
+
+When someone replies to your post, Timeline makes an email for you: who replied, what they wrote,
+and a link back, in English and then in Japanese. **Nothing is really sent yet:** the running
+server prints each email in its terminal. Really sending is a later plan.
+
+- **The `emails` table** has at most one row for each person (`user_id` is the primary key): the
+  address, whether it is confirmed, the hash of the confirm link's token, when that link was made,
+  and the reply emails switch. The address is kept away from `users`, which every post query joins,
+  so it cannot slip into a post's JSON. Removing it deletes the row. It points only at `users`,
+  never at `posts` (database version 12).
+- **Who gets an email is the model's rule** (`reply_email_for`): not for your own reply, not for a
+  deleted reply or post, and not for a reply the post's author may not see (`visible_to`, so
+  blocking and reports apply by themselves).
+- **Six routes:** `GET /email`, `POST /email`, `DELETE /email`, `POST /email-confirmations`,
+  `POST /reply-emails` (on) and `DELETE /reply-emails` (off). As with likes, the method says what
+  happens, so the page never sends `true` or `false`.
+- **An address is confirmed before any reply email is made for it**, or anyone could type a
+  stranger's address. The confirm email (printed in the terminal) has a link,
+  `http://localhost:8009/#confirm-email=<token>`. The page reads the token from the address and sends
+  it to the server. The server finds the person **from the token alone, with no login**: the session
+  cookie is `SameSite=Strict`, and a browser does not send it on a visit that starts from a link in
+  an email app. The token is after `#`, which a browser never sends to the server, so it is never in
+  the server's log. One statement checks it and confirms it, so a link works once, for 24 hours.
+  Only its hash is kept, like a session's.
+- **One confirm email every 5 minutes for each person** (a row in `LIMITS`), so nobody can use
+  Timeline to fill a stranger's mailbox.
+- **Why the outbox runs on a thread.** The reply is saved and answered (`201`) first. Only then
+  does `after_reply_saved` ask the model whether an email is due, and hand it to the outbox, which
+  puts it in a queue and returns at once. A thread of its own takes emails from the queue. So a slow
+  or broken outbox can never slow a reply or turn it into an error.
+- **When carrying an email out fails,** one line is printed and the email is forgotten. No second
+  try: the reply is already saved and shown; the email is an extra.
+- **The printed email cannot be faked.** It is framed by two lines, and every line inside starts
+  with `| `. The reply and the post are in quotes, with a line break written as `\n`, as in a
+  post's log line. `EmailMessage` refuses a line break in a header, so a name cannot add a header
+  such as a second `To:`, and an address may not hold `,`, so it cannot become two addresses.
+
 ## 8. Build or borrow
 
 - **Built:** the page, the server and the data model.
@@ -753,6 +791,8 @@ page-only/           open index.html; nothing to start
 with-backend/        make run, then http://localhost:8009
   index.html  style.css  app.js
   server.py          controller · model · view, labelled
+  outbox.py          carries emails out on its own thread (prints them; sends nothing)
+  email_words.py     the words of every email, English and Japanese
   test_server.py     unittest: the rules, accounts and sessions, the upgrade of an older
                      file, saving, "after", likes and unlikes, real round trips, one whole
                      journey through all three levels, and the page and server agreeing

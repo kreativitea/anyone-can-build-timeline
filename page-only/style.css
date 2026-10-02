@@ -730,3 +730,56 @@ time.post-time {
   outline-offset: 2px;
   border-radius: 2px;
 }
+
+/* reply-email */
+/* "Email" under the post box: a box that opens and closes, like "Blocked accounts". */
+.email-settings {
+  margin: 16px 0 0;
+}
+
+.email-settings summary {
+  width: fit-content;
+  color: var(--quiet);
+  cursor: pointer;
+}
+
+/* The address box and Save, on one line when they fit. */
+.email-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 10px 0 0;
+}
+
+.email-form label {
+  flex-basis: 100%;
+}
+
+.email-form input {
+  flex: 1 1 240px;
+  width: auto;
+}
+
+/* "Confirmed: aiko@example.com · Remove". An address can be long: it may break anywhere. */
+.email-state-row {
+  margin: 8px 0 0;
+  color: var(--quiet);
+  overflow-wrap: anywhere;
+}
+
+#email-remove {
+  margin-left: 12px;
+}
+
+/* The switch and its words, side by side. */
+.reply-emails-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0 0;
+}
+
+.reply-emails-row input {
+  width: auto;
+}

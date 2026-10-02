@@ -900,6 +900,7 @@ function showSignedIn(who) {
   showDraft(who);
   loadBookmarks();
   loadBlocked();
+  askEmailSettings();   // reply-email
 }
 
 // Not logged in: show the Log in and Sign up forms, and why, if there is a
@@ -914,6 +915,7 @@ function showSignedOut(reason) {
   clearBookmarks();
   clearPictureBoxes();
   showBlocked([]);
+  showEmailSettings(null);   // reply-email: never show the last person's address
   showStatus(reason);
 }
 
@@ -3331,6 +3333,229 @@ ACTIONS.cancelEdit = cancelEdit;
 ACTIONS.delete = deletePost;
 ACTIONS.versions = toggleVersions;
 
+// ---- reply-email: your email address, and emails when someone replies ----
+//
+// In the "Email" box (shown only when signed in) a person saves an address.
+// The server prints a confirm email in its terminal, with a link:
+// http://localhost:8009/#confirm-email=<token>. Opening that link here sends
+// the token to the server, which confirms the address from the token alone (no
+// login needed). Once it is confirmed, the server makes an email each time
+// someone replies to this person's post, unless the switch is off.
+//
+// The address is what a person wrote, so it is never a key in words.js.
+// The words of this feature are in words.js (email_..., reply_emails_...).
+
+// The same as MAX_EMAIL and EMAIL in server.py, with the same codes.
+const MAX_EMAIL = 254;
+const EMAIL = /^[^@\s,;:<>()\[\]\\"]+@[^@\s,;:<>()\[\]\\"]+\.[^@\s,;:<>()\[\]\\"]+$/;
+
+const emailForm = document.getElementById("email-form");
+const emailBox = document.getElementById("email");
+const emailStateLine = document.getElementById("email-state");
+const emailRemoveButton = document.getElementById("email-remove");
+const replyEmailsRow = document.getElementById("reply-emails-row");
+const replyEmailsBox = document.getElementById("reply-emails");
+
+// The start of the address of a confirm link. The token is after the #, so
+// it never reaches the server's request log.
+const CONFIRM_START = "#confirm-email=";
+
+// The settings as the server last said ({ email, confirmed, reply_emails }),
+// or null when nobody is logged in.
+let emailNow = null;
+
+// Each ask is numbered, so an older answer that comes late never covers a newer one.
+let emailAsks = 0;
+
+// The rules for an address, the same as check_email in server.py, with the
+// same codes. Returns the broken rule as { key, values }, or null if none.
+function emailProblem(address) {
+  if (address === "") {
+    return { key: "email_empty", values: {} };
+  }
+  if (characterCount(address) > MAX_EMAIL) {
+    return { key: "email_too_long", values: { limit: MAX_EMAIL } };
+  }
+  if (HIDDEN_CHARACTERS.test(address)) {
+    return { key: "email_hidden", values: {} };
+  }
+  if (!EMAIL.test(address)) {
+    return { key: "email_not_valid", values: {} };
+  }
+  return null;
+}
+
+// Ask the server for this person's address and switch.
+async function askEmailSettings() {
+  const mine = ++emailAsks;
+  try {
+    const response = await fetch("/email");
+    const answer = await response.json();
+    if (response.ok && mine === emailAsks) {
+      showEmailSettings(answer);
+    }
+    // 401: nobody is logged in, so there is nothing to show.
+  } catch (error) {
+    showStatus("cannot_reach");
+  }
+}
+
+// Show the settings: the box, the line that says how things are, Remove, and
+// the switch (only once the address is confirmed). null: nothing saved.
+function showEmailSettings(settings) {
+  emailNow = settings;
+  emailBox.value = settings !== null && settings.email !== null ? settings.email : "";
+  drawEmailState();
+}
+
+// The line under the box. Words with a value of their own (the address), so
+// not data-words: written again by whenLanguageChanges below.
+function drawEmailState() {
+  const settings = emailNow;
+  const saved = settings !== null && settings.email !== null;
+  if (!saved) {
+    emailStateLine.textContent = say("email_state_none");
+  } else if (!settings.confirmed) {
+    emailStateLine.textContent = say("email_state_unconfirmed", { email: settings.email });
+  } else {
+    emailStateLine.textContent = say("email_state_confirmed", { email: settings.email });
+  }
+  emailRemoveButton.hidden = !saved;
+  replyEmailsRow.hidden = !(saved && settings.confirmed);
+  replyEmailsBox.checked = saved && settings.reply_emails;
+}
+
+whenLanguageChanges(drawEmailState);
+
+// The login has ended: show the Log in form, and the server's reason.
+async function emailLoginEnded(answer) {
+  showSignedOut("");
+  showProblem(answer);
+  await reloadTimeline();
+}
+
+// Save was pressed: send the address. The server saves it unconfirmed, and
+// prints a confirm email in its terminal.
+async function saveEmail(event) {
+  event.preventDefault();
+  const address = emailBox.value.trim();
+  // A quick check on the page. The server checks the same rules again.
+  const problem = emailProblem(address);
+  if (problem !== null) {
+    showStatus(problem.key, problem.values);
+    return;
+  }
+  try {
+    const response = await fetch("/email", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: address }),
+    });
+    const answer = await response.json();
+    if (response.status === 401) {
+      await emailLoginEnded(answer);
+      return;
+    }
+    if (!response.ok) {
+      // The server refused it, and says which rule was broken. One confirm
+      // email per 5 minutes: on 429, Save is turned off for the seconds it says.
+      showProblem(answer);
+      if (response.status === 429) holdForm(emailForm, answer.retry_after);
+      return;
+    }
+    showEmailSettings(answer);
+    showStatus("email_saved");
+  } catch (error) {
+    showStatus("cannot_reach");
+  }
+}
+
+// Remove was pressed: the server forgets the address.
+async function removeEmail() {
+  try {
+    const response = await fetch("/email", { method: "DELETE" });
+    const answer = await response.json();
+    if (response.status === 401) {
+      await emailLoginEnded(answer);
+      return;
+    }
+    if (!response.ok) {
+      showProblem(answer);
+      await askEmailSettings();
+      return;
+    }
+    showEmailSettings(answer);
+    showStatus("email_removed");
+  } catch (error) {
+    showStatus("cannot_reach");
+  }
+}
+
+// The switch was pressed. As with the heart, the method says what happens:
+// POST turns reply emails on, DELETE turns them off. The page never sends true or false.
+async function switchReplyEmails() {
+  const on = replyEmailsBox.checked;
+  try {
+    const response = await fetch("/reply-emails", {
+      method: on ? "POST" : "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    const answer = await response.json();
+    if (response.status === 401) {
+      await emailLoginEnded(answer);
+      return;
+    }
+    if (!response.ok) {
+      showProblem(answer);
+      drawEmailState();   // the switch goes back to how the server last said
+      return;
+    }
+    showEmailSettings(answer);
+    if (answer.reply_emails) {
+      showStatus("reply_emails_on");
+    } else {
+      showStatus("reply_emails_off");
+    }
+  } catch (error) {
+    showStatus("cannot_reach");
+    drawEmailState();
+  }
+}
+
+// The page was opened from a confirm link (#confirm-email=<token>): send the
+// token to the server. It works whether or not this window is logged in,
+// because the token alone proves the person can read the email.
+async function confirmEmailFromLink() {
+  if (!location.hash.startsWith(CONFIRM_START)) {
+    return;
+  }
+  const token = location.hash.slice(CONFIRM_START.length);
+  // Take the token out of the address bar at once, so it is not kept in the
+  // browser's history or copied with the address. A link works only once anyway.
+  history.replaceState(null, "", location.pathname + location.search);
+  try {
+    const response = await fetch("/email-confirmations", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token: token }),
+    });
+    const answer = await response.json();
+    if (!response.ok) {
+      showProblem(answer);
+      return;
+    }
+    showStatus("email_confirmed");
+    // The answer is about the link's owner. Show this window's own settings,
+    // asked with its own login, which may be someone else's.
+    if (account !== null) {
+      await askEmailSettings();
+    }
+  } catch (error) {
+    showStatus("cannot_reach");
+  }
+}
+
 textBox.addEventListener("input", updateCount);
 textBox.addEventListener("input", saveDraft);
 timeline.addEventListener("click", clickOnTimeline);
@@ -3340,6 +3565,12 @@ cancelReplyButton.addEventListener("click", cancelReply);
 loginForm.addEventListener("submit", logIn);
 signupForm.addEventListener("submit", signUp);
 logoutButton.addEventListener("click", logOut);
+emailForm.addEventListener("submit", saveEmail);             // reply-email
+emailRemoveButton.addEventListener("click", removeEmail);
+replyEmailsBox.addEventListener("change", switchReplyEmails);
+// A confirm link pasted into a tab that already shows Timeline changes only the
+// part after #, and the page is not loaded again: so listen for that too.
+window.addEventListener("hashchange", confirmEmailFromLink);
 themeSwitch.value = savedTheme();
 placeBox.value = rememberedPlace();
 themeSwitch.addEventListener("change", chooseTheme);
@@ -3371,6 +3602,7 @@ loadOlderButton.addEventListener("click", loadOlderPosts);
 // the right Block items in their menus (block).
 askWhoIAm().then(function () {
   askForReports();   // report
+  confirmEmailFromLink();   // reply-email: after who is logged in, so its words stay
   watchTheBottom();
   keepChecking();
 });

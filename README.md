@@ -122,6 +122,22 @@ sqlite3 with-backend/timeline.db 'delete from reports where post_id = 12'
 
 To start again with an empty timeline, stop the server and run `make reset`.
 
+## Emails
+
+When someone replies to your post, Timeline can make an email for you. **Nothing is really sent.**
+The server prints each email, whole, in the terminal where you typed `make run`, between an
+`EMAIL (printed here, not sent)` line and an `END OF EMAIL` line.
+
+1. Log in, open **Email** under the post box, type an address, and press **Save**.
+2. Look at the terminal: a confirm email is there, with a link like
+   `http://localhost:8009/#confirm-email=…`. Copy the link into your browser's address bar.
+   The page says *"Your email address is confirmed."* The link works once, for 24 hours.
+3. In another browser (or a private window), log in as someone else and reply to one of your
+   posts. Look at the terminal: an email to you, in English and then Japanese.
+4. Untick **Email me when someone replies** to stop them, or press **Remove** to forget the address.
+
+To see the saved addresses: `sqlite3 with-backend/timeline.db 'select user_id, address, confirmed, reply_emails from emails'`.
+
 ## Check it
 
 ```
@@ -174,6 +190,8 @@ signing up, posting, liking and unliking, with the database file opened and read
 12. **Try a link, a tag and a name.** Post `see https://example.com. #kyoto @aiko`. The link
     opens in a new tab, without the `.`; `#kyoto` and `@aiko` open a search. Post
     `javascript:alert(1)` too: it stays plain words.
+13. **Get a reply email.** Follow the steps in "Emails" above, and watch the email appear in the
+    terminal when someone replies to you.
 
 Each feature changes a different set of parts.
 

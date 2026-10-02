@@ -130,6 +130,29 @@
           <button type="submit" data-words="post_button">Post</button>
         </div>
       </form>
+
+      <!-- reply-email: your email address, and the reply emails switch. A
+           <details> opens and closes by itself. Nothing is really sent: the
+           server prints each email in its terminal. novalidate: the page checks
+           the address itself, with the words from words.js. -->
+      <details id="email-settings" class="email-settings">
+        <summary data-words="email_heading">Email</summary>
+        <form id="email-form" class="email-form" novalidate>
+          <label for="email" data-words="email_label">Your email address</label>
+          <input id="email" type="email" autocomplete="email" maxlength="254">
+          <button type="submit" data-words="email_save">Save</button>
+        </form>
+        <p class="email-state-row">
+          <span id="email-state"></span>
+          <button type="button" id="email-remove" class="link-button"
+                  data-words="email_remove" hidden>Remove</button>
+        </p>
+        <!-- Shown only once the address is confirmed. -->
+        <p id="reply-emails-row" class="reply-emails-row" hidden>
+          <input type="checkbox" id="reply-emails">
+          <label for="reply-emails" data-words="reply_emails_label">Email me when someone replies</label>
+        </p>
+      </details>
     </section>
 
     <p id="status" class="status" role="status"></p>

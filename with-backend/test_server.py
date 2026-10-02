@@ -12,6 +12,7 @@ import ast
 import base64
 import html.parser
 import http.client
+import io
 import http.cookiejar
 import json
 import os
@@ -27,6 +28,7 @@ import urllib.request
 from datetime import datetime, timedelta, timezone
 from unittest import mock
 
+import outbox as outbox_module   # reply-email
 import server
 
 HERE = os.path.dirname(os.path.abspath(server.__file__))
@@ -77,6 +79,29 @@ def use_fake_clock(test):
     patcher.start()
     test.addCleanup(patcher.stop)
     return fake
+
+
+def count_finished_replies(test):
+    """reply-email: a semaphore that counts each reply whose after_reply_saved has finished.
+
+    after_reply_saved runs after the 201 answer has gone, so a test that already
+    has its answer may be a moment ahead of the reply's email. Before looking
+    at the outbox, a test waits: finished.acquire(timeout=10) for each reply.
+    (A semaphore is a counter that a thread can wait on.)
+    """
+    finished = threading.Semaphore(0)
+    original = server.TimelineHandler.after_reply_saved
+
+    def counted(handler, row):
+        try:
+            original(handler, row)
+        finally:
+            finished.release()
+
+    patcher = mock.patch.object(server.TimelineHandler, "after_reply_saved", counted)
+    patcher.start()
+    test.addCleanup(patcher.stop)
+    return finished
 
 
 # ---- Reading words.js (japanese) ----
@@ -1532,14 +1557,15 @@ class ModelTests(unittest.TestCase):
         folder = tempfile.TemporaryDirectory()
         self.addCleanup(folder.cleanup)
         self.db_path = os.path.join(folder.name, "old.db")
-        # Every later upgrade is held back too (pictures, block, replies, edit-delete),
-        # so the file stops before place.
+        # Every later upgrade is held back too (pictures, block, replies, edit-delete,
+        # report, reply-email), so the file stops before place.
         with mock.patch.object(server, "upgrade_to_place", lambda connection: None), \
                 mock.patch.object(server, "upgrade_to_pictures", lambda connection: None), \
                 mock.patch.object(server, "upgrade_to_block", lambda connection: None), \
                 mock.patch.object(server, "upgrade_to_replies", lambda connection: None), \
                 mock.patch.object(server, "upgrade_to_edit_delete", lambda connection: None), \
-                mock.patch.object(server, "upgrade_to_report", lambda connection: None):
+                mock.patch.object(server, "upgrade_to_report", lambda connection: None), \
+                mock.patch.object(server, "upgrade_to_reply_email", lambda connection: None):
             server.create_tables(self.db_path)
         old_version = self.rows("PRAGMA user_version")[0][0]
         self.assertLess(old_version, server.LATEST_VERSION)
@@ -2578,11 +2604,13 @@ class ModelTests(unittest.TestCase):
         # A database at the version before edit-delete, with rows, a reply,
         # and an extra column and index on posts, the way another plan would add them.
         self.db_path = os.path.join(self.folder.name, "before-edit-delete.db")
-        # report (the next version) is held back too, so the file stops before edit-delete.
+        # report and reply-email (the next versions) are held back too, so the
+        # file stops before edit-delete.
         with mock.patch.object(server, "upgrade_to_edit_delete", lambda connection: None), \
-                mock.patch.object(server, "upgrade_to_report", lambda connection: None):
+                mock.patch.object(server, "upgrade_to_report", lambda connection: None), \
+                mock.patch.object(server, "upgrade_to_reply_email", lambda connection: None):
             server.create_tables(self.db_path)
-        self.assertEqual(self.rows("PRAGMA user_version"), [(server.LATEST_VERSION - 2,)])
+        self.assertEqual(self.rows("PRAGMA user_version"), [(server.LATEST_VERSION - 3,)])
         self.clock = use_fake_clock(self)
         aiko = self.sign_up("aiko")
         ben = self.sign_up("ben")
@@ -2816,8 +2844,9 @@ class ModelTests(unittest.TestCase):
         server.add_like(self.db_path, ben, post_id)
         server.edit_post(self.db_path, aiko, post_id, "hello again")
         connection = sqlite3.connect(self.db_path)
+        # (report is one version before reply-email, which runs again harmlessly.)
         connection.executescript(f"DROP TABLE reports; "
-                                 f"PRAGMA user_version = {server.LATEST_VERSION - 1};")
+                                 f"PRAGMA user_version = {server.LATEST_VERSION - 2};")
         connection.close()
         tables = ("users", "posts", "likes", "sessions", "attempts", "post_versions", "changes")
         before = {table: self.rows("SELECT * FROM " + table + " ORDER BY 1, 2")
@@ -2830,6 +2859,305 @@ class ModelTests(unittest.TestCase):
         self.assertEqual(self.rows("PRAGMA foreign_key_check"), [])
         self.assertEqual(self.rows("SELECT * FROM reports"), [])
         server.create_tables(self.db_path)   # twice is harmless
+
+    # -- reply-email: an email address, confirmed by a link, and reply emails --
+
+    def code_of(self, action):
+        """The code of the RuleBroken that `action` raises."""
+        with self.assertRaises(server.RuleBroken) as caught:
+            action()
+        return caught.exception.code
+
+    def confirmed_address(self, user_id, address="aiko@example.com"):
+        """Save an address for this user and confirm it, as the person would."""
+        token, row = server.set_email(self.db_path, user_id, address)
+        return server.confirm_email(self.db_path, token)
+
+    def test_check_email_accepts_an_address_and_trims_spaces(self):
+        self.assertEqual(server.check_email("  aiko@example.com "), "aiko@example.com")
+        self.assertEqual(server.check_email("a.b+c@mail.example.co.jp"), "a.b+c@mail.example.co.jp")
+
+    def test_check_email_refuses_with_a_code(self):
+        for address, code in (("", "email_empty"), ("   ", "email_empty"), (None, "email_empty"),
+                              (7, "email_empty"),
+                              ("aiko.example.com", "email_not_valid"),
+                              ("aiko @example.com", "email_not_valid"),
+                              ("aiko@example", "email_not_valid"),
+                              ("a@b@example.com", "email_not_valid"),
+                              # one address must never become two in an email's To: line
+                              ("a,b@example.com", "email_not_valid"),
+                              ('"Ben" <ben@example.com>', "email_not_valid"),
+                              ("aiko@example.com\nBcc: x@y.z", "email_hidden"),
+                              ("aiko@exam‮ple.com", "email_hidden")):
+            with self.subTest(address=address):
+                self.assertEqual(self.code_of(lambda: server.check_email(address)), code)
+        longest = "a" * (server.MAX_EMAIL - len("@example.com")) + "@example.com"
+        self.assertEqual(server.check_email(longest), longest)
+        with self.assertRaises(server.RuleBroken) as caught:
+            server.check_email("a" + longest)
+        self.assertEqual((caught.exception.code, caught.exception.values),
+                         ("email_too_long", {"limit": 254}))
+
+    def test_an_address_is_saved_unconfirmed_and_only_the_token_s_hash_is_kept(self):
+        use_fake_clock(self)
+        aiko = self.sign_up("aiko")
+        token, row = server.set_email(self.db_path, aiko, "aiko@example.com")
+        self.assertEqual((row["address"], row["confirmed"], row["reply_emails"]),
+                         ("aiko@example.com", 0, 1))
+        self.assertGreaterEqual(len(token), 40)
+        self.assertNotIn(token, all_values_in(self.db_path))
+        self.assertIn(server.hash_token(token), all_values_in(self.db_path))
+        self.assertEqual(server.email_settings_for(self.db_path, aiko)["address"],
+                         "aiko@example.com")
+
+    def test_the_confirm_link_works_once_from_the_token_alone(self):
+        use_fake_clock(self)
+        aiko = self.sign_up("aiko")
+        token, row = server.set_email(self.db_path, aiko, "aiko@example.com")
+        self.assertEqual(self.code_of(lambda: server.confirm_email(self.db_path, "wrong")),
+                         "email_link_wrong")
+        for nothing in ("", None, 7):
+            with self.subTest(token=nothing):
+                self.assertEqual(self.code_of(lambda: server.confirm_email(self.db_path, nothing)),
+                                 "email_link_wrong")
+        # No user id is given: the token alone says whose address it is.
+        row = server.confirm_email(self.db_path, token)
+        self.assertEqual((row["user_id"], row["confirmed"], row["check_hash"]), (aiko, 1, None))
+        self.assertEqual(self.code_of(lambda: server.confirm_email(self.db_path, token)),
+                         "email_link_wrong")
+
+    def test_a_confirm_link_lasts_24_hours(self):
+        clock = use_fake_clock(self)
+        aiko, ben = self.sign_up("aiko"), self.sign_up("ben")
+        aikos, row = server.set_email(self.db_path, aiko, "aiko@example.com")
+        bens, row = server.set_email(self.db_path, ben, "ben@example.com")
+        clock.move(server.CONFIRM_HOURS * 60 * 60 - 1)
+        self.assertEqual(server.confirm_email(self.db_path, aikos)["confirmed"], 1)
+        clock.move(1)
+        self.assertEqual(self.code_of(lambda: server.confirm_email(self.db_path, bens)),
+                         "email_link_wrong")
+        self.assertEqual(server.email_settings_for(self.db_path, ben)["confirmed"], 0)
+
+    def test_a_new_address_is_unconfirmed_again_and_its_old_link_stops_working(self):
+        clock = use_fake_clock(self)
+        aiko = self.sign_up("aiko")
+        first, row = server.set_email(self.db_path, aiko, "aiko@example.com")
+        server.confirm_email(self.db_path, first)
+        server.set_reply_emails(self.db_path, aiko, False)
+        clock.move(301)
+        second, row = server.set_email(self.db_path, aiko, "aiko@example.org")
+        self.assertEqual((row["address"], row["confirmed"], row["reply_emails"]),
+                         ("aiko@example.org", 0, 0))   # the switch stays as she left it
+        self.assertEqual(self.rows("SELECT COUNT(*) FROM emails"), [(1,)])
+        self.assertEqual(self.code_of(lambda: server.confirm_email(self.db_path, first)),
+                         "email_link_wrong")
+
+    def test_one_confirm_email_per_5_minutes_and_a_refused_address_is_not_counted(self):
+        clock = use_fake_clock(self)
+        aiko, ben = self.sign_up("aiko"), self.sign_up("ben")
+        self.code_of(lambda: server.set_email(self.db_path, aiko, "not an address"))
+        server.set_email(self.db_path, aiko, "aiko@example.com")
+        with self.assertRaises(server.TooFast) as caught:
+            server.set_email(self.db_path, aiko, "aiko@example.org")
+        self.assertEqual((caught.exception.code, caught.exception.retry_after),
+                         ("confirm_email_too_fast", 300))
+        self.assertEqual(str(caught.exception),
+                         "Too many confirm emails. Please try again in 300 seconds.")
+        # Each person has their own count.
+        server.set_email(self.db_path, ben, "ben@example.com")
+        clock.move(301)
+        token, row = server.set_email(self.db_path, aiko, "aiko@example.org")
+        self.assertEqual(row["address"], "aiko@example.org")
+
+    def test_removing_an_address_deletes_its_row(self):
+        use_fake_clock(self)
+        aiko = self.sign_up("aiko")
+        server.set_email(self.db_path, aiko, "aiko@example.com")
+        server.remove_email(self.db_path, aiko)
+        self.assertEqual(self.rows("SELECT * FROM emails"), [])
+        self.assertIsNone(server.email_settings_for(self.db_path, aiko))
+        self.assertEqual(self.code_of(lambda: server.remove_email(self.db_path, aiko)),
+                         "email_missing")
+
+    def test_the_reply_emails_switch_needs_an_address(self):
+        use_fake_clock(self)
+        aiko = self.sign_up("aiko")
+        self.assertEqual(self.code_of(lambda: server.set_reply_emails(self.db_path, aiko, False)),
+                         "email_missing")
+        self.confirmed_address(aiko)
+        self.assertEqual(server.set_reply_emails(self.db_path, aiko, False)["reply_emails"], 0)
+        self.assertEqual(server.set_reply_emails(self.db_path, aiko, True)["reply_emails"], 1)
+        self.assertEqual(self.rows("SELECT COUNT(*) FROM users"), [(1,)])   # no one invented
+
+    def test_reply_email_for_decides_who_gets_an_email(self):
+        use_fake_clock(self)
+        aiko = self.sign_up("aiko", "Aiko Tanaka")
+        ben = self.sign_up("ben", "Ben Sato")
+        post = server.save_post(self.db_path, aiko, "the library is open late")
+        # A post that is not a reply: no email.
+        self.assertIsNone(server.reply_email_for(self.db_path, post["id"]))
+        # Aiko has no address yet.
+        first = self.reply_by(ben, post["id"], "see you there")
+        self.assertIsNone(server.reply_email_for(self.db_path, first["id"]))
+        # Not confirmed yet.
+        token, row = server.set_email(self.db_path, aiko, "aiko@example.com")
+        self.assertIsNone(server.reply_email_for(self.db_path, first["id"]))
+        # Confirmed: one row, with what the email needs.
+        server.confirm_email(self.db_path, token)
+        email = server.reply_email_for(self.db_path, first["id"])
+        self.assertEqual((email["address"], email["author"], email["display_name"],
+                          email["reply_text"], email["post_id"], email["post_text"]),
+                         ("aiko@example.com", "ben", "Ben Sato", "see you there", post["id"],
+                          "the library is open late"))
+        # Aiko answers her own post: no email to herself.
+        own = self.reply_by(aiko, post["id"], "me too")
+        self.assertIsNone(server.reply_email_for(self.db_path, own["id"]))
+        # Reply emails turned off: none.
+        server.set_reply_emails(self.db_path, aiko, False)
+        self.assertIsNone(server.reply_email_for(self.db_path, first["id"]))
+        server.set_reply_emails(self.db_path, aiko, True)
+        # block: Aiko blocked Ben after his reply was saved. No email about him.
+        server.add_block(self.db_path, aiko, "ben")
+        self.assertIsNone(server.reply_email_for(self.db_path, first["id"]))
+        # It only reads: nothing was added anywhere.
+        self.assertEqual(self.rows("SELECT COUNT(*) FROM users"), [(2,)])
+
+    def test_no_reply_email_for_a_deleted_reply_or_post_or_a_reply_hidden_by_reports(self):
+        use_fake_clock(self)
+        carol, dan, eve = self.sign_up("carol"), self.sign_up("dan"), self.sign_up("eve")
+        for reporter in (carol, dan, eve):   # report: a reporter must have posted earlier
+            server.save_post(self.db_path, reporter, "an earlier post")
+        aiko, ben = self.sign_up("aiko"), self.sign_up("ben")
+        post = server.save_post(self.db_path, aiko, "a post")
+        self.confirmed_address(aiko)
+        kept = self.reply_by(ben, post["id"], "kept")
+        reported = self.reply_by(ben, post["id"], "reported")
+        deleted = self.reply_by(ben, post["id"], "deleted")
+        self.assertIsNotNone(server.reply_email_for(self.db_path, reported["id"]))
+        # edit-delete: a reply deleted before its email is made gives none.
+        server.delete_post(self.db_path, ben, deleted["id"])
+        self.assertIsNone(server.reply_email_for(self.db_path, deleted["id"]))
+        # report: three reports hide the reply from Aiko too, so no email about it.
+        for reporter in (carol, dan, eve):
+            server.add_report(self.db_path, reporter, reported["id"])
+        self.assertIsNone(server.reply_email_for(self.db_path, reported["id"]))
+        self.assertIsNotNone(server.reply_email_for(self.db_path, kept["id"]))
+        # edit-delete: Aiko deletes her post. It is kept for its replies, but it
+        # has no words, so there is nothing to tell her about.
+        server.delete_post(self.db_path, aiko, post["id"])
+        self.assertIsNone(server.reply_email_for(self.db_path, kept["id"]))
+
+    def test_no_reply_email_for_an_unclaimed_old_user_s_post(self):
+        use_fake_clock(self)
+        ben = self.sign_up("ben")
+        connection = server.connect(self.db_path)
+        old = connection.execute("INSERT INTO users (name, display_name) "
+                                 "VALUES ('Chika', 'Chika')").lastrowid
+        connection.commit()
+        post_id = server.insert_post(connection, old, "an old post",
+                                     posted_at="2026-01-01T00:00:00Z")
+        connection.commit()
+        connection.close()
+        reply = self.reply_by(ben, post_id)
+        self.assertIsNone(server.reply_email_for(self.db_path, reply["id"]))
+
+    def test_the_reply_email_upgrade_keeps_every_row(self):
+        use_fake_clock(self)
+        aiko, ben = self.sign_up("aiko"), self.sign_up("ben")
+        post = server.save_post(self.db_path, aiko, "a post")
+        self.reply_by(ben, post["id"])
+        server.add_like(self.db_path, ben, post["id"])
+        # The database as it was one version before: no emails table.
+        connection = sqlite3.connect(self.db_path)
+        connection.executescript(f"DROP TABLE emails; "
+                                 f"PRAGMA user_version = {server.LATEST_VERSION - 1};")
+        connection.close()
+        tables = ("users", "posts", "likes", "sessions", "attempts", "blocks", "bookmarks")
+        before = {table: self.rows("SELECT * FROM " + table + " ORDER BY 1, 2")
+                  for table in tables}
+        server.create_tables(self.db_path)
+        after = {table: self.rows("SELECT * FROM " + table + " ORDER BY 1, 2")
+                 for table in tables}
+        self.assertEqual(after, before)
+        self.assertEqual(self.rows("PRAGMA user_version"), [(server.LATEST_VERSION,)])
+        self.assertEqual(self.rows("PRAGMA foreign_key_check"), [])
+        self.assertEqual(self.rows("SELECT * FROM emails"), [])
+        server.create_tables(self.db_path)   # twice is harmless
+        self.confirmed_address(aiko)
+        self.assertEqual(self.rows("SELECT user_id, confirmed FROM emails"), [(aiko, 1)])
+
+    def test_the_database_refuses_a_second_address_for_one_person(self):
+        use_fake_clock(self)
+        aiko = self.sign_up("aiko")
+        server.set_email(self.db_path, aiko, "aiko@example.com")
+        connection = server.connect(self.db_path)
+        with self.assertRaises(sqlite3.IntegrityError):
+            connection.execute("INSERT INTO emails (user_id, address) VALUES (?, 'x@y.z')",
+                               (aiko,))
+        with self.assertRaises(sqlite3.IntegrityError):
+            connection.execute("INSERT INTO emails (user_id, address) VALUES (999, 'x@y.z')")
+        connection.close()
+
+    # -- reply-email: the view --
+
+    def reply_email(self, display_name="Ben Sato", reply="see you there"):
+        return server.reply_email_message(
+            {"address": "aiko@example.com", "author": "ben", "display_name": display_name,
+             "reply_text": reply, "post_id": 7, "post_text": "the library is open late"},
+            "http://localhost:8009")
+
+    def test_a_reply_email_has_english_then_japanese(self):
+        message = self.reply_email()
+        self.assertEqual(message["To"], "aiko@example.com")
+        subject = message["Subject"]
+        english, japanese = subject.split(" / ")
+        self.assertEqual(english, "Ben Sato (@ben) replied to your post")
+        self.assertIn("Ben Sato (@ben)", japanese)
+        self.assertRegex(japanese, r"[぀-ヿ]")
+        body = message.get_content()
+        self.assertLess(body.index("replied to your post."), body.index("返信"))
+        self.assertIn('"see you there"', body)
+        self.assertIn('"the library is open late"', body)
+        self.assertIn("http://localhost:8009/#post-7", body)
+        self.assertEqual(message.get_content_type(), "text/plain")
+
+    def test_a_reply_s_line_breaks_stay_inside_its_quotes(self):
+        body = self.reply_email(reply="one\ntwo").get_content()
+        self.assertIn('"one\\ntwo"', body)
+
+    def test_a_display_name_cannot_add_a_header(self):
+        with self.assertRaises(ValueError):
+            self.reply_email(display_name="Ben\nBcc: everyone@example.com")
+
+    def test_a_confirm_email_has_the_token_after_the_hash(self):
+        message = server.confirm_email_message("aiko@example.com", "abc123", "http://localhost:8009")
+        self.assertEqual(message["To"], "aiko@example.com")
+        self.assertTrue(message["Subject"].startswith("Confirm your email address for Timeline / "))
+        body = message.get_content()
+        self.assertIn("http://localhost:8009/#confirm-email=abc123", body)
+        self.assertIn("for 24 hours", body)
+        self.assertNotIn("?", body.split("http://localhost:8009/")[1].split()[0])
+
+    def test_the_settings_json_never_has_the_token(self):
+        use_fake_clock(self)
+        aiko = self.sign_up("aiko")
+        token, row = server.set_email(self.db_path, aiko, "aiko@example.com")
+        self.assertEqual(server.email_settings_to_json(row),
+                         {"email": "aiko@example.com", "confirmed": False, "reply_emails": True})
+        self.assertEqual(server.email_settings_to_json(None),
+                         {"email": None, "confirmed": False, "reply_emails": False})
+
+    def test_every_email_word_has_english_and_japanese_with_the_same_names(self):
+        from email_words import EMAIL_WORDS
+        self.assertEqual(set(EMAIL_WORDS),
+                         {"reply_subject", "reply_body", "confirm_subject", "confirm_body"})
+        for key, entry in EMAIL_WORDS.items():
+            with self.subTest(key=key):
+                self.assertEqual(set(entry), {"en", "ja"})
+                self.assertTrue(entry["en"].strip() and entry["ja"].strip())
+                self.assertEqual(value_names(entry["en"]), value_names(entry["ja"]))
+                self.assertIsNone(re.search(r"[぀-ヿ㐀-鿿]", entry["en"]))
+                self.assertRegex(entry["ja"], r"[぀-ヿ]")
 
 
 class RealServerTest(unittest.TestCase):
@@ -3567,6 +3895,190 @@ class RealServerTest(unittest.TestCase):
     def test_anyone_may_ask_which_posts_are_hidden(self):
         self.assertEqual(self.get("/reports"),
                          {"hidden": [], "mine_hidden": [], "reported": []})
+
+    # -- reply-email --
+
+    def new_window(self):
+        """Another browser window, with no cookies of its own yet."""
+        return urllib.request.build_opener(
+            urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
+
+    def token_in(self, message):
+        """The token in a kept confirm email, read out of its link."""
+        return re.search(r"#confirm-email=(\S+)", message.get_content()).group(1)
+
+    def add_and_confirm_email(self, address="aiko@example.com"):
+        """POST /email, then POST /email-confirmations with the token, from no window at all."""
+        self.send("/email", {"email": address}).close()
+        self.server.outbox.wait_until_sent()
+        request = urllib.request.Request(
+            self.base + "/email-confirmations",
+            data=json.dumps({"token": self.token_in(self.server.outbox.sent[-1])}).encode(),
+            headers={"Content-Type": "application/json"}, method="POST")
+        with urllib.request.urlopen(request) as answer:   # no cookie jar: no login
+            return answer.status, json.loads(answer.read())
+
+    def test_the_email_routes_need_a_login(self):
+        use_fake_clock(self)
+        for path, method in (("/email", "POST"), ("/email", "DELETE"),
+                             ("/reply-emails", "POST"), ("/reply-emails", "DELETE")):
+            with self.subTest(request=method + " " + path):
+                code, reason = self.refused(path, {"email": "aiko@example.com"}, method)
+                self.assertEqual(code, 401)
+        with self.assertRaises(urllib.error.HTTPError) as caught:
+            self.get("/email")
+        self.assertEqual(caught.exception.code, 401)
+        caught.exception.close()
+        self.assertEqual(self.server.outbox.sent, [])
+
+    def test_adding_an_email_answers_201_and_makes_one_confirm_email(self):
+        use_fake_clock(self)
+        self.sign_up().close()
+        self.assertEqual(self.get("/email"),
+                         {"email": None, "confirmed": False, "reply_emails": False})
+        with self.send("/email", {"email": " aiko@example.com "}) as answer:
+            self.assertEqual(answer.status, 201)
+            self.assertEqual(json.loads(answer.read()),
+                             {"email": "aiko@example.com", "confirmed": False,
+                              "reply_emails": True})
+        self.server.outbox.wait_until_sent()
+        self.assertEqual(len(self.server.outbox.sent), 1)
+        message = self.server.outbox.sent[0]
+        self.assertEqual(message["To"], "aiko@example.com")
+        port = str(self.server.server_address[1])
+        self.assertIn("http://localhost:" + port + "/#confirm-email=", message.get_content())
+        code, reason = self.refused("/email", {"email": "aiko"})
+        self.assertEqual((code, reason), (400, "That does not look like an email address."))
+
+    def test_a_second_confirm_email_within_5_minutes_gets_429(self):
+        clock = use_fake_clock(self)
+        self.sign_up().close()
+        self.send("/email", {"email": "aiko@example.com"}).close()
+        with self.assertRaises(urllib.error.HTTPError) as caught:
+            self.send("/email", {"email": "aiko@example.org"})
+        answer = json.loads(caught.exception.read())
+        self.assertEqual((caught.exception.code, caught.exception.headers["Retry-After"]),
+                         (429, "300"))
+        caught.exception.close()
+        self.assertEqual((answer["code"], answer["retry_after"]), ("confirm_email_too_fast", 300))
+        clock.move(301)
+        self.send("/email", {"email": "aiko@example.org"}).close()
+        self.server.outbox.wait_until_sent()
+        self.assertEqual([m["To"] for m in self.server.outbox.sent],
+                         ["aiko@example.com", "aiko@example.org"])
+
+    def test_the_confirm_link_works_with_no_cookie_and_only_once(self):
+        use_fake_clock(self)
+        self.sign_up().close()
+        status, answer = self.add_and_confirm_email()
+        self.assertEqual((status, answer),
+                         (200, {"email": "aiko@example.com", "confirmed": True,
+                                "reply_emails": True}))
+        self.assertTrue(self.get("/email")["confirmed"])
+        # The same link again: refused, by its code.
+        token = self.token_in(self.server.outbox.sent[-1])
+        with self.assertRaises(urllib.error.HTTPError) as caught:
+            self.new_window().open(urllib.request.Request(
+                self.base + "/email-confirmations", data=json.dumps({"token": token}).encode(),
+                headers={"Content-Type": "application/json"}, method="POST"))
+        self.assertEqual((caught.exception.code, json.loads(caught.exception.read())["code"]),
+                         (400, "email_link_wrong"))
+        caught.exception.close()
+
+    def test_the_address_is_in_no_answer_but_its_owner_s(self):
+        use_fake_clock(self)
+        self.sign_up().close()
+        self.add_and_confirm_email()
+        self.send("/posts", {"text": "hello"}).close()
+        self.send("/likes", {"post_id": 1}).close()
+        ben = self.new_window()
+        ben.open(urllib.request.Request(
+            self.base + "/accounts", headers={"Content-Type": "application/json"},
+            data=json.dumps({"account_name": "ben", "display_name": "Ben",
+                             "password": PASSWORD}).encode(), method="POST")).close()
+        for window in (self.window, ben, self.new_window()):
+            for path in ("/posts?after=0", "/posts?before=0", "/likes", "/likers?post_id=1",
+                         "/likesummary?post_ids=1", "/search?q=hello", "/sessions"):
+                with self.subTest(path=path):
+                    try:
+                        with window.open(self.base + path) as answer:
+                            body = answer.read().decode("utf-8")
+                    except urllib.error.HTTPError as refused:
+                        body = refused.read().decode("utf-8")
+                        refused.close()
+                    self.assertNotIn("example.com", body)
+        with ben.open(self.base + "/email") as answer:
+            self.assertEqual(json.loads(answer.read())["email"], None)
+
+    def test_a_reply_is_answered_while_its_email_is_still_waiting(self):
+        use_fake_clock(self)
+
+        class HeldOutbox(server.KeptOutbox):
+            """An outbox that cannot deliver until the test lets it go."""
+            def __init__(self):
+                server.KeptOutbox.__init__(self)
+                self.let_go = threading.Event()
+
+            def deliver(self, message):
+                self.let_go.wait(10)
+                server.KeptOutbox.deliver(self, message)
+
+        finished = count_finished_replies(self)
+        self.sign_up().close()
+        self.add_and_confirm_email()
+        self.send("/posts", {"text": "hello"}).close()
+        held = HeldOutbox()
+        self.server.outbox = held
+        self.addCleanup(held.let_go.set)
+        ben = self.new_window()
+        ben.open(urllib.request.Request(
+            self.base + "/accounts", headers={"Content-Type": "application/json"},
+            data=json.dumps({"account_name": "ben", "display_name": "Ben",
+                             "password": PASSWORD}).encode(), method="POST")).close()
+        reply = urllib.request.Request(
+            self.base + "/posts", headers={"Content-Type": "application/json"},
+            data=json.dumps({"text": "hi", "parent_id": 1}).encode(), method="POST")
+        # The answer comes back while the email cannot be delivered at all.
+        with ben.open(reply) as answer:
+            self.assertEqual(answer.status, 201)
+        self.assertEqual(held.sent, [])
+        self.assertTrue(finished.acquire(timeout=10))
+        self.assertEqual(held.sent, [])   # its email is queued, and still waiting
+        held.let_go.set()
+        held.wait_until_sent()
+        self.assertEqual([m["To"] for m in held.sent], ["aiko@example.com"])
+
+    def test_a_broken_outbox_never_turns_a_reply_into_an_error(self):
+        use_fake_clock(self)
+
+        class BrokenOutbox(server.KeptOutbox):
+            def deliver(self, message):
+                raise OSError("the mail server is down")
+
+        finished = count_finished_replies(self)
+        self.sign_up().close()
+        self.add_and_confirm_email()
+        self.send("/posts", {"text": "hello"}).close()
+        printed = io.StringIO()
+        self.server.outbox = BrokenOutbox(stream=printed)
+        with self.send("/posts", {"text": "me again", "parent_id": 1}) as answer:
+            self.assertEqual(answer.status, 201)   # her own post: no email at all
+        ben = self.new_window()
+        ben.open(urllib.request.Request(
+            self.base + "/accounts", headers={"Content-Type": "application/json"},
+            data=json.dumps({"account_name": "ben", "display_name": "Ben",
+                             "password": PASSWORD}).encode(), method="POST")).close()
+        with ben.open(urllib.request.Request(
+                self.base + "/posts", headers={"Content-Type": "application/json"},
+                data=json.dumps({"text": "hi", "parent_id": 1}).encode(),
+                method="POST")) as answer:
+            self.assertEqual(answer.status, 201)
+        for reply in range(2):
+            self.assertTrue(finished.acquire(timeout=10))
+        self.server.outbox.wait_until_sent()
+        self.assertEqual(printed.getvalue(),
+                         "An email could not be printed: the mail server is down\n")
+        self.assertEqual(len(self.get("/posts?after=0")), 3)
 
 
 class JourneyTest(unittest.TestCase):
@@ -4586,6 +5098,87 @@ class JourneyTest(unittest.TestCase):
         status, found = self.page_searches(aiko, "#Kyoto")
         self.assertEqual([post["id"] for post in found["posts"]], [saved["id"]])
 
+    def test_the_journey_of_an_email_address_and_a_reply_email(self):
+        """reply-email: see askEmailSettings, saveEmail, confirmEmailFromLink,
+        switchReplyEmails and removeEmail in app.js."""
+        use_fake_clock(self)
+        aiko, ben = self.open_window(), self.open_window()
+        email_link = self.open_window()   # the browser that opens the link: no login at all
+        outbox = self.server.outbox
+        finished = count_finished_replies(self)
+
+        def emails_after_the_reply():
+            """How many emails there are, once the reply's own email (if any) is out."""
+            self.assertTrue(finished.acquire(timeout=10))
+            outbox.wait_until_sent()
+            return len(outbox.sent)
+
+        def nobody_else_sees_the_address():
+            for window in (ben, email_link):
+                self.assertNotIn("aiko@example.com", json.dumps(self.page_asks_for_new_posts(window)))
+                self.assertNotIn("aiko@example.com", json.dumps(self.page_asks_for_counts(window)))
+            status, answer = self.page_sends(ben, "/email", None, "GET")
+            self.assertIsNone(answer["email"])
+
+        # 1. Both sign up. Aiko posts. She has no address yet.
+        self.page_signs_up(aiko, "aiko", "Aiko Tanaka")
+        self.page_signs_up(ben, "ben", "Ben Sato")
+        status, post = self.page_posts(aiko, "the library is open late")
+        self.assertEqual(self.page_sends(aiko, "/email", None, "GET"),
+                         (200, {"email": None, "confirmed": False, "reply_emails": False}))
+
+        # 2. Aiko saves her address: one row, unconfirmed, and one confirm email.
+        status, answer = self.page_sends(aiko, "/email", {"email": "aiko@example.com"}, "POST")
+        self.assertEqual((status, answer["confirmed"]), (201, False))
+        outbox.wait_until_sent()
+        self.assertEqual(len(outbox.sent), 1)
+        token = re.search(r"#confirm-email=(\S+)", outbox.sent[0].get_content()).group(1)
+        self.assertEqual(self.rows("SELECT address, confirmed, check_hash IS NOT NULL, "
+                                   "reply_emails FROM emails"),
+                         [("aiko@example.com", 0, 1, 1)])
+        self.assertNotIn(token, all_values_in(self.db_path))
+        nobody_else_sees_the_address()
+
+        # 3. She opens the link in a browser with no login: confirmed.
+        status, answer = self.page_sends(email_link, "/email-confirmations",
+                                         {"token": token}, "POST")
+        self.assertEqual((status, answer["confirmed"]), (200, True))
+        self.assertEqual(self.rows("SELECT confirmed, check_hash IS NULL FROM emails"),
+                         [(1, 1)])
+
+        # 4. Ben replies to Aiko's post: exactly one email, to Aiko.
+        self.page_sends(ben, "/posts", {"text": "see you there", "parent_id": post["id"]},
+                        "POST")
+        self.assertEqual(emails_after_the_reply(), 2)
+        self.assertEqual(outbox.sent[1]["To"], "aiko@example.com")
+        self.assertIn('"see you there"', outbox.sent[1].get_content())
+        nobody_else_sees_the_address()
+
+        # 5. Aiko answers her own post: no new email.
+        self.page_sends(aiko, "/posts", {"text": "great", "parent_id": post["id"]}, "POST")
+        self.assertEqual(emails_after_the_reply(), 2)
+
+        # 6. Aiko turns reply emails off. Ben replies again: no new email.
+        status, answer = self.page_sends(aiko, "/reply-emails", {}, "DELETE")
+        self.assertEqual((status, answer["reply_emails"]), (200, False))
+        self.assertEqual(self.rows("SELECT reply_emails FROM emails"), [(0,)])
+        self.page_sends(ben, "/posts", {"text": "and again", "parent_id": post["id"]}, "POST")
+        self.assertEqual(emails_after_the_reply(), 2)
+        status, answer = self.page_sends(aiko, "/reply-emails", {}, "POST")
+        self.assertEqual((status, answer["reply_emails"]), (200, True))
+
+        # 7. Aiko removes her address: the row is gone, and she gets no more emails.
+        status, answer = self.page_sends(aiko, "/email", None, "DELETE")
+        self.assertEqual((status, answer["email"]), (200, None))
+        self.assertEqual(self.rows("SELECT * FROM emails"), [])
+        self.page_sends(ben, "/posts", {"text": "hello?", "parent_id": post["id"]}, "POST")
+        self.assertEqual(emails_after_the_reply(), 2)
+        code, reason = self.is_refused(self.page_sends, aiko, "/reply-emails", {}, "POST")
+        self.assertEqual((code, reason), (400, "You have no email address saved."))
+        # Nobody was added: two people, as at the start.
+        self.assertEqual(self.rows("SELECT name FROM users ORDER BY id"), [("aiko",), ("ben",)])
+
+
 class BookmarkJourneyTest(unittest.TestCase):
     """The journey of a private bookmark, through all three levels at once.
 
@@ -4735,9 +5328,12 @@ class PageAndServerAgreeTest(unittest.TestCase):
 
     def test_the_page_asks_only_for_routes_the_server_answers(self):
         asked = set(re.findall(r'fetch\("(/[a-z]*)', self.page_code))
+        # The regular expression stops at "-": "/email-confirmations" is
+        # found as "/email", and "/reply-emails" as "/reply".
         self.assertEqual(asked, {"/posts", "/likes", "/sessions", "/accounts",
                                  "/likers", "/likesummary", "/search", "/bookmarks",
-                                 "/blocks", "/changes", "/versions", "/reports"})
+                                 "/blocks", "/changes", "/versions", "/reports",
+                                 "/email", "/reply"})
 
     def test_the_page_names_only_the_methods_tried_below(self):
         # A GET needs no method, so the page names only the others.
@@ -5746,6 +6342,71 @@ class PageAndServerAgreeTest(unittest.TestCase):
         self.assertIn('countOf(link, ")") > countOf(link, "(")', trim)
         self.assertIn('countOf(link, "]") > countOf(link, "[")', trim)
 
+    # -- reply-email --
+
+    def test_the_page_has_the_model_s_email_rules(self):
+        self.assertIn(f"const MAX_EMAIL = {server.MAX_EMAIL};", self.page_code)
+        self.assertIn("const EMAIL = /^" + server.EMAIL.pattern + "$/;", self.page_code)
+        keys = re.findall(r'key: "(\w+)"', functions_in(self.page_code)["emailProblem"])
+        self.assertEqual(keys, ["email_empty", "email_too_long", "email_hidden",
+                                "email_not_valid"])
+        for key in keys:
+            self.assertIn(key, server.PROBLEMS)
+
+    def test_the_server_answers_every_email_request_the_page_makes(self):
+        functions = functions_in(self.page_code)
+        self.assertIn('fetch("/email")', functions["askEmailSettings"])
+        self.assertIn('fetch("/email", {', functions["saveEmail"])
+        self.assertIn('method: "POST"', functions["saveEmail"])
+        self.assertIn('fetch("/email", { method: "DELETE" })', functions["removeEmail"])
+        self.assertIn('fetch("/reply-emails", {', functions["switchReplyEmails"])
+        self.assertIn('method: on ? "POST" : "DELETE"', functions["switchReplyEmails"])
+        self.assertIn('fetch("/email-confirmations", {', functions["confirmEmailFromLink"])
+        for method, path in (("GET", "/email"), ("POST", "/email"), ("DELETE", "/email"),
+                             ("POST", "/email-confirmations"), ("POST", "/reply-emails"),
+                             ("DELETE", "/reply-emails")):
+            with self.subTest(request=method + " " + path):
+                self.assertNotIn(self.answer_code(method, path), (404, 501))
+
+    def test_the_page_sends_the_names_the_email_routes_read(self):
+        functions = functions_in(self.page_code)
+        self.assertIn("JSON.stringify({ email: address })", functions["saveEmail"])
+        self.assertIn("JSON.stringify({ token: token })", functions["confirmEmailFromLink"])
+        self.assertIn('data.get("email")', self.function_in_server("add_email"))
+        self.assertIn('data.get("token")', self.function_in_server("confirm_email_link"))
+
+    def test_the_confirm_link_is_read_after_the_hash_and_taken_out_of_the_address(self):
+        confirm = functions_in(self.page_code)["confirmEmailFromLink"]
+        self.assertIn('const CONFIRM_START = "#confirm-email=";', self.page_code)
+        self.assertIn("location.hash.startsWith(CONFIRM_START)", confirm)
+        self.assertIn("history.replaceState(", confirm)
+        # The answer is about the link's owner: this window asks for its own settings.
+        self.assertNotIn("showEmailSettings(answer)", confirm)
+        self.assertIn("confirmEmailFromLink();", self.page_code)
+        # Pasted into a tab that already shows Timeline: only the # part changes.
+        self.assertIn('window.addEventListener("hashchange", confirmEmailFromLink);',
+                      self.page_code)
+        self.assertIn("/#confirm-email=", server.confirm_email_message("a@b.c", "t", "x")
+                      .get_content())
+
+    def test_the_email_box_follows_who_is_logged_in(self):
+        functions = functions_in(self.page_code)
+        self.assertIn("askEmailSettings();", functions["showSignedIn"])
+        self.assertIn("showEmailSettings(null);", functions["showSignedOut"])
+        self.assertIn("holdForm(emailForm, answer.retry_after)", functions["saveEmail"])
+        with open(os.path.join(HERE, "index.html"), encoding="utf-8") as page_file:
+            html = page_file.read()
+        signed_in = html[html.index('<section id="signed-in"'):]
+        signed_in = signed_in[:signed_in.index("</section>")]
+        for part in ('id="email-settings"', '<form id="email-form"', 'novalidate',
+                     'id="email" type="email" autocomplete="email"', 'id="email-state"',
+                     'id="email-remove"', 'id="reply-emails-row" class="reply-emails-row" hidden',
+                     'type="checkbox" id="reply-emails"'):
+            with self.subTest(part=part):
+                self.assertIn(part, signed_in)
+        self.assertIn("whenLanguageChanges(drawEmailState);", self.page_code)
+
+
 class ColoursTest(unittest.TestCase):
     """The Colours switch (Auto, Light, Dark) and the colours themselves.
 
@@ -6011,6 +6672,104 @@ class PostTextTests(unittest.TestCase):
         self.assertEqual(server.trim_link_end("https://x.com/[1]"), "https://x.com/[1]")
         self.assertEqual(server.trim_link_end("https://x.com/1]."), "https://x.com/1")
         self.assertEqual(server.trim_link_end(""), "")
+
+
+class OutboxTests(unittest.TestCase):
+    """reply-email: outbox.py. It carries emails out on its own thread.
+
+    No test here prints to the real terminal or sends anything: a ConsoleOutbox
+    is given a StringIO (a piece of text that acts like a terminal) to print into.
+    """
+
+    def email(self, reply="see you there", display_name="Ben Sato"):
+        return server.reply_email_message(
+            {"address": "aiko@example.com", "author": "ben", "display_name": display_name,
+             "reply_text": reply, "post_id": 7, "post_text": "the library is open late"},
+            "http://localhost:8009")
+
+    def printed(self, *messages):
+        terminal = io.StringIO()
+        outbox = outbox_module.ConsoleOutbox(stream=terminal)
+        for message in messages:
+            outbox.send_later(message)
+        outbox.wait_until_sent()
+        return terminal.getvalue()
+
+    def test_the_console_prints_the_whole_email_inside_a_frame(self):
+        lines = self.printed(self.email()).splitlines()
+        self.assertEqual(lines[0], outbox_module.EMAIL_START)
+        self.assertIn("printed here, not sent", lines[0])
+        self.assertEqual(lines[-1], outbox_module.EMAIL_END)
+        for line in lines[1:-1]:
+            with self.subTest(line=line):
+                self.assertTrue(line.startswith("| "))
+        self.assertEqual(lines[1], "| To:      aiko@example.com")
+        self.assertTrue(lines[2].startswith("| Subject: Ben Sato (@ben) replied to your post / "))
+        self.assertIn('| "see you there"', lines)
+
+    def test_a_reply_cannot_fake_the_end_of_the_email(self):
+        fake = "x\n" + outbox_module.EMAIL_END + "\n15:42  Ben @ben: \"fake\" \x1b[2Kgone"
+        text = self.printed(self.email(reply=fake))
+        lines = text.splitlines()
+        self.assertEqual(lines.count(outbox_module.EMAIL_END), 1)
+        self.assertEqual(lines[-1], outbox_module.EMAIL_END)
+        for line in lines[1:-1]:
+            self.assertTrue(line.startswith("| "))
+        self.assertNotIn("\x1b", text)   # a terminal's control codes are never printed
+
+    def test_japanese_is_printed_as_japanese(self):
+        text = self.printed(self.email(display_name="田中 ベン"))
+        self.assertIn("田中 ベン (@ben) から返信きたよ", text)
+        self.assertIn("あなたの投稿", text)
+        self.assertNotIn("=?utf-8?", text)
+
+    def test_an_email_that_fails_prints_one_line_and_the_next_one_still_goes(self):
+        class Fussy(outbox_module.KeptOutbox):
+            def deliver(self, message):
+                if message["To"] == "broken@example.com":
+                    raise OSError("no\nway")
+                outbox_module.KeptOutbox.deliver(self, message)
+
+        terminal = io.StringIO()
+        outbox = Fussy(stream=terminal)
+        broken = server.confirm_email_message("broken@example.com", "t", "http://localhost:8009")
+        outbox.send_later(broken)
+        outbox.send_later(self.email())
+        outbox.wait_until_sent()
+        self.assertEqual(terminal.getvalue(), "An email could not be printed: no way\n")
+        self.assertEqual([m["To"] for m in outbox.sent], ["aiko@example.com"])
+
+    def test_the_kept_outbox_prints_nothing(self):
+        with mock.patch("sys.stdout", new_callable=io.StringIO) as terminal:
+            outbox = outbox_module.KeptOutbox()
+            outbox.send_later(self.email())
+            outbox.wait_until_sent()
+        self.assertEqual(terminal.getvalue(), "")
+        self.assertEqual(len(outbox.sent), 1)
+
+    def test_a_server_made_with_no_outbox_only_keeps_its_emails(self):
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        made = server.make_server(0, os.path.join(folder.name, "test.db"))
+        self.addCleanup(made.server_close)
+        self.assertIsInstance(made.outbox, outbox_module.KeptOutbox)
+        self.assertEqual(made.base_url, "http://localhost:" + str(made.server_address[1]))
+        console = outbox_module.ConsoleOutbox()
+        given = server.make_server(0, os.path.join(folder.name, "test.db"), outbox=console)
+        self.addCleanup(given.server_close)
+        self.assertIs(given.outbox, console)
+
+    def test_only_the_running_server_prints_emails(self):
+        with open(os.path.join(HERE, "server.py"), encoding="utf-8") as server_file:
+            code = server_file.read()
+        self.assertEqual(code.count("ConsoleOutbox()"), 1)
+        main = code[code.index('if __name__ == "__main__":'):]
+        self.assertIn("outbox=ConsoleOutbox()", main)
+        self.assertIn("Emails are printed here, not sent.", main)
+        # Nothing really sends: no mail library is used anywhere.
+        for name in ("server.py", "outbox.py", "email_words.py"):
+            with open(os.path.join(HERE, name), encoding="utf-8") as file:
+                self.assertNotIn("smtplib", file.read())
 
 
 if __name__ == "__main__":

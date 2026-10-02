@@ -2,8 +2,9 @@
 
 This file has three parts:
   CONTROLLER  reads each request and decides what to do
-  MODEL       the rules, and the database (eleven tables: users, posts, likes, sessions,
-              attempts, bookmarks, pictures, blocks, post_versions, changes and reports)
+  MODEL       the rules, and the database (twelve tables: users, posts, likes, sessions,
+              attempts, bookmarks, pictures, blocks, post_versions, changes, reports
+              and emails)
   VIEW        turns database rows into the JSON answer
 The server never translates: a refusal names its rule by a code (see PROBLEMS),
 and the page shows the words for that code in the reader's language (words.js).
@@ -23,8 +24,12 @@ import secrets
 import sqlite3
 import time
 from datetime import datetime, timezone
+from email.message import EmailMessage
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
+
+from email_words import EMAIL_WORDS            # reply-email: the words of each email
+from outbox import ConsoleOutbox, KeptOutbox   # reply-email: carries each email out
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(HERE, "timeline.db")
@@ -104,6 +109,8 @@ class TimelineHandler(BaseHTTPRequestHandler):
             self.show_blocks()
         elif url.path == "/reports":
             self.show_reports()
+        elif url.path == "/email":
+            self.show_email_settings()
         elif url.path.startswith("/pictures/"):
             self.send_picture(url.path)
         elif url.path == "/sessions":
@@ -134,7 +141,7 @@ class TimelineHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         path = urlparse(self.path).path
         if path not in ("/posts", "/likes", "/accounts", "/sessions", "/bookmarks", "/blocks",
-                        "/reports"):
+                        "/reports", "/email", "/email-confirmations", "/reply-emails"):
             self.send_nothing_here("POST", path)
             return
         data = self.read_json()
@@ -155,6 +162,12 @@ class TimelineHandler(BaseHTTPRequestHandler):
                 self.take_block(data)
             elif path == "/reports":
                 self.take_report(data)
+            elif path == "/email":
+                self.add_email(data)
+            elif path == "/email-confirmations":
+                self.confirm_email_link(data)
+            elif path == "/reply-emails":
+                self.turn_reply_emails(True)
             else:
                 self.take_post(data)
         except TooFast as problem:
@@ -179,6 +192,12 @@ class TimelineHandler(BaseHTTPRequestHandler):
             return
         if path == "/posts":
             self.take_delete()   # edit-delete
+            return
+        if path == "/email":
+            self.drop_email()
+            return
+        if path == "/reply-emails":
+            self.turn_reply_emails(False)
             return
         if path != "/likes":
             self.send_nothing_here("DELETE", path)
@@ -315,8 +334,92 @@ class TimelineHandler(BaseHTTPRequestHandler):
         The place for reply-email: it adds its lines here, with the saved row
         (it has id, author, parent_id and parent_author). The answer has already
         been sent, so nothing done here can slow a reply or turn it into an error.
-        Today it does nothing.
+
+        reply-email: the model decides whether the post's author gets an email,
+        the view writes it, and the outbox carries it out on its own thread.
+        send_later only puts the email in a queue, so the reply never waits.
         """
+        try:
+            email = reply_email_for(self.server.db_path, row["id"])   # model: should we?
+            if email is not None:
+                # view, then out
+                self.server.outbox.send_later(reply_email_message(email, self.server.base_url))
+        except (sqlite3.Error, ValueError) as error:
+            # The reply is saved and answered already; only its email is lost.
+            print("A reply email could not be made: " + " ".join(str(error).split()),
+                  flush=True)
+
+    # reply-email: your email address, and whether you want reply emails. Every
+    # route needs a login, except confirming: the confirm link works from its
+    # token alone. The address is only ever sent to its owner, in these answers.
+
+    def show_email_settings(self):
+        """GET /email: your address (or null), whether it is confirmed, and the switch."""
+        user = self.signed_in_user()
+        if user is None:
+            return
+        self.send_json(200, email_settings_to_json(email_settings_for(self.server.db_path,
+                                                                      user["id"])))
+
+    def add_email(self, data):
+        """POST /email {"email": "aiko@example.com"}: save it, unconfirmed, and send a confirm email.
+
+        TooFast (one confirm email per 5 minutes) is caught by do_POST.
+        """
+        user = self.signed_in_user()
+        if user is None:
+            return
+        try:
+            token, row = set_email(self.server.db_path, user["id"], data.get("email"))
+        except RuleBroken as problem:
+            self.send_problem(400, problem)
+            return
+        # Only into a queue, so the page never waits for the email. It is queued
+        # before the answer, so once the page has its answer, the email is on its way.
+        self.server.outbox.send_later(confirm_email_message(row["address"], token,
+                                                            self.server.base_url))
+        self.send_json(201, email_settings_to_json(row))
+
+    def confirm_email_link(self, data):
+        """POST /email-confirmations {"token": "..."}: the link in the confirm email.
+
+        It needs no login. The session cookie is SameSite=Strict, so a browser
+        may not send it when the link is opened from an email app, and the token
+        alone already proves that this person can read the email.
+        """
+        try:
+            row = confirm_email(self.server.db_path, data.get("token"))
+        except RuleBroken as problem:
+            self.send_problem(400, problem)
+            return
+        self.send_json(200, email_settings_to_json(row))
+
+    def drop_email(self):
+        """DELETE /email: forget your address."""
+        user = self.signed_in_user()
+        if user is None:
+            return
+        try:
+            remove_email(self.server.db_path, user["id"])
+        except RuleBroken as problem:
+            self.send_problem(400, problem)
+            return
+        self.send_json(200, email_settings_to_json(None))   # 200: nothing was created
+
+    def turn_reply_emails(self, on):
+        """POST /reply-emails turns reply emails on; DELETE /reply-emails turns them off.
+
+        The method says which, as with likes, so the page never sends true or false.
+        """
+        user = self.signed_in_user()
+        if user is None:
+            return
+        try:
+            row = set_reply_emails(self.server.db_path, user["id"], on)
+        except RuleBroken as problem:
+            self.send_problem(400, problem)
+            return
+        self.send_json(200, email_settings_to_json(row))
 
     def take_like(self, data):
         user = self.signed_in_user()
@@ -640,15 +743,16 @@ class TimelineHandler(BaseHTTPRequestHandler):
 
 # ============================================================================
 #  MODEL
-#  The rules, and the database. Eleven tables: users (each person once, with
+#  The rules, and the database. Twelve tables: users (each person once, with
 #  both names and a salted password hash), posts (each post points at its
 #  author by the author's id), likes (one row for each person who liked each
 #  post), sessions (one row for each window that is logged in), attempts
 #  (for the rate limits), bookmarks (one private row for each post a
 #  person saved), pictures, blocks (one row for each person who blocked
-#  another), post_versions (the earlier words of each edited post) and
-#  changes (one row for each "this post changed", for open windows to hear)
-#  and reports (one row for each person who reported each post).
+#  another), post_versions (the earlier words of each edited post),
+#  changes (one row for each "this post changed", for open windows to hear),
+#  reports (one row for each person who reported each post), and emails
+#  (at most one email address for each person).
 #  A new rule goes here, never in the controller or the view.
 # ============================================================================
 
@@ -739,6 +843,16 @@ PIECE = re.compile("(?:" + LINK.pattern + ")|(?:" + TAG.pattern + ")|(?:" + NAME
 # a fake line in the server's terminal.
 HIDDEN_CHARACTERS = re.compile(
     r"[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u2028-\u202e\u2066-\u2069]")
+
+# reply-email: an email address. MAX_EMAIL is the longest address email allows.
+MAX_EMAIL = 254
+# Something, @, something, a dot, something. Not a full check of every address
+# rule (only a confirm email proves an address). Each part has no @, no space,
+# and none of the marks that mean something in an email's To: line (, ; : < >
+# ( ) [ ] \ "), so one address can never turn into two. app.js has the same text.
+EMAIL = re.compile(r'[^@\s,;:<>()\[\]\\"]+@[^@\s,;:<>()\[\]\\"]+\.[^@\s,;:<>()\[\]\\"]+')
+# A confirm link works once, for this many hours.
+CONFIRM_HOURS = 24
 
 # Every way a request can be refused, by code, with its English sentence.
 #
@@ -842,6 +956,16 @@ PROBLEMS = {
     "report_not_there": "You have not reported that post.",
     "report_reason_not_text": "The reason must be text.",
     "report_reason_too_long": "The reason must be {limit} characters or fewer.",
+    # reply-email
+    "email_empty": "The email address must not be empty.",
+    "email_too_long": "The email address must be {limit} characters or fewer.",
+    "email_not_valid": "That does not look like an email address.",
+    "email_hidden": "The email address must not have hidden characters or line breaks.",
+    "email_link_wrong": "This confirm link is wrong or too old. Add your address again.",
+    "email_missing": "You have no email address saved.",
+    "confirm_email_too_fast_one": "Too many confirm emails. Please try again in {count} second.",
+    "confirm_email_too_fast_other": "Too many confirm emails. "
+                                    "Please try again in {count} seconds.",
 }
 
 # One code for a wrong name and for a wrong password, so a stranger cannot use
@@ -899,11 +1023,14 @@ CHANGE_KINDS = (
 # every limit. A post or a like is counted for each signed-in user, a login
 # for each account name typed, and a sign-up for each address. Sign-ups are
 # 30 an hour because today every request comes from 127.0.0.1, so everyone
-# using the server shares that one count.
-LIMITS = {"post": (5, 60), "like": (30, 60), "login": (5, 600), "signup": (30, 3600)}
+# using the server shares that one count. A confirm email (reply-email) is
+# counted for each signed-in user: one every 5 minutes, so nobody can use
+# Timeline to fill a stranger's mailbox.
+LIMITS = {"post": (5, 60), "like": (30, 60), "login": (5, 600), "signup": (30, 3600),
+          "confirm_email": (1, 300)}
 # The code (in PROBLEMS) for "too many, too quickly", for each limit.
 TOO_FAST = {"post": "post_too_fast", "like": "like_too_fast", "login": "login_too_fast",
-            "signup": "signup_too_fast"}
+            "signup": "signup_too_fast", "confirm_email": "confirm_email_too_fast"}
 
 
 class TooFast(Problem):
@@ -929,7 +1056,7 @@ def connect(db_path):
 
 # The newest version of the database: the number the last upgrade below sets.
 # Each new upgrade raises it by one, and the tests read it from here.
-LATEST_VERSION = 11
+LATEST_VERSION = 12
 
 
 def create_tables(db_path):
@@ -984,6 +1111,8 @@ def create_tables(db_path):
         upgrade_to_edit_delete(connection)
     if version < 11:
         upgrade_to_report(connection)
+    if version < 12:
+        upgrade_to_reply_email(connection)
     connection.close()
 
 
@@ -1399,6 +1528,44 @@ def upgrade_to_report(connection):
         raise
 
 
+def upgrade_to_reply_email(connection):
+    """Version 12: the emails table. It only adds a table, so every row is kept.
+
+    At most one row for each person: user_id is the primary key, so the
+    database itself refuses a second address for one person. Removing your
+    address deletes the row, like taking back a like. The address is kept
+    once, here, and never copied into another table. It is not unique: one
+    person may have two accounts with one mailbox.
+
+    - confirmed is 1 once the confirm link was opened.
+    - check_hash is the hash of the confirm link's token (hash_token), never
+      the token itself, so a copy of timeline.db cannot confirm an address.
+      NULL once confirmed.
+    - check_sent_at is when the confirm email was made, in seconds (clock).
+    - reply_emails is the "Email me when someone replies" switch: on (1) at first.
+
+    edit-delete's rule for new tables: emails points only at users, never at
+    posts, and holds none of a post's words. So deleting a post never touches
+    it, and it needs no ON DELETE and no line in forget_post_details. Nothing
+    deletes a user.
+    """
+    connection.execute("BEGIN")
+    try:
+        connection.execute("CREATE TABLE IF NOT EXISTS emails ("
+                           "user_id INTEGER PRIMARY KEY REFERENCES users(id), "
+                           "address TEXT NOT NULL, "
+                           "confirmed INTEGER NOT NULL DEFAULT 0 CHECK (confirmed IN (0, 1)), "
+                           "check_hash TEXT UNIQUE, "
+                           "check_sent_at INTEGER, "
+                           "reply_emails INTEGER NOT NULL DEFAULT 1 "
+                           "CHECK (reply_emails IN (0, 1)))")
+        connection.execute("PRAGMA user_version = 12")
+        connection.commit()
+    except BaseException:
+        connection.rollback()   # nothing is half done
+        raise
+
+
 # report: a post is hidden from everyone but its author when this many
 # different people have reported it. Counted from the rows in reports every
 # time, never kept as a flag (see not_hidden_sql).
@@ -1597,7 +1764,7 @@ def hash_token(token):
 
 
 def clock():
-    """The time now, in seconds. Only the rate limits use it.
+    """The time now, in seconds. The rate limits and the confirm links use it.
 
     The tests put a fake clock here and move it forward, so they never wait
     for real. Sessions use time.time() instead, so moving the fake clock never
@@ -2994,6 +3161,164 @@ def post_text_pieces(text):
     return pieces
 
 
+# ---- reply-email: your email address, and the email when someone replies ----
+#
+# An address is saved unconfirmed, with the hash of a token. The token goes out
+# in a confirm email; opening its link confirms the address. Only then can a
+# reply email be made for it. Every function takes the user id the controller
+# got from the session cookie (confirm_email takes only the token). None of
+# them takes a name, and none adds a user.
+
+def check_email(address):
+    """Return the address without extra spaces, or raise RuleBroken."""
+    address = address.strip() if isinstance(address, str) else ""
+    if address == "":
+        raise RuleBroken("email_empty")
+    if len(address) > MAX_EMAIL:
+        raise RuleBroken("email_too_long", limit=MAX_EMAIL)
+    # Before the pattern: a line break is a kind of space, and it deserves its own words.
+    if HIDDEN_CHARACTERS.search(address):
+        raise RuleBroken("email_hidden")
+    if not EMAIL.fullmatch(address):
+        raise RuleBroken("email_not_valid")
+    return address
+
+
+def email_settings_for(db_path, user_id):
+    """This user's row in emails, or None. Only reads."""
+    connection = connect(db_path)
+    try:
+        return connection.execute("SELECT * FROM emails WHERE user_id = ?",
+                                  (user_id,)).fetchone()
+    finally:
+        connection.close()
+
+
+def set_email(db_path, user_id, address):
+    """Save this address for this user, unconfirmed, and return (token, row).
+
+    The token goes in the confirm email. Only its hash is saved. A new address
+    is always unconfirmed again, even the same one. The rate limit is counted
+    after the rules, so a refused address is not counted.
+    """
+    address = check_email(address)
+    use_allowance(db_path, "confirm_email", str(user_id))
+    token = secrets.token_urlsafe(32)
+    connection = connect(db_path)
+    try:
+        # INSERT, or if this user already has a row (ON CONFLICT), change it.
+        # The reply_emails switch is kept as the person left it.
+        connection.execute(
+            "INSERT INTO emails (user_id, address, confirmed, check_hash, check_sent_at) "
+            "VALUES (?, ?, 0, ?, ?) "
+            "ON CONFLICT (user_id) DO UPDATE SET address = excluded.address, confirmed = 0, "
+            "check_hash = excluded.check_hash, check_sent_at = excluded.check_sent_at",
+            (user_id, address, hash_token(token), int(clock())))
+        connection.commit()
+    finally:
+        connection.close()
+    return token, email_settings_for(db_path, user_id)
+
+
+def confirm_email(db_path, token):
+    """Confirm the address whose confirm link holds this token. Return its row.
+
+    It needs only the token, never a login. The link works once (check_hash
+    becomes NULL), and only for CONFIRM_HOURS. A wrong, used or old token
+    raises RuleBroken. BEGIN IMMEDIATE takes the write lock first, so the same
+    link opened twice at the same moment confirms only once.
+    """
+    if not isinstance(token, str) or token == "":
+        raise RuleBroken("email_link_wrong")
+    oldest = int(clock()) - CONFIRM_HOURS * 60 * 60
+    connection = connect(db_path)
+    try:
+        connection.execute("BEGIN IMMEDIATE")
+        found = connection.execute("SELECT user_id FROM emails "
+                                   "WHERE check_hash = ? AND check_sent_at > ?",
+                                   (hash_token(token), oldest)).fetchone()
+        if found is None:
+            connection.rollback()
+            raise RuleBroken("email_link_wrong")
+        connection.execute("UPDATE emails SET confirmed = 1, check_hash = NULL "
+                           "WHERE user_id = ?", (found["user_id"],))
+        connection.commit()
+    finally:
+        connection.close()
+    return email_settings_for(db_path, found["user_id"])
+
+
+def remove_email(db_path, user_id):
+    """Forget this user's address. The row is deleted, not marked."""
+    connection = connect(db_path)
+    try:
+        cursor = connection.execute("DELETE FROM emails WHERE user_id = ?", (user_id,))
+        if cursor.rowcount == 0:
+            raise RuleBroken("email_missing")
+        connection.commit()
+    finally:
+        connection.close()
+
+
+def set_reply_emails(db_path, user_id, on):
+    """Turn this user's reply emails on (True) or off (False). Return the row."""
+    connection = connect(db_path)
+    try:
+        cursor = connection.execute("UPDATE emails SET reply_emails = ? WHERE user_id = ?",
+                                    (1 if on else 0, user_id))
+        if cursor.rowcount == 0:
+            raise RuleBroken("email_missing")
+        connection.commit()
+    finally:
+        connection.close()
+    return email_settings_for(db_path, user_id)
+
+
+def reply_email_for(db_path, reply_id):
+    """The rule that decides: should the author of the post this reply answers get an email?
+
+    Returns one row (the reply's text and its writer's two names; the post's
+    id and text; the address of the post's author), or None. None when the
+    post is not a reply, or is gone or deleted (edit-delete); when the post it
+    answers is deleted; when you answered your own post; when the post's
+    author has no address, has not confirmed it, or turned reply emails off;
+    or when the post's author may not see the reply. That last one is
+    visible_to, for the post's author as the viewer, so it covers every
+    reason a post is hidden from someone: they blocked its writer (block), or
+    it was reported by enough people (report), and any later one too.
+    It only reads.
+    """
+    connection = connect(db_path)
+    try:
+        # One read transaction: both reads see the database at the same moment.
+        connection.execute("BEGIN")
+        owner = connection.execute("SELECT parents.author_id FROM posts AS replies "
+                                   "JOIN posts AS parents ON parents.id = replies.parent_id "
+                                   "WHERE replies.id = ?", (reply_id,)).fetchone()
+        if owner is None:
+            return None   # not a reply, or no such post
+        visible_sql, visible_params = visible_to(owner["author_id"])
+        return connection.execute(
+            "SELECT replies.text AS reply_text, writers.name AS author, "
+            "writers.display_name, parents.id AS post_id, parents.text AS post_text, "
+            "emails.address "
+            "FROM posts AS replies "
+            "JOIN posts AS parents ON parents.id = replies.parent_id "
+            "JOIN users AS writers ON writers.id = replies.author_id "
+            "JOIN emails ON emails.user_id = parents.author_id "
+            "WHERE replies.id = ? "
+            "AND replies.deleted_at IS NULL AND parents.deleted_at IS NULL "
+            "AND parents.author_id <> replies.author_id "
+            "AND emails.confirmed = 1 AND emails.reply_emails = 1 "
+            # visible_to's text names posts and users: inside this small
+            # SELECT, those are the reply's own row and its writer.
+            "AND replies.id IN (SELECT posts.id FROM posts "
+            "JOIN users ON users.id = posts.author_id WHERE " + visible_sql + ")",
+            [reply_id] + list(visible_params)).fetchone()
+    finally:
+        connection.close()
+
+
 # ============================================================================
 #  VIEW
 #  Turns database rows into the JSON the page reads, and the cookie it keeps.
@@ -3151,14 +3476,80 @@ def post_to_log_line(row):
     return line
 
 
+# ---- reply-email: the emails, and the settings the page shows ----
+
+def email_settings_to_json(row):
+    """Your address (or null), whether it is confirmed, and the reply emails switch.
+
+    Only ever sent to the address's owner. The token and its hash never leave the server.
+    """
+    if row is None:
+        return {"email": None, "confirmed": False, "reply_emails": False}
+    return {"email": row["address"], "confirmed": row["confirmed"] == 1,
+            "reply_emails": row["reply_emails"] == 1}
+
+
+def both_languages(key, values, between):
+    """The English words of EMAIL_WORDS[key] filled in, `between`, then the Japanese.
+
+    The server does not know the reader's language, so every email has both.
+    """
+    entry = EMAIL_WORDS[key]
+    return entry["en"].format(**values) + between + entry["ja"].format(**values)
+
+
+def make_email(address, subject_key, body_key, values):
+    """An email (EmailMessage) to this address, in plain text, in both languages.
+
+    EmailMessage refuses a line break inside a header, so a value can never
+    add a header of its own (such as a second To:). The subject joins the two
+    languages with " / ", the body with a blank line.
+    """
+    message = EmailMessage()
+    message["To"] = address
+    message["Subject"] = both_languages(subject_key, values, " / ")
+    message.set_content(both_languages(body_key, values, "\n\n"))
+    return message
+
+
+def reply_email_message(row, base_url):
+    """The email to the author of a post someone replied to. `row` is from reply_email_for.
+
+    The reply and the post are put in quotes, with a line break written as \\n,
+    as post_to_log_line does. The link opens the timeline at that post.
+    """
+    return make_email(row["address"], "reply_subject", "reply_body", {
+        "display_name": row["display_name"], "account_name": row["author"],
+        "reply": json.dumps(row["reply_text"], ensure_ascii=False),
+        "post": json.dumps(row["post_text"], ensure_ascii=False),
+        "link": base_url + "/#post-" + str(row["post_id"])})
+
+
+def confirm_email_message(address, token, base_url):
+    """The email with the confirm link. The token is after #, so it never reaches
+    the server's request log: the page reads it and sends it in a request body."""
+    return make_email(address, "confirm_subject", "confirm_body", {
+        "link": base_url + "/#confirm-email=" + token, "hours": CONFIRM_HOURS})
+
+
 # ============================================================================
 #  Starting the server
 # ============================================================================
 
-def make_server(port, db_path):
+def make_server(port, db_path, outbox=None):
+    """The server, with its database ready. `outbox` carries emails out (reply-email).
+
+    With no outbox, emails are only kept (KeptOutbox), never printed or sent:
+    so every test, which gives none, sends nothing. Only the running server
+    (below) gives a ConsoleOutbox.
+    """
     create_tables(db_path)
     server = ThreadingHTTPServer(("127.0.0.1", port), TimelineHandler)
     server.db_path = db_path
+    server.outbox = outbox if outbox is not None else KeptOutbox()
+    # The start of every link in an email. server_address has the real port,
+    # even when port 0 asked for any free one.
+    server.base_url = "http://localhost:" + str(server.server_address[1])
     return server
 
 
@@ -3166,9 +3557,10 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run the Timeline server.")
     parser.add_argument("--port", type=int, default=8009)
     port = parser.parse_args().port
-    server = make_server(port, DB_PATH)
+    server = make_server(port, DB_PATH, outbox=ConsoleOutbox())
     print("Timeline is running at http://localhost:" + str(port))
     print("The posts are kept in " + DB_PATH)
+    print("Emails are printed here, not sent.")
     print("Press Ctrl+C to stop.")
     try:
         server.serve_forever()

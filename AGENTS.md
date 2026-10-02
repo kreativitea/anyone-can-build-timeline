@@ -31,8 +31,10 @@ piece of text the browser keeps and sends back by itself), never from a name in 
 | `with-backend/app.js` | Asks the server who is logged in, sends sign-ups, logins, log-outs, posts, likes and likes taken back, and asks for new posts and new like counts every second. Remembers the Colours choice in `localStorage`. It keeps a half-written post in this browser's `localStorage`, one per account, removed after posting or logging out. It shows who liked each post, and asks for the names only when a count changes. It searches posts (`GET /search`) and shows the results in their own view. It asks for the newest page of posts, older pages on scroll, and holds new posts behind a "3 new posts" button while you read lower down. It sends bookmarks and bookmarks taken back, and asks for your bookmarks (never every second). It remembers the last place typed (`timeline-place`), forgotten on log out. It edits and deletes your own posts, shows earlier versions, and asks for changes (`GET /changes`) every second, before new posts. |
 | `with-backend/server.py` | The backend, in three labelled parts: **controller**, **model**, **view**. |
 | `with-backend/words.js` | Every word the page shows, by key (`WORDS`). English only for now; Japanese comes later. |
+| `with-backend/outbox.py` | Carries emails out, on its own thread: `ConsoleOutbox` prints each one in the terminal (the running server); `KeptOutbox` keeps them in a list (the tests). Nothing is really sent. |
+| `with-backend/email_words.py` | The words of every email, `en` and `ja` (`EMAIL_WORDS`). The server may not hold Japanese in `server.py`, so they live here. |
 | `with-backend/test_server.py` | The checks for `server.py`, and for the page and the server agreeing. |
-| `with-backend/timeline.db` | The database, in eleven tables. The server creates it when it starts, and brings an older one up to date. It is not in git. |
+| `with-backend/timeline.db` | The database, in twelve tables. The server creates it when it starts, and brings an older one up to date. It is not in git. |
 | `Makefile` | Short commands: `make run`, `make test`, `make reset`, `make worktree BRANCH=name`. |
 
 The Colours choice (Auto, Light or Dark) is the only thing the page keeps in `localStorage`
@@ -56,9 +58,10 @@ The three parts of `server.py`:
   `has_replies`, `visible_replies`, `post_as_shown`, `check_change_post_id`, `own_post`,
   `record_change`, `edit_post`, `forget_post_details`, `delete_post`, `changes_after`,
   `versions_of`, `not_hidden_sql`, `report_count`, `check_reason`, `check_report_rules`,
-  `record_visibility_change`, `add_report`, `remove_report`, `reports_for`, and `create_tables`
-  with its upgrades):
-  the rules, and the database, in eleven tables:
+  `record_visibility_change`, `add_report`, `remove_report`, `reports_for`, `check_email`,
+  `email_settings_for`, `set_email`, `confirm_email`, `remove_email`, `set_reply_emails`,
+  `reply_email_for`, and `create_tables` with its upgrades):
+  the rules, and the database, in twelve tables:
   - `users`: each person once. `name` is the account name (unique, capitals ignored),
     `display_name` is the name shown, and `password_salt`, `password_hash`, `password_rounds` hold
     a hash of the password. The password itself is never kept.
@@ -87,6 +90,10 @@ The three parts of `server.py`:
   - `reports`: one row for each person who reported each post, with an optional reason (200
     characters at most, also a `CHECK`). `PRIMARY KEY (post_id, user_id)`: one report each.
     `ON DELETE CASCADE`. See "Reports".
+  - `emails`: at most one email address for each person (`user_id` is the primary key), whether
+    it is `confirmed`, the hash of its confirm link's token (`check_hash`, never the token), when
+    that link was made (`check_sent_at`), and the reply emails switch (`reply_emails`). Removing an
+    address deletes the row. See "Email" below.
 
   A name is kept once, in `users`; never copy it into another table. Only sign-up
   (`create_account`) adds a user: posting, liking and reading never do. A like count is never kept
@@ -103,8 +110,10 @@ The three parts of `server.py`:
   every time, never stored.
 - **View** (`post_to_json`, `picture_to_json`, `posts_to_json`, `account_to_json`, `like_to_json`, `likes_to_json`,
   `likers_to_json`, `summaries_to_json`, `search_to_json`, `blocks_to_json`, `change_to_json`,
-  `changes_to_json`, `report_to_json`, `reports_to_json`, `deleted_to_json`, `version_to_json`, `versions_to_json`, `problem_to_json`, `session_cookie`, `post_to_log_line`): turns database rows into the JSON the page reads, the
-  cookie, and the one line printed for each new post.
+  `changes_to_json`, `report_to_json`, `reports_to_json`, `deleted_to_json`, `version_to_json`, `versions_to_json`, `problem_to_json`, `session_cookie`, `post_to_log_line`,
+  `email_settings_to_json`, `both_languages`, `make_email`, `reply_email_message`,
+  `confirm_email_message`): turns database rows into the JSON the page reads, the
+  cookie, the one line printed for each new post, and each email.
 
 The database knows its own version (`PRAGMA user_version`). An older `timeline.db` from before
 accounts is upgraded when the server starts, and keeps every row. Its old users have no password:
@@ -356,7 +365,7 @@ no `parent_id`, `save_post`; a `parent_id`, `save_reply`.
   plain-text draft still loads (`readDraft`). The words are the `reply_` keys, `replying_to` and
   `replies_label` in `words.js`.
 - **The hook for `reply-email`** is `TimelineHandler.after_reply_saved(row)`. `take_post` calls it
-  only for a reply, after the `201` answer has gone. It does nothing today.
+  only for a reply, after the `201` answer has gone. `reply-email` uses it (see "Email").
 - `upgrade_to_replies` (database version 9) added the column, the index `posts_by_parent` and the
   trigger.
 
@@ -434,13 +443,53 @@ out in `POSTS_WITH_AUTHORS`, and only the author is ever sent a hidden post.
 - Un-hide a post (the person running the server):
   `sqlite3 with-backend/timeline.db 'delete from reports where post_id = 12'`
 
+## Email
+
+When someone replies to your post, Timeline makes an email for you, **if** you saved an address
+in the "Email" box (shown only when signed in), confirmed it, and left "Email me when someone
+replies" on. **Nothing is really sent:** the running server prints each email, whole, in its
+terminal.
+
+- **Deciding is the model, writing is the view, carrying out is `outbox.py`.** `reply_email_for`
+  (model) decides, and only reads: no email for a post that is not a reply, for a reply or a post
+  that is deleted (edit-delete), for a reply to your own post, with no confirmed address, with the
+  switch off, or for a reply the post's author may not see. That last one is `visible_to` with the
+  post's author as the viewer, so a reply by someone they blocked, or one hidden by reports, makes
+  no email, and so will any later reason to hide a post. `reply_email_message` and `confirm_email_message` (view) write an `EmailMessage`,
+  English first, then Japanese, from `email_words.py`. The outbox only carries it out.
+- **The outbox runs on its own thread** (a second line of work in the same program).
+  `send_later` only puts the email in a queue (a waiting line), so a request never waits for an
+  email. If carrying one out fails, one line is printed and the email is forgotten: no second try.
+- **`ConsoleOutbox` frames each email** with an `EMAIL` line and an `END OF EMAIL` line, and every
+  line inside starts with `| `, so a reply's text can never fake the end of an email or a post's
+  log line. Only the `if __name__ == "__main__":` block gives one. `make_server(port, db_path)`
+  with no outbox uses a `KeptOutbox`, so **tests never print or send an email**; they read
+  `server.outbox.sent`. A reply's email is made after its answer, so a test waits for it with
+  `count_finished_replies` and `outbox.wait_until_sent()`.
+- **The routes:** `GET /email`; `POST /email` `{"email"}` (saves it unconfirmed, and makes a
+  confirm email); `DELETE /email`; `POST /email-confirmations` `{"token"}`; `POST /reply-emails`
+  (on) and `DELETE /reply-emails` (off). All but confirming need a login. The address is in no
+  answer except its owner's.
+- **The confirm link works from the token alone**, with no login: the session cookie is
+  `SameSite=Strict`, so a browser may not send it when a link is opened from an email app. The link
+  is `http://localhost:<port>/#confirm-email=<token>`; the token is after `#`, so it never reaches
+  the server's log. The page (`confirmEmailFromLink`) reads it, sends it with `fetch`, and takes
+  it out of the address bar. It works once, for `CONFIRM_HOURS` (24). Only the token's hash is kept.
+- **One confirm email per person per 5 minutes:** the `confirm_email` row in `LIMITS`, through
+  `use_allowance` (`confirm_email_too_fast`).
+- `EMAIL` and `MAX_EMAIL` (254) are in the model and, the same, in `app.js`. An address may not
+  hold `, ; : < > ( ) [ ] \ "`, so one address can never become two in an email's `To:` line.
+- `upgrade_to_reply_email` (database version 12) added the `emails` table. It points only at
+  `users`, never at `posts`, and holds none of a post's words, so edit-delete's rule for new tables
+  (`ON DELETE`, `forget_post_details`) does not apply to it.
+
 ## How to run it
 
 - Page-only: open `page-only/index.html` in a browser. Nothing to start.
 - With a backend: `make run`, then open <http://localhost:8009>. Press Ctrl+C to stop.
 - Start again with an empty timeline: `make reset`.
 - See what is saved:
-  `sqlite3 with-backend/timeline.db 'select * from users; select * from posts; select * from likes; select * from sessions; select * from attempts; select * from bookmarks; select * from blocks; select * from post_versions; select * from changes; select * from reports; select post_id, kind, length(bytes), alt_text from pictures'`
+  `sqlite3 with-backend/timeline.db 'select * from users; select * from posts; select * from likes; select * from sessions; select * from attempts; select * from bookmarks; select * from blocks; select * from post_versions; select * from changes; select * from reports; select user_id, address, confirmed, reply_emails from emails; select post_id, kind, length(bytes), alt_text from pictures'`
 
 It needs only `python3` (3.9 or newer). Do not add libraries, packages or a build step.
 Write code that runs on Python 3.9: no `match` statements, and no `X | Y` in type hints.
