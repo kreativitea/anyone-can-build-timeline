@@ -7,8 +7,8 @@
    Components, in this order:
      field       label, input, textarea, select, .hint, .count
      button      button (every <button>), .button-link, .button-quiet, .button-pill
-     glass       .glass, .glass-strong (a frosted, see-through surface: glass-style)
-     card        .card (a glass box), and .disclosure when open
+     glass       .glass (the control layer: frost, rim, depth and sheen; liquid-glass)
+     card        .card (a solid box of the content layer), and .disclosure when open
      disclosure  .disclosure (a <details> box that opens and closes)
      menu        .menu (the "⋯" menu of a post)
      tabs        .tabs (a row of view buttons, one current)
@@ -17,7 +17,8 @@
      post        .timeline (a list of posts), .post and its slots and states
      hidden      .visually-hidden (words for a screen reader only)
    The layout (classic-layout), the page's three areas:
-     top-bar     .top-bar (the glass bar across the top), .top-bar-inner, .top-bar-title
+     top-bar     .top-bar (the floating glass bar), .top-bar-inner, .top-bar-title,
+                 .top-bar-group, .scroll-edge (where posts fade out under the bar)
      columns     .columns (the two columns under the bar), .dashboard (left), .stream (right)
      stream      .stream-header (the name of the view, at the top of the stream)
      profile     .profile-card (your circle, names and two counts)
@@ -156,7 +157,7 @@ button {
    only decoration. */
 .button-pill {
   padding: var(--space-1) var(--space-5);
-  border: var(--hairline) solid var(--glass-edge);
+  border: var(--hairline) solid var(--separator);
   border-radius: var(--radius-pill);
   background: var(--track);
   color: var(--quiet);
@@ -185,50 +186,127 @@ button:disabled:not(.button-pill) {
 }
 
 .button-pill:disabled:hover {
-  border-color: var(--glass-edge);
+  border-color: var(--separator);
   color: var(--quiet);
 }
 
 
-/* ---- glass: a frosted, see-through surface (glass-style) ---- */
+/* ---- glass: the control layer (liquid-glass) ---- */
 
-/* .glass lets the wash behind it show through, blurred, with a hairline edge,
-   a faint light line along its top and a soft shadow. Cards, an open
-   disclosure and the stream are glass. The posts inside the stream are NOT
-   glass: they are plain rows on it, because blurring every post would make
-   scrolling slow. Where the computer asks for less transparency or more
-   contrast, or the browser cannot blur, the tokens make it solid (tokens.css).
-   -webkit-backdrop-filter is the same thing, for Safari. */
+/* Glass is only for what floats above the content and is pressed: the top
+   bar, an open "⋯" menu and "3 new posts". Never for cards or posts (they are
+   the content layer, below), and never glass on glass: the controls inside the
+   bar are fills. It is four parts, drawn by one element and its two
+   pseudo-elements (isolation keeps them inside it):
+   1. the body (frost): --glass-filter blurs what is behind, squeezes it toward
+      middle grey and makes it more colourful again; --glass-tint lies on it.
+      -webkit-backdrop-filter is the same thing, for Safari.
+   2. the rim (::before): a hairline all around, bright at two corners and
+      dim along the sides. The mask keeps only the edge of the gradient.
+   3. the depth (box-shadow): light inside the edge, a thin dark line outside,
+      and two soft shadows under it.
+   4. the sheen (::after): a soft light near the top, under the words. It is
+      brighter while the glass is pressed.
+   The fallbacks (less transparency, more contrast, no blur) are tokens only
+   (tokens.css), so they need nothing here.
+   Part B (not built yet) adds the bent edge for the browsers that can draw it,
+   under html.refracts, after these rules. */
 .glass,
+.top-bar,
+.menu[open] > ul {
+  position: relative;
+  isolation: isolate;
+  border: none;
+  background: var(--glass-tint);
+  color: var(--text);
+  box-shadow: var(--glass-depth), var(--shadow-float);
+  -webkit-backdrop-filter: var(--glass-filter);
+  backdrop-filter: var(--glass-filter);
+}
+
+.glass::before,
+.top-bar::before,
+.menu[open] > ul::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  padding: var(--hairline);
+  border-radius: inherit;
+  background-image: var(--rim);
+  -webkit-mask: linear-gradient(var(--opaque) 0 0) content-box, linear-gradient(var(--opaque) 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(var(--opaque) 0 0) content-box exclude, linear-gradient(var(--opaque) 0 0);
+  pointer-events: none;
+}
+
+.glass::after,
+.top-bar::after,
+.menu[open] > ul::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  background-image: var(--glass-sheen);
+  opacity: var(--sheen-rest);
+  pointer-events: none;
+  transition: opacity var(--duration-quick) ease;
+}
+
+/* Pressed, the glass lights up from inside. */
+.glass:active::after,
+.top-bar:active::after,
+.menu[open] > ul:active::after {
+  opacity: 1;
+}
+
+/* A button on glass squashes a little while it is pressed. */
+.glass:is(button),
+.top-bar button,
+.menu li > button {
+  transition: scale var(--duration-quick) var(--ease-spring),
+    background-color var(--duration-quick) ease;
+}
+
+.glass:is(button):active,
+.top-bar button:active,
+.menu li > button:active {
+  scale: var(--press-scale);
+}
+
+/* Glass that appears grows out of where it comes from, with a small spring. */
+@keyframes glass-open {
+  from {
+    opacity: 0;
+    scale: var(--open-scale);
+  }
+}
+
+/* "3 new posts" slides down from under the bar. */
+@keyframes glass-arrive {
+  from {
+    opacity: 0;
+    translate: 0 calc(-1 * var(--space-6));
+  }
+}
+
+
+/* ---- card: a solid box of the content layer ---- */
+
+/* An empty card shows no box at all (an empty list of posts). A disclosure
+   (below) becomes a card while it is open. liquid-glass: cards and the stream
+   are solid --surface with large, smooth corners and a very soft shadow, on
+   the calm page; the glass is kept for the controls. Each feature gives its
+   card the room inside it (padding). */
 .card:not(:empty),
 .disclosure[open],
 .stream {
-  border: var(--hairline) solid var(--glass-edge);
+  border: var(--hairline) solid var(--surface-edge);
   border-radius: var(--radius-large);
-  background: var(--glass);
-  box-shadow: var(--glass-shine), var(--shadow-soft);
-  -webkit-backdrop-filter: var(--glass-filter);
-  backdrop-filter: var(--glass-filter);
+  corner-shape: var(--corner-shape);
+  background: var(--surface);
+  box-shadow: var(--shadow-content);
 }
-
-/* .glass-strong: more solid glass, for what floats over other things: the
-   top bar, an open "⋯" menu and "3 new posts". It has no corners of its own. */
-.glass-strong,
-.top-bar,
-.menu[open] > ul {
-  border: var(--hairline) solid var(--glass-edge);
-  background: var(--glass-strong);
-  box-shadow: var(--glass-shine), var(--shadow-raised);
-  -webkit-backdrop-filter: var(--glass-filter);
-  backdrop-filter: var(--glass-filter);
-}
-
-
-/* ---- card: a glass box with large round corners ---- */
-
-/* An empty card shows no box at all (an empty list of posts). A disclosure
-   (below) becomes a card while it is open. A card is glass (above). Each
-   feature gives its card the room inside it (padding). */
 
 
 /* ---- disclosure: a <details> box that opens and closes, with no JavaScript ---- */
@@ -248,6 +326,10 @@ button:disabled:not(.button-pill) {
 /* ---- menu: the "⋯" menu, a disclosure with no triangle and a list of buttons ---- */
 
 /* The "⋯" itself: a small round patch under the mouse. */
+.menu {
+  position: relative;
+}
+
 .menu summary {
   padding: 0 var(--space-4);
   border-radius: var(--radius-pill);
@@ -263,39 +345,53 @@ button:disabled:not(.button-pill) {
 }
 
 .menu ul {
-  margin: var(--space-2) 0 0;
+  margin: 0;
   padding: 0;
   list-style: none;
 }
 
-/* Open, the list is a small panel of strong glass (above), one row for each
-   item, each row tinted under the mouse. */
+/* liquid-glass: open, the list floats over the posts under it as thick glass
+   (above), and grows out of its "⋯". Its rows are rounded concentric with it. */
 .menu[open] > ul {
-  width: fit-content;
-  padding: var(--space-2);
-  border-radius: var(--radius);
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: var(--layer-menu);
+  width: max-content;
+  min-width: calc(3 * var(--avatar));
+  margin-top: var(--space-2);
+  padding: var(--popover-pad);
+  border-radius: var(--radius-popover);
+  corner-shape: var(--corner-shape);
+  background: var(--glass-tint-thick);
+  -webkit-backdrop-filter: var(--glass-filter-thick);
+  backdrop-filter: var(--glass-filter-thick);
+  transform-origin: top left;
+  animation: glass-open var(--duration-morph) var(--ease-spring);
 }
 
 .menu li > button {
   display: block;
   width: 100%;
-  padding: var(--space-2) var(--space-5);
-  border-radius: var(--radius-small);
+  padding: var(--space-3) var(--space-5);
+  border-radius: var(--radius-menu-row);
   color: var(--text);
   font-weight: var(--weight-normal);
   text-align: left;
   text-decoration: none;
 }
 
+/* A row under the mouse gets a fill, as a control on glass does. */
 .menu li > button:hover {
-  background: var(--hover);
+  background: var(--fill);
 }
 
 
 /* ---- tabs: the buttons that switch between views ---- */
 
-/* glass-style: a segmented control. The buttons sit on one soft pill (the
-   track), and the current one is a raised white pill with a shadow. */
+/* A segmented control: the buttons sit on one fill (the track), and the
+   current one is a raised pill with a small shadow. The words are all --text
+   (liquid-glass: the words in a bar are one colour). */
 .tabs {
   display: flex;
   flex-wrap: wrap;
@@ -303,25 +399,26 @@ button:disabled:not(.button-pill) {
   width: fit-content;
   margin-bottom: var(--space-5);
   padding: var(--space-1);
+  border: var(--hairline) solid var(--control-edge);
   border-radius: var(--radius-pill);
-  background: var(--track);
+  background: var(--fill);
 }
 
 .tabs > button {
-  padding: var(--space-2) var(--space-5);
+  padding: var(--space-1) var(--space-5);
+  border: var(--hairline) solid transparent;
   background: none;
-  color: var(--quiet);
+  color: var(--text);
   font-weight: var(--weight-medium);
+  transition: background-color var(--duration-quick) ease, box-shadow var(--duration-quick) ease;
 }
 
-.tabs > button:hover {
+.tabs > button[aria-current="page"],
+.tabs > button[aria-pressed="true"] {
+  border-color: var(--control-edge);
+  background: var(--fill-raised);
   color: var(--text);
-}
-
-.tabs > button[aria-current="page"] {
-  background: var(--raised);
-  color: var(--text);
-  box-shadow: var(--shadow-soft);
+  box-shadow: var(--shadow-raised);
 }
 
 
@@ -377,27 +474,38 @@ button:disabled:not(.button-pill) {
   overflow: hidden;
 }
 
-/* glass-style: a post is a plain row on the glass of its list, never glass
-   itself, with a hairline under it. The line is decoration: the space and the
-   circle already show where one post ends. */
+/* A post is a plain row on the solid surface of its list, never glass. The
+   line under it (liquid-glass) is inset: it starts where the words start and
+   runs to the right edge, which makes a list feel light. It is drawn as a
+   background picture one hairline tall, so the tint under the mouse
+   (background-color) does not hide it. The line is decoration: the space and
+   the circle already show where one post ends. */
+.post,
+.reply-thread {
+  background-image: linear-gradient(var(--separator), var(--separator));
+  background-repeat: no-repeat;
+  background-position: right bottom;
+  background-size: calc(100% - var(--space-5)) var(--hairline);
+}
+
 .post {
   position: relative;
   margin: 0;
   padding: var(--space-4) var(--space-5);
   border: none;
-  border-bottom: var(--hairline) solid var(--glass-edge);
   border-radius: 0;
-  background: none;
+  background-color: transparent;
 }
 
 .timeline > li:last-child {
-  border-bottom: none;
+  background-image: none;
 }
 
 /* Room on the left for the circle, only when the post has one (page-only/
    has no circles, so its posts have no empty space on the left). */
 .post.with-avatar {
   padding-left: var(--avatar-indent);
+  background-size: calc(100% - var(--avatar-indent)) var(--hairline);
 }
 
 /* head: the names and the time. */
@@ -473,19 +581,19 @@ button:disabled:not(.button-pill) {
    circles (replies). */
 .post:has(+ .reply-thread) {
   padding-bottom: var(--space-3);
-  border-bottom: none;
+  background-image: none;
 }
 
 .reply-thread {
   margin: 0;
   padding: 0 var(--space-5) var(--space-4) var(--avatar-indent);
-  border-bottom: var(--hairline) solid var(--glass-edge);
+  background-size: calc(100% - var(--avatar-indent)) var(--hairline);
 }
 
 .replies {
   margin: 0;
   padding: 0;
-  border-left: var(--line-thick) solid var(--glass-edge);
+  border-left: var(--line-thick) solid var(--separator);
   list-style: none;
 }
 
@@ -494,11 +602,12 @@ button:disabled:not(.button-pill) {
 }
 
 .replies > .post:last-child {
-  border-bottom: none;
+  background-image: none;
 }
 
 .replies > .post.with-avatar {
   padding-left: var(--avatar-indent-small);
+  background-size: calc(100% - var(--avatar-indent-small)) var(--hairline);
 }
 
 .replies .avatar {
@@ -513,7 +622,7 @@ button:disabled:not(.button-pill) {
    keyboard have no "over", so nothing is hidden until then: the heart always shows. */
 @media (hover: hover) {
   .post:hover {
-    background: var(--hover);
+    background-color: var(--hover);
   }
 }
 
@@ -526,6 +635,12 @@ button:disabled:not(.button-pill) {
 
   .post.with-avatar {
     padding-left: var(--avatar-indent-phone);
+    background-size: calc(100% - var(--avatar-indent-phone)) var(--hairline);
+  }
+
+  .replies > .post.with-avatar {
+    padding-left: var(--avatar-indent-small);
+    background-size: calc(100% - var(--avatar-indent-small)) var(--hairline);
   }
 
   /* A reply keeps its small circle; the rules for replies above still apply. */
@@ -539,6 +654,7 @@ button:disabled:not(.button-pill) {
 
   .reply-thread {
     padding: 0 var(--space-4) var(--space-4) var(--space-6);
+    background-size: calc(100% - var(--space-6)) var(--hairline);
   }
 }
 
@@ -559,17 +675,20 @@ button:disabled:not(.button-pill) {
 
 /* ==== The layout (classic-layout): a bar across the top, two columns under it ==== */
 
-/* ---- top-bar: the glass bar across the top, with the app's name, the views,
+/* ---- top-bar: the floating glass bar, with the app's name, the views,
    search, Colours and Log out. It stays at the top while you scroll. ---- */
 
-/* glass-style: strong glass (above), with only a hairline under it. The
-   posts scroll under it, blurred. */
+/* liquid-glass: a capsule of glass (above), set in from the top and the sides
+   by --bar-inset, with the posts scrolling under it. The room inside it is
+   --bar-pad on every side, so a capsule at either end (Colours, Log out) is
+   concentric with the bar's round end. */
 .top-bar {
   position: sticky;
-  top: 0;
+  top: var(--bar-inset);
   z-index: var(--layer-bar);
-  border-width: 0 0 var(--hairline);
-  color: var(--text);
+  width: min(100% - 2 * var(--bar-inset), var(--bar-width));
+  margin: var(--bar-inset) auto 0;
+  border-radius: var(--radius-bar);
 }
 
 /* The bar takes the place of the band of colour across the top of the page. */
@@ -587,33 +706,59 @@ html:has(.top-bar) {
   flex-wrap: wrap;
   align-items: center;
   gap: var(--space-3) var(--space-5);
-  max-width: var(--bar-width);
   min-height: var(--bar-height);
-  margin: 0 auto;
-  padding: var(--space-2) var(--space-5);
+  padding: var(--bar-pad);
 }
 
+/* The name has room from the round end of the capsule. */
 .top-bar-title {
   margin: 0;
+  padding: 0 var(--space-4);
   font-size: var(--text-large);
 }
 
+/* Colours and Log out stay together, as one group. On a phone the group
+   wraps, so Log out never sticks out of the bar. */
+.top-bar-group {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+/* The words in the bar are one colour, --text. A label, like the name, has
+   room on its left, so it never sits in the bar's round end when the bar
+   wraps onto two lines. */
 .top-bar label {
   margin: 0;
-  color: var(--quiet);
+  padding-left: var(--space-4);
+  color: var(--text);
+  font-weight: var(--weight-normal);
 }
 
-.top-bar input,
+/* Every control in the bar is a fill, not glass on glass, with the edge that
+   more contrast draws. The search box is the raised fill, so its quiet example
+   words stay easy to read whatever scrolls under the bar. */
+.top-bar input {
+  padding: var(--space-2) var(--space-5);
+  border: var(--hairline) solid var(--control-edge);
+  background: var(--fill-raised);
+}
+
+.top-bar button,
 .top-bar select {
-  padding: var(--space-1) var(--space-3);
+  padding: var(--space-2) var(--space-5);
+  border: var(--hairline) solid var(--control-edge);
+  border-radius: var(--radius-pill);
+  background: var(--fill);
+  color: var(--text);
+  font-weight: var(--weight-medium);
+  white-space: nowrap;
 }
 
-.top-bar button {
-  padding: var(--space-1) var(--space-4);
-}
-
-.top-bar .button-link {
-  padding: 0;
+.top-bar button:hover,
+.top-bar select:hover {
+  background-color: var(--fill-raised);
 }
 
 /* The views, as a segmented control in the bar. */
@@ -623,6 +768,34 @@ html:has(.top-bar) {
 
 .top-bar .tabs > button {
   padding: var(--space-1) var(--space-5);
+  border-color: transparent;
+  background: none;
+}
+
+.top-bar .tabs > button[aria-current="page"] {
+  border-color: var(--control-edge);
+  background: var(--fill-raised);
+}
+
+/* The scroll edge: a strip under the bar, fixed to the top of the screen.
+   It is the page itself (base.css gives it the page's background, fixed to
+   the screen, so it lines up), solid at the very top and gone by the lower
+   part of the bar, blurring a little, so posts fade softly into the page as
+   they reach the top instead of being cut by a line, and can still be seen
+   through the bar's glass. Only where the bar stays on screen (920px and wider). */
+.scroll-edge {
+  position: fixed;
+  top: 0;
+  right: 0;
+  left: 0;
+  z-index: var(--layer-edge);
+  height: calc(2 * var(--bar-inset) + var(--bar-height));
+  background-attachment: fixed;
+  -webkit-backdrop-filter: var(--edge-filter);
+  backdrop-filter: var(--edge-filter);
+  -webkit-mask-image: linear-gradient(var(--opaque) var(--bar-inset), transparent 60%);
+  mask-image: linear-gradient(var(--opaque) var(--bar-inset), transparent 60%);
+  pointer-events: none;
 }
 
 
@@ -645,20 +818,26 @@ html:has(.top-bar) {
   min-width: 0;
 }
 
-/* The right column is one glass card (above): the header, then the posts,
-   with a hairline between them. The lists of posts inside it are not glass
-   and have no edge of their own: one layer of glass, not two. */
+/* The right column is one solid card (above): the header, then the posts,
+   with a line between them. The lists of posts inside it have no box of their
+   own, and do not cut off what is drawn outside them (an open "⋯" menu floats
+   over the next posts). The last post's tint under the mouse follows the
+   card's round corners. */
 .stream {
   min-width: 0;
 }
 
 .stream .card:not(:empty) {
+  overflow: visible;
   border: none;
   border-radius: 0;
   background: none;
   box-shadow: none;
-  -webkit-backdrop-filter: none;
-  backdrop-filter: none;
+}
+
+.stream .timeline > li:last-child {
+  border-radius: 0 0 var(--radius-large) var(--radius-large);
+  corner-shape: var(--corner-shape);
 }
 
 /* Under 920px wide: one column, the left one first. */
@@ -667,8 +846,20 @@ html:has(.top-bar) {
     position: static;
   }
 
+  .scroll-edge {
+    display: none;
+  }
+
   .columns {
     grid-template-columns: minmax(0, var(--stream-width));
+  }
+}
+
+/* On a phone the view tabs are a little narrower, so all three fit on one
+   line of the bar and the track stays a capsule. */
+@media (max-width: 600px) {
+  .top-bar .tabs > button {
+    padding: var(--space-1) var(--space-4);
   }
 }
 
@@ -678,7 +869,7 @@ html:has(.top-bar) {
 .stream-header {
   margin: 0;
   padding: var(--space-4) var(--space-5);
-  border-bottom: var(--hairline) solid var(--glass-edge);
+  border-bottom: var(--hairline) solid var(--separator);
   font-size: var(--text-large);
 }
 

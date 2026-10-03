@@ -51,7 +51,7 @@
     }
     .guide-tokens td {
       padding: var(--space-2) var(--space-3) var(--space-2) 0;
-      border-bottom: var(--hairline) solid var(--glass-edge);
+      border-bottom: var(--hairline) solid var(--separator);
       vertical-align: middle;
       overflow-wrap: anywhere;
     }
@@ -60,13 +60,70 @@
       min-width: var(--space-6);
       min-height: var(--space-6);
       border: 1px solid var(--border);
-      background: var(--card);
+      background: var(--surface);
     }
     .guide-glass {
       padding: var(--space-6) var(--space-7);
+      border-radius: var(--radius-popover);
     }
-    .guide-glass.glass-strong {
+    /* liquid-glass: the "Show as" switch at the top of the guide. */
+    .guide-looks {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: var(--space-4);
+    }
+    .guide-looks .tabs {
+      margin: 0;
+    }
+    /* A stage: a few posts with the bar floating over them, so the glass has
+       something real to show. The stage cuts off what is outside it. */
+    .guide-stage {
+      position: relative;
+      height: calc(var(--picture-height) * 0.75);
+      overflow: hidden;
+      border-radius: var(--radius-large);
+      background: var(--background);
+    }
+    .guide-column .guide-stage > .top-bar {
+      position: absolute;
+      inset: var(--bar-inset) var(--bar-inset) auto;
+      width: auto;
+      margin: 0;
+    }
+    .guide-stage > .scroll-edge {
+      position: absolute;
+      background: var(--background);
+    }
+    /* The posts are scrolled a little, so the coloured picture is under the bar. */
+    .guide-stage > .stream {
+      margin-top: calc(-1 * var(--avatar));
+    }
+    .guide-stage .guide-picture {
+      height: calc(var(--avatar) * 2);
+      margin-top: var(--space-3);
       border-radius: var(--radius);
+      background-image: linear-gradient(90deg, var(--avatar-3), var(--avatar-5), var(--avatar-4), var(--avatar-1), var(--avatar-2));
+    }
+    /* A black and white picture: --opaque is black and --button-text is white
+       in both modes (a stand-in; a real picture is a file). */
+    .guide-stage .guide-picture.guide-stripes {
+      background-image: repeating-linear-gradient(90deg, var(--opaque) 0 var(--space-6), var(--button-text) var(--space-6) calc(2 * var(--space-6)));
+    }
+    /* The menu floats over what is under it: room for it to open into. */
+    .guide-menu {
+      min-height: calc(var(--avatar) * 3);
+    }
+    /* Concentric corners: a box in a card, drawn nested. */
+    .guide-nest {
+      padding: var(--card-pad);
+    }
+    .guide-nest > div {
+      padding: var(--space-5);
+      border: var(--line) solid var(--border);
+      border-radius: var(--radius-field);
+      corner-shape: var(--corner-shape);
+      background: var(--field);
     }
     .guide-row .new-posts {
       margin: 0;
@@ -92,6 +149,17 @@
       <code>features.css</code>. Look here before you add a feature: use these pieces, and
       add a value to <code>tokens.css</code> only when no token fits. Light on the left,
       dark on the right (one under the other on a phone).</p>
+    <!-- liquid-glass: show the guide in each look, whatever this computer asks
+         for. A computer with Reduce Transparency or Increase Contrast turned on
+         sees the solid looks on the real page; here every look can be seen. -->
+    <div class="guide-looks">
+      <span>Show as:</span>
+      <nav class="tabs" aria-label="Show as">
+        <button type="button" data-show-look="glass" aria-pressed="true">Glass</button>
+        <button type="button" data-show-look="frosted" aria-pressed="false">Reduced transparency</button>
+        <button type="button" data-show-look="contrast" aria-pressed="false">More contrast</button>
+      </nav>
+    </div>
   </main>
 
   <div class="guide-columns" id="columns"></div>
@@ -130,16 +198,17 @@
       <button type="button" class="bookmark button-pill bookmarked">★</button>
     </div>
 
-    <h3>glass: <code>.glass</code>, <code>.glass-strong</code></h3>
-    <p class="guide-note">A frosted, see-through surface over the wash: a hairline edge,
-      a faint light line along the top and a soft shadow. Cards, an open disclosure and
-      the stream are .glass; the top bar, an open "⋯" menu and "3 new posts" are
-      .glass-strong. Posts are never glass: they are plain rows on it. With less
-      transparency, more contrast, or no blur in the browser, both become solid.</p>
+    <h3>glass: <code>.glass</code> (the control layer)</h3>
+    <p class="guide-note">Only for what floats over the posts and is pressed: the top bar,
+      an open "⋯" menu and "3 new posts". Never cards or posts, and never glass on glass.
+      Four parts: 1. the body (frost): what is behind is blurred a little, squeezed toward
+      middle grey and made more colourful, then --glass-tint lies on it; 2. the rim
+      (::before), bright at two corners and dim along the sides; 3. the depth: light
+      inside the edge, a thin dark line outside, two soft shadows; 4. the sheen (::after),
+      a soft light near the top that brightens while you press. Press one to see it.</p>
     <div class="guide-row">
       <div class="glass guide-glass">.glass</div>
-      <div class="glass-strong guide-glass">.glass-strong</div>
-      <button type="button" class="new-posts glass-strong">3 new posts</button>
+      <button type="button" class="new-posts glass">3 new posts</button>
     </div>
 
     <h3>card: <code>.card</code></h3>
@@ -157,13 +226,26 @@
     </details>
 
     <h3>menu: <code>.menu</code></h3>
-    <details class="menu" open>
-      <summary>⋯</summary>
-      <ul>
-        <li><button type="button" class="button-link">Edit</button></li>
-        <li><button type="button" class="button-link">Delete</button></li>
-      </ul>
-    </details>
+    <p class="guide-note">Open, the list is thick glass that grows out of its "⋯" and floats
+      over what is under it. Its rows' corners are concentric with it. Press ⋯ to close it
+      and open it again.</p>
+    <div class="guide-menu">
+      <details class="menu" open>
+        <summary>⋯</summary>
+        <ul>
+          <li><button type="button" class="button-link">Edit</button></li>
+          <li><button type="button" class="button-link">Delete</button></li>
+          <li><button type="button" class="button-link">Show old versions</button></li>
+        </ul>
+      </details>
+    </div>
+
+    <h3>corners: concentric</h3>
+    <p class="guide-note">A box inside a card is rounded less, by exactly the room between
+      them (--radius-field is --radius-large minus --card-pad), so the two curves share one
+      centre. A picture in a post (--radius) and a row in the menu (--radius-menu-row) work
+      the same way; everything in the bar is a capsule.</p>
+    <div class="card guide-nest"><div>A box in a card</div></div>
 
     <h3>tabs: <code>.tabs</code></h3>
     <nav class="tabs">
@@ -222,12 +304,48 @@
       words you cannot see: [<span class="visually-hidden">Signed in as</span>].</p>
 
     <h2>Layout (classic-layout)</h2>
-    <p class="guide-note">The page's three areas: the glass bar across the top, the left
-      column and the right column. On the page the bar stays at the top while you
+    <p class="guide-note">The page's three areas: the floating glass bar across the top, the
+      left column and the right column. On the page the bar stays at the top while you
       scroll, and the columns sit side by side from 920px wide. Here they are drawn
       one under the other, to fit the guide.</p>
 
-    <h3>top-bar: <code>.top-bar</code>, <code>.top-bar-inner</code>, <code>.top-bar-title</code></h3>
+    <h3>layers: the page, the content, the scroll edge, the controls</h3>
+    <p class="guide-note">Back to front: the calm page with a faint glow at the top; the
+      content (cards, the stream and its posts: solid); the scroll edge, where posts fade
+      out as they reach the bar (.scroll-edge, on the page from 920px wide); and the
+      controls, glass, floating over the posts. Here the bar floats over a few posts,
+      a coloured picture and a black and white one, as it does when you scroll.</p>
+    <div class="guide-stage">
+      <div class="stream">
+        <ol class="timeline card">
+          <li class="post with-avatar">
+            <div class="post-head"><span class="avatar avatar-colour-5" aria-hidden="true">E</span><span class="post-author">Emi Sato</span><span class="post-handle">@emi</span><time class="post-time">May 1</time></div>
+            <div class="post-body"><p class="post-text">Colour comes from the posts, so the glass has something to show.</p><div class="guide-picture" role="img" aria-label="A band of the six circle colours"></div></div>
+          </li>
+          <li class="post with-avatar">
+            <div class="post-head"><span class="avatar avatar-colour-2" aria-hidden="true">B</span><span class="post-author">Ben Carter</span><span class="post-handle">@ben</span><time class="post-time">May 1</time></div>
+            <div class="post-body"><p class="post-text">Black and white under the bar: its words still read.</p><div class="guide-picture guide-stripes" role="img" aria-label="Black and white stripes"></div></div>
+          </li>
+        </ol>
+      </div>
+      <div class="scroll-edge" aria-hidden="true"></div>
+      <header class="top-bar">
+        <div class="top-bar-inner">
+          <p class="top-bar-title"><strong>Timeline</strong></p>
+          <nav class="tabs">
+            <button type="button" aria-current="page">Timeline</button>
+            <button type="button">My bookmarks</button>
+          </nav>
+        </div>
+      </header>
+    </div>
+
+    <h3>top-bar: <code>.top-bar</code>, <code>.top-bar-inner</code>, <code>.top-bar-title</code>, <code>.top-bar-group</code>, <code>.scroll-edge</code></h3>
+    <p class="guide-note">A capsule of glass, set in from the top and the sides by
+      --bar-inset, with --bar-pad inside on every side, so a capsule at either end is
+      concentric with the bar's round end. At most three groups: the views, search, and
+      Colours with Log out (.top-bar-group). Every control on it is a fill, never glass on
+      glass. The scroll edge is drawn under it (see layers, above).</p>
     <header class="top-bar">
       <div class="top-bar-inner">
         <p class="top-bar-title"><strong>Timeline</strong></p>
@@ -235,11 +353,14 @@
           <button type="button" aria-current="page">Timeline</button>
           <button type="button">My bookmarks</button>
         </nav>
-        <div class="theme-row">
-          <label>Colours</label>
-          <select><option>Auto (follow this computer)</option></select>
+        <input type="search" placeholder="a word or #tag" aria-label="Search posts">
+        <div class="top-bar-group">
+          <div class="theme-row">
+            <label>Colours</label>
+            <select><option>Auto (follow this computer)</option></select>
+          </div>
+          <button type="button" class="button-link">Log out</button>
         </div>
-        <button type="button" class="button-link">Log out</button>
       </div>
     </header>
 
@@ -281,24 +402,42 @@
     for (const scheme of ["light", "dark"]) {
       const column = document.createElement("section");
       column.className = "guide-column wash guide-" + scheme;
+      // liquid-glass: each column shows one look (the "Show as" switch).
+      column.setAttribute("data-look", "glass");
       const heading = document.createElement("h2");
       heading.textContent = scheme === "light" ? "Light" : "Dark";
       column.append(heading, guide.content.cloneNode(true));
       columns.append(column);
     }
 
+    // liquid-glass: the "Show as" switch. Each look is a data-look on both
+    // columns; tokens.css gives each look its tokens, whatever this computer
+    // asks for.
+    for (const button of document.querySelectorAll("[data-show-look]")) {
+      button.addEventListener("click", function () {
+        for (const column of columns.children) {
+          column.setAttribute("data-look", button.dataset.showLook);
+        }
+        for (const other of document.querySelectorAll("[data-show-look]")) {
+          other.setAttribute("aria-pressed", String(other === button));
+        }
+      });
+    }
+
     // The token tables: read tokens.css itself, so every token is listed with
     // its value and its note. Each row shows a sample drawn with the token.
-    function sampleFor(name) {
+    function sampleFor(name, written) {
       const sample = document.createElement("span");
       sample.className = "guide-sample";
       const value = "var(" + name + ")";
-      if (/^--(background|wash-\d|card|glass|glass-strong|glass-edge|glass-highlight|shadow|field|track|raised|text|quiet|author|button|button-text|warning|border|hover|avatar-\d)$/.test(name)) {
+      if (written.startsWith("light-dark(")) {
         sample.style.background = value;
-      } else if (name.startsWith("--shadow-") || name === "--glass-shine") {
+      } else if (name.startsWith("--shadow-") || name === "--glass-depth") {
         sample.style.boxShadow = value;
-      } else if (name === "--glass-filter" || name === "--glass-blur" || name === "--glass-saturate") {
-        sample.style.background = "var(--glass)";
+      } else if (name === "--rim" || name === "--glass-sheen") {
+        sample.style.backgroundImage = value;
+      } else if (name.startsWith("--glass-") || name.startsWith("--edge-")) {
+        sample.style.background = "var(--glass-tint)";
         sample.style.backdropFilter = "var(--glass-filter)";
       } else if (name.startsWith("--space-") || name.startsWith("--avatar") || name === "--check-size") {
         sample.style.width = value;
@@ -329,15 +468,22 @@
     fetch("tokens.css").then(function (answer) {
       return answer.text();
     }).then(function (css) {
+      // A token is listed once, as it is first written (the fallback looks
+      // at the end of tokens.css write some again).
       const rows = [];
+      const seen = new Set();
       for (const match of css.matchAll(/^[ \t]*(--[\w-]+):[ \t]*([^;]+);[ \t]*(?:\/\*[ \t]*(.*?)[ \t]*\*\/)?/gm)) {
+        if (seen.has(match[1])) {
+          continue;
+        }
+        seen.add(match[1]);
         rows.push({ name: match[1], value: match[2], note: match[3] || "" });
       }
       for (const body of document.querySelectorAll('[data-guide="tokens"]')) {
         for (const row of rows) {
           const line = document.createElement("tr");
           const sampleCell = document.createElement("td");
-          sampleCell.append(sampleFor(row.name));
+          sampleCell.append(sampleFor(row.name, row.value));
           const nameCell = document.createElement("td");
           const code = document.createElement("code");
           code.textContent = row.name;

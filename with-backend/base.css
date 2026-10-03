@@ -23,11 +23,13 @@ body {
   line-height: var(--line-height);
 }
 
-/* glass-style: the wash, a soft blend of colour behind the glass. Three large
-   soft spots of colour on --background, made with gradients only (no picture
-   file). It is drawn on a layer fixed to the screen, behind everything, so it
-   does not move or get drawn again while the page scrolls. The style guide
-   puts the same wash in each of its columns with the class .wash. */
+/* liquid-glass: the page behind everything is calm and nearly neutral
+   (--background), with a faint glow of colour at the top only: three soft
+   spots of --wash-1, --wash-2 and --wash-3 that fade out before the middle of
+   the screen. Made with gradients only (no picture file). It is drawn on a
+   layer fixed to the screen, behind everything, so it does not move or get
+   drawn again while the page scrolls. The style guide puts the same page
+   behind each of its columns with the class .wash. */
 body::before {
   content: "";
   position: fixed;
@@ -37,11 +39,12 @@ body::before {
 }
 
 body::before,
-.wash {
+.wash,
+.scroll-edge {
   background:
-    radial-gradient(ellipse 80% 70% at 15% 15%, var(--wash-1), transparent),
-    radial-gradient(ellipse 70% 70% at 90% 35%, var(--wash-2), transparent),
-    radial-gradient(ellipse 80% 60% at 45% 100%, var(--wash-3), transparent),
+    radial-gradient(ellipse 55% 45% at 10% 0%, var(--wash-1), transparent),
+    radial-gradient(ellipse 50% 40% at 90% 0%, var(--wash-2), transparent),
+    radial-gradient(ellipse 70% 30% at 50% 0%, var(--wash-3), transparent),
     var(--background);
 }
 

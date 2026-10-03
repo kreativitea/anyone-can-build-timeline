@@ -182,14 +182,15 @@ time.post-time {
   gap: var(--space-4);
   margin: 0;
   padding: var(--space-4) var(--space-5);
-  border-bottom: var(--hairline) solid var(--glass-edge);
+  border-bottom: var(--hairline) solid var(--separator);
   overflow-wrap: anywhere;
 }
 
 /* timeline-flow */
 /* "3 new posts": sticky, so it stays at the top of the screen while you read
-   further down. glass-style: a pill of strong glass (.glass-strong, in
-   index.html) with words in the link colour. */
+   further down. liquid-glass: a capsule of glass (.glass, in index.html) that
+   floats just under the bar and slides down from under it when it appears.
+   Its words are --text, like every word on glass. */
 .new-posts {
   position: sticky;
   top: var(--sticky-top);   /* just under the top bar */
@@ -197,7 +198,8 @@ time.post-time {
   display: block;
   margin: var(--space-4) auto;
   padding: var(--space-3) var(--space-6);
-  color: var(--author);
+  color: var(--text);
+  animation: glass-arrive var(--duration-morph) var(--ease-spring);
 }
 
 /* "Show older posts", "Loading…" or "No older posts." under the list. */
@@ -244,13 +246,15 @@ time.post-time {
 
 /* pictures: the picture under a post's words, and the two boxes to add one.
    A picture is never wider than the post, nor taller than about half a
-   screen; object-fit: contain shrinks it without cutting or stretching it. */
+   screen; object-fit: contain shrinks it without cutting or stretching it.
+   liquid-glass: its corners are concentric with the stream's (--radius). */
 .post-picture {
   display: block;
   max-width: 100%;
   max-height: var(--picture-height);
   margin-top: var(--space-3);
   border-radius: var(--radius);
+  corner-shape: var(--corner-shape);   /* liquid-glass: a smoother corner, where the browser can */
   object-fit: contain;
 }
 
@@ -339,7 +343,7 @@ time.post-time {
 .versions {
   margin: var(--space-3) 0 0;
   padding: 0 0 0 var(--space-5);
-  border-left: var(--line-thick) solid var(--glass-edge);
+  border-left: var(--line-thick) solid var(--separator);
   font-size: var(--text-small);
   list-style: none;
 }

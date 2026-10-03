@@ -4,7 +4,12 @@
    (base.css, components.css, features.css) use the names. To change the look,
    change a value here.
    See it all at /design.html (the style guide). The four files are the same in
-   page-only/ and with-backend/; a test in test_server.py checks it. */
+   page-only/ and with-backend/; a test in test_server.py checks it.
+
+   liquid-glass: every block here is written for ":root, [data-look]". :root is
+   the whole page. [data-look] is a box in the style guide that shows one look
+   (glass, frosted or more contrast) whatever this computer asks for; it gets
+   every token again, so the end of this file can change them for that box only. */
 
 /* The colours, in one place. Each colour is written once, as
    light-dark(LIGHT, DARK). The browser uses the first one when the page is in
@@ -12,38 +17,61 @@
    "light dark" means: follow the computer. That is the Auto choice, and it is
    what page-only/ always uses, because it has no switch.
    A new colour must be written the same way; a test in test_server.py checks it.
-   Only colours go in this first block. */
-:root {
+   Only colours go in this first block. The two hex digits after a colour's six
+   are how solid it is (00 = clear, ff = solid). */
+:root,
+[data-look] {
   color-scheme: light dark;
-  /* glass-style: the page behind everything is a soft wash of colour (base.css
-     draws it): --background, with three large soft spots of --wash-1 (blue),
-     --wash-2 (lilac) and --wash-3 (sky) on it. Deep blue and violet in dark
-     mode. A little text sits right on the wash (the status line), so each wash
-     colour is light enough (or dark enough) for every colour of words. */
-  --background: light-dark(#eef3fa, #0a1120);
-  --wash-1: light-dark(#a9c9f2, #1a427e);
-  --wash-2: light-dark(#d2c2f4, #3d2b76);
-  --wash-3: light-dark(#b3e0ec, #0f4560);
-  /* glass-style: the surfaces. --glass is the see-through fill of a card and
-     the stream; --glass-strong is a more solid one for what floats over other
-     things (the top bar, a "⋯" menu, "3 new posts"). The two hex digits at the
-     end of a colour are how solid it is (00 = clear, ff = solid). --card is a
-     solid card: what the glass becomes when the computer asks for less
-     transparency or more contrast, or cannot blur (see the end of this file). */
-  --card: light-dark(#ffffff, #142235);
-  --glass: light-dark(#ffffff80, #0f1a2b99);
-  --glass-strong: light-dark(#ffffffcc, #0d1625d6);
-  /* The hairline at the edge of the glass, the faint light line along its top,
-     and the colour of the soft shadow under it. These three are decoration:
-     nothing is found only by them, so they may be fainter than 3 to 1. */
-  --glass-edge: light-dark(#1e3a5f24, #ffffff1f);
-  --glass-highlight: light-dark(#ffffffcc, #ffffff2e);
-  --shadow: light-dark(#1e3a5f1a, #00000052);
-  /* The soft fill of a box to type in, the track of the view tabs and of the
-     heart and the star, and the raised pill of the current tab. */
-  --field: light-dark(#ffffffb8, #08101cb3);
+  /* liquid-glass: the page is calm and nearly neutral, so the colour comes from
+     the posts (their pictures and circles), and the glass has something real to
+     show. A faint glow of --wash-1 (blue), --wash-2 (lilac) and --wash-3 (sky)
+     at the top only (base.css draws it). */
+  --background: light-dark(#eef0f5, #06090f);
+  --wash-1: light-dark(#c9dcf5, #13274d);
+  --wash-2: light-dark(#ddd3f5, #231a4a);
+  --wash-3: light-dark(#cbe9f0, #0b2b3b);
+  /* The content layer: every card and the stream are solid --surface. In dark
+     mode a faint --surface-edge shows where a card ends; in light mode the grey
+     page already does, so it is clear. */
+  --surface: light-dark(#ffffff, #151b25);
+  --surface-edge: light-dark(#ffffff00, #ffffff12);
+  /* The control layer: glass (the bar, the "⋯" menu, "3 new posts").
+     --glass-tint is laid on what is behind, after the frost (--glass-filter).
+     The menu is larger glass, so it is thicker (--glass-tint-thick).
+     --glass-solid is the glass when it must not be see-through (the end of
+     this file): a little off the surface colour, so it is still its own layer. */
+  --glass-tint: light-dark(#ffffff8c, #0b1220a6);
+  --glass-tint-thick: light-dark(#ffffffb8, #0b1220c7);
+  --glass-solid: light-dark(#f7f8fb, #1b2230);
+  /* The light on the glass. These are decoration: nothing is found only by
+     them, so they may be fainter than 3 to 1.
+     --rim-bright and --rim-dim: the rim, bright where light catches it and dim
+     along the sides. --rim-shade: a thin dark line outside it, so white glass
+     still shows on a white post. --glass-glow: a faint light inside the edge,
+     for thickness. --sheen: a soft light near the top. --shadow: shadows. */
+  --rim-bright: light-dark(#ffffffe6, #ffffff59);
+  --rim-dim: light-dark(#ffffff40, #ffffff14);
+  --rim-shade: light-dark(#0b1a3326, #000000a6);
+  --glass-glow: light-dark(#ffffff59, #ffffff0f);
+  --sheen: light-dark(#ffffff73, #ffffff14);
+  --shadow: light-dark(#0b1a331f, #00000073);
+  /* Controls inside the bar are fills, never glass on glass: --fill is the
+     track of the view tabs, Search and Colours; --fill-raised is the current
+     tab's pill. --control-edge is clear; with more contrast it is a line. */
+  --fill: light-dark(#7880991f, #00000033);
+  --fill-raised: light-dark(#ffffffd9, #3a4456eb);
+  --control-edge: light-dark(#ffffff00, #ffffff00);
+  /* The soft fill of a box to type in, and the track of the heart and the star. */
+  --field: light-dark(#f4f5f8, #0e131b);
   --track: light-dark(#1e3a5f0f, #ffffff12);
-  --raised: light-dark(#ffffff, #ffffff26);
+  /* The line between posts (decoration), and the darker one with more contrast. */
+  --separator: light-dark(#3c435033, #ffffff1f);
+  --separator-more: light-dark(#6b7280, #9aa3b2);
+  /* clear: nothing at all (glass-glow and sheen become this with more contrast).
+     opaque: black, for a mask, where only how solid it is matters (and the
+     style guide's stand-in for a black picture). */
+  --clear: light-dark(#ffffff00, #ffffff00);
+  --opaque: light-dark(#000000, #000000);
   --text: light-dark(#1d242b, #e9eef5);
   --quiet: light-dark(#46515c, #afbdcc);
   --author: light-dark(#074c98, #82bcff);
@@ -51,13 +79,11 @@
   --button-text: light-dark(#ffffff, #ffffff);
   --warning: light-dark(#9a1f17, #ff9a8c);
   /* The edge of a box to type in: at least 3 to 1 against everything it sits
-     on and its own fill (glass-style: checked with the glass laid over the
-     wash), so the box can be seen. */
+     on and its own fill, so the box can be seen. */
   --border: light-dark(#586b7e, #8099b3);
-  /* classic-style: the light tint under the mouse (glass-style: a see-through
-     tint), and the six colours of the circles with a letter. A white letter
-     reads on each circle in both modes, so each circle colour is the same in
-     light and dark, like --button. */
+  /* classic-style: the light tint under the mouse, and the six colours of the
+     circles with a letter. A white letter reads on each circle in both modes,
+     so each circle colour is the same in light and dark, like --button. */
   --hover: light-dark(#0a5fcc0f, #ffffff0d);
   --avatar-1: light-dark(#1d6fa8, #1d6fa8);
   --avatar-2: light-dark(#8a4fb0, #8a4fb0);
@@ -78,7 +104,8 @@
 }
 
 /* Everything that is not a colour. */
-:root {
+:root,
+[data-look] {
   /* Type. The type is the size of a 2012 timeline (classic-layout): 15px for the words,
      13px for the notes, the @name and the time. This REPLACES the old rule
      "the type is large because the page is read from the back of a room":
@@ -104,33 +131,55 @@
   --space-6: 16px;
   --space-7: 20px;
 
-  /* Corners: large and soft (glass-style). */
-  --radius-small: 6px;     /* the focus ring of a link in a post, an item in a "⋯" menu */
-  --radius: 12px;          /* pictures, the "⋯" menu */
-  --radius-field: 12px;    /* boxes to type in */
-  --radius-large: 18px;    /* cards and the stream */
+  /* Corners. liquid-glass: corners inside a rounded box are rounded less, by
+     exactly the room between them, so the two curves share one centre
+     (concentric). The inner corners are worked out from the outer ones. */
+  --radius-large: 22px;    /* cards and the stream */
+  --card-pad: var(--space-5);  /* the room inside a card, around its boxes */
+  --radius-popover: 20px;  /* the "⋯" menu */
+  --popover-pad: var(--space-2);  /* the room inside the menu, around its rows */
+  --radius-small: 6px;     /* the focus ring of a link in a post */
   --radius-pill: 999px;    /* every button, the search box, the Colours switch, the view tabs */
   --radius-round: 50%;     /* the circle with a letter */
+  /* corner-shape: a smoother corner that eases in (a "squircle"), in the
+     browsers that can draw it. Elsewhere the corner is round. */
+  --corner-shape: squircle;
 
   /* Lines. */
   --line: 1px;             /* the edge of a box to type in */
-  --hairline: 1px;         /* the edge of the glass and the line between posts: 0.5px on a sharp screen */
+  --hairline: 1px;         /* the rim of the glass and the line between posts: 0.5px on a sharp screen */
   --line-thick: 2px;       /* the line on the left of replies and old versions */
   --band: 10px;            /* the band of colour across the top of page-only/ */
-  --focus-ring: 3px solid var(--author);
   --focus-offset: 2px;
 
-  /* glass-style: the frost. The glass blurs what is behind it and makes its
-     colours a little stronger. --glass-filter is the two together; it is
-     "none" where the glass is solid (the end of this file). */
-  --glass-blur: 24px;
-  --glass-saturate: 160%;
-  --glass-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
-  /* The faint light line along the top edge of the glass, and two soft
-     shadows: a low one for cards, a higher one for what floats. */
-  --glass-shine: inset 0 var(--hairline) 0 var(--glass-highlight);
-  --shadow-soft: 0 1px 2px var(--shadow), 0 8px 24px var(--shadow);
-  --shadow-raised: 0 2px 6px var(--shadow), 0 16px 40px var(--shadow);
+  /* liquid-glass: the frost. What is behind the glass is blurred a little,
+     squeezed toward middle grey (contrast below 1, so a black or a white
+     picture under the bar can never stay fully black or white, and the words
+     on the glass stay easy to read), and made more colourful again. */
+  --glass-blur: 12px;
+  --glass-range: 0.6;
+  --glass-saturate: 150%;
+  /* Larger glass is thicker: the "⋯" menu blurs more, so the words of the
+     post under it never read through it. */
+  --glass-blur-thick: 24px;
+  /* The scroll edge: the light blur where posts fade out under the bar. */
+  --edge-blur: 4px;
+  /* A button on glass shrinks a little while it is pressed; the sheen is a
+     little dimmer at rest than while the glass is pressed; glass that opens
+     grows from this size. */
+  --press-scale: 0.96;
+  --sheen-rest: 0.7;
+  --open-scale: 0.9;
+
+  /* Movement. Quick for a press, a little longer for something that opens.
+     --ease-spring is a spring with a small overshoot, as a list of points;
+     --ease-spring-plain is the same idea for a browser that cannot read the
+     list (the end of this file). */
+  --duration-quick: 160ms;
+  --duration-morph: 360ms;
+  --ease-spring: linear(0, 0.116 5%, 0.352 10%, 0.594 15%, 0.79 20%, 0.924 25%, 1.001 30%,
+    1.041 36%, 1.045 42%, 1.03 50%, 1.01 60%, 0.998 75%, 1);
+  --ease-spring-plain: cubic-bezier(0.34, 1.3, 0.64, 1);
 
   /* Sizes. */
   --page-width: 940px;     /* the two columns (300 + 20 + 590) and the room around them */
@@ -146,71 +195,193 @@
   --check-size: 18px;      /* a checkbox, as tall as the words beside it */
   --picture-height: 24rem; /* a picture is never taller than about half a screen */
 
-  /* classic-layout: the bar across the top (glass-style: frosted glass, with
-     the words in --text), and the two columns under it. */
+  /* classic-layout: the bar across the top (liquid-glass: a floating capsule
+     of glass, set in from the top and the sides), and the two columns under it. */
   --bar-height: 46px;
+  --bar-inset: var(--space-5);   /* the room around the floating bar */
+  --bar-pad: var(--space-2);     /* the room inside the bar, the same on every side */
   /* The bar's contents may be wider than the two columns, so the app's name,
      three view tabs, search, Colours and Log out fit on one line on a laptop. */
   --bar-width: 1180px;
   --dashboard-width: 300px;  /* the left column: profile card, post box, trends */
   --stream-width: 590px;     /* the right column: the timeline, search results, bookmarks */
-  /* Where something that stays on screen while you scroll ("3 new posts")
-     stops: just under the bar. */
-  --sticky-top: calc(var(--bar-height) + var(--space-3));
 
-  /* Layers and see-through. */
-  --layer-sticky: 1;       /* "3 new posts", above the posts it floats over */
-  --layer-bar: 2;          /* the top bar, above everything that scrolls under it */
+  /* Layers, back to front: the page, the content (cards and posts), an open
+     "⋯" menu, the scroll edge, the bar, and "3 new posts" (it floats over
+     the scroll edge, just under the bar). And see-through. */
+  --layer-menu: 1;
+  --layer-edge: 2;
+  --layer-bar: 3;
+  --layer-sticky: 4;
   --faded: 0.6;            /* a post hidden by reports, a heart that cannot be pressed */
+}
+
+/* Tokens made from other tokens. A token like this is worked out where it is
+   set, so it is set again on every [data-look] box: that way it follows the
+   colours and sizes the end of this file gives that box. */
+:root,
+[data-look] {
+  --focus-ring: 3px solid var(--author);
+  /* Concentric corners: a box in a card, a picture in a post, a row in the menu. */
+  --radius-field: calc(var(--radius-large) - var(--card-pad));
+  --radius: calc(var(--radius-large) - var(--card-pad));
+  --radius-menu-row: calc(var(--radius-popover) - var(--popover-pad));
+  /* The bar is a capsule: its corners are half its height, so one line of
+     controls has fully round ends, and two lines (on a phone) keep the same curve. */
+  --radius-bar: calc(var(--bar-height) / 2);
+  --glass-filter: blur(var(--glass-blur)) contrast(var(--glass-range)) saturate(var(--glass-saturate));
+  --glass-filter-thick: blur(var(--glass-blur-thick)) contrast(var(--glass-range)) saturate(var(--glass-saturate));
+  --edge-filter: blur(var(--edge-blur));
+  /* The glass's thickness: light along the top edge, a dimmer line along the
+     bottom, and a faint glow inside. Then its lift: a thin dark line around it
+     and two soft shadows. */
+  --glass-depth: inset 0 1px 1px var(--rim-bright), inset 0 -1px 1px var(--rim-dim),
+    inset 0 0 16px var(--glass-glow);
+  --shadow-float: 0 0 0 0.5px var(--rim-shade), 0 2px 6px var(--shadow), 0 12px 32px var(--shadow);
+  /* Just enough to lift a card off the page. */
+  --shadow-content: 0 1px 2px var(--shadow);
+  /* Just enough to lift the current tab off its track. */
+  --shadow-raised: 0 1px 3px var(--shadow);
+  /* The rim: a line all around the glass, bright at two corners and dim along the sides. */
+  --rim: linear-gradient(135deg, var(--rim-bright), var(--rim-dim) 30%, var(--rim-dim) 70%, var(--rim-bright));
+  /* The sheen: a soft light near the top left. */
+  --glass-sheen: radial-gradient(120% 80% at 30% 0%, var(--sheen), transparent 60%);
 }
 
 /* classic-layout: under 920px wide the columns stack and the bar scrolls away
    with the page, so "3 new posts" stops at the top of the screen. */
+:root,
+[data-look] {
+  /* Where something that stays on screen while you scroll ("3 new posts")
+     stops: just under the floating bar. */
+  --sticky-top: calc(var(--bar-inset) + var(--bar-height) + var(--space-3));
+}
+
 @media (max-width: 919px) {
-  :root {
+  :root,
+  [data-look] {
     --sticky-top: var(--space-3);
   }
 }
 
-/* glass-style: a hairline is half a pixel on a sharp screen (two or more
-   screen dots for each CSS pixel), where it still shows as one thin line. */
+/* A hairline is half a pixel on a sharp screen (two or more screen dots for
+   each CSS pixel), where it still shows as one thin line. */
 @media (min-resolution: 2dppx) {
-  :root {
+  :root,
+  [data-look] {
     --hairline: 0.5px;
   }
 }
 
-/* glass-style: the three times the glass becomes solid. Only tokens change, so
-   every glass surface follows at once.
-   1. The browser cannot blur what is behind (no backdrop-filter): see-through
-      glass with nothing blurred would be hard to read, so it is solid. */
-@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-  :root {
-    --glass: var(--card);
-    --glass-strong: var(--card);
-    --glass-filter: none;
+/* A browser that cannot read the spring's list of points uses the plain curve. */
+@supports not (transition-timing-function: linear(0, 1)) {
+  :root,
+  [data-look] {
+    --ease-spring: var(--ease-spring-plain);
   }
 }
 
-/* 2. The computer asks for less transparency. */
+/* liquid-glass: the fallbacks. Only tokens change, so every surface follows at
+   once. The order matters: with both settings on, more contrast wins.
+   1. The browser cannot blur what is behind (no backdrop-filter): see-through
+      glass with nothing blurred would be hard to read, so it is solid. The rim,
+      the depth, the sheen and the capsule stay. */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  :root,
+  [data-look] {
+    --glass-tint: var(--glass-solid);
+    --glass-tint-thick: var(--glass-solid);
+    --glass-filter: none;
+    --glass-filter-thick: none;
+    --edge-filter: none;
+  }
+}
+
+/* 2. The computer asks for less transparency: the glass becomes frosted and
+   solid, a little off the surface colour, with a crisp rim. Its shape, its
+   place, its shadows and its movement stay. */
 @media (prefers-reduced-transparency: reduce) {
   :root {
-    --glass: var(--card);
-    --glass-strong: var(--card);
-    --field: var(--card);
+    --glass-tint: var(--glass-solid);
+    --glass-tint-thick: var(--glass-solid);
     --glass-filter: none;
+    --glass-filter-thick: none;
+    --edge-filter: none;
+    --rim-bright: var(--rim-shade);
+    --rim-dim: var(--rim-shade);
   }
 }
 
-/* 3. The computer asks for more contrast: solid, and every edge and line
-   between posts in the strong --border colour, a whole pixel wide. */
+/* 3. The computer asks for more contrast: black or white, with a contrasting
+   border on every control, words in black or white, no sheen and no glow, and
+   a darker line between posts. The page has no glow of colour. */
 @media (prefers-contrast: more) {
   :root {
-    --glass: var(--card);
-    --glass-strong: var(--card);
-    --field: var(--card);
+    --glass-tint: var(--glass-solid);
+    --glass-tint-thick: var(--glass-solid);
     --glass-filter: none;
-    --glass-edge: var(--border);
+    --glass-filter-thick: none;
+    --edge-filter: none;
+    --glass-solid: light-dark(#ffffff, #000000);
+    --surface: light-dark(#ffffff, #000000);
+    --surface-edge: var(--border);
+    --text: light-dark(#000000, #ffffff);
+    --wash-1: var(--background);
+    --wash-2: var(--background);
+    --wash-3: var(--background);
+    --rim-bright: var(--border);
+    --rim-dim: var(--border);
+    --control-edge: var(--border);
+    --fill-raised: var(--glass-solid);
+    --separator: var(--separator-more);
+    --glass-glow: var(--clear);
+    --sheen: var(--clear);
     --hairline: var(--line);
+  }
+}
+
+/* The style guide's "Show as" switch (/design.html): the same two looks, on
+   one box, whatever this computer asks for. They must stay exactly the same
+   as the two blocks above; a test checks it. */
+[data-look="frosted"] {
+  --glass-tint: var(--glass-solid);
+  --glass-tint-thick: var(--glass-solid);
+  --glass-filter: none;
+  --glass-filter-thick: none;
+  --edge-filter: none;
+  --rim-bright: var(--rim-shade);
+  --rim-dim: var(--rim-shade);
+}
+
+[data-look="contrast"] {
+  --glass-tint: var(--glass-solid);
+  --glass-tint-thick: var(--glass-solid);
+  --glass-filter: none;
+  --glass-filter-thick: none;
+  --edge-filter: none;
+  --glass-solid: light-dark(#ffffff, #000000);
+  --surface: light-dark(#ffffff, #000000);
+  --surface-edge: var(--border);
+  --text: light-dark(#000000, #ffffff);
+  --wash-1: var(--background);
+  --wash-2: var(--background);
+  --wash-3: var(--background);
+  --rim-bright: var(--border);
+  --rim-dim: var(--border);
+  --control-edge: var(--border);
+  --fill-raised: var(--glass-solid);
+  --separator: var(--separator-more);
+  --glass-glow: var(--clear);
+  --sheen: var(--clear);
+  --hairline: var(--line);
+}
+
+/* 4. The computer asks for less movement: everything jumps straight to its
+   end. Nothing changes in how it looks. */
+@media (prefers-reduced-motion: reduce) {
+  :root,
+  [data-look] {
+    --duration-quick: 0s;
+    --duration-morph: 0s;
   }
 }

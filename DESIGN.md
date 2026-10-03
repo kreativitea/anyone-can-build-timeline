@@ -790,7 +790,7 @@ and phone width, signed in and out.
 
   | File | What it holds |
   |---|---|
-  | `tokens.css` | every **token**: a named value. The colours first (`light-dark(LIGHT, DARK)`, as before), then type (`--text-small`, `--text-body`, `--text-large`, `--text-title`, `--text-meta`, `--line-height`, `--weight-…`), space (`--space-1` 2px … `--space-7` 20px), corners (`--radius-small`, `--radius`, `--radius-field`, `--radius-large`, `--radius-pill`, `--radius-round`), lines (`--line`, `--line-thick`, `--band`, `--focus-ring`, `--focus-offset`), sizes (`--page-width`, `--avatar…`, `--check-size`, `--picture-height`, and the layout's `--bar-height`, `--dashboard-width`, `--stream-width`, `--sticky-top`), `--layer-sticky`, `--layer-bar` and `--faded`; glass style added the wash (`--wash-1…3`), the glass (`--glass`, `--glass-strong`, `--glass-edge`, `--glass-highlight`, `--glass-blur`, `--glass-saturate`, `--glass-filter`, `--glass-shine`), `--field`, `--track`, `--raised`, `--shadow`, `--shadow-soft`, `--shadow-raised` and `--hairline`, and the three solid fallbacks at the end. |
+  | `tokens.css` | every **token**: a named value. The colours first (`light-dark(LIGHT, DARK)`, as before), then type (`--text-small`, `--text-body`, `--text-large`, `--text-title`, `--text-meta`, `--line-height`, `--weight-…`), space (`--space-1` 2px … `--space-7` 20px), corners (`--radius-small`, `--radius`, `--radius-field`, `--radius-large`, `--radius-pill`, `--radius-round`), lines (`--line`, `--line-thick`, `--band`, `--focus-ring`, `--focus-offset`), sizes (`--page-width`, `--avatar…`, `--check-size`, `--picture-height`, and the layout's `--bar-height`, `--dashboard-width`, `--stream-width`, `--sticky-top`), `--layer-sticky`, `--layer-bar` and `--faded`; glass style added the wash (`--wash-1…3`), the glass (`--glass`, `--glass-strong`, `--glass-edge`, `--glass-highlight`, `--glass-blur`, `--glass-saturate`, `--glass-filter`, `--glass-shine`), `--field`, `--track`, `--raised`, `--shadow`, `--shadow-soft`, `--shadow-raised` and `--hairline`, and the three solid fallbacks at the end; liquid-glass replaced most of the glass tokens (see "Liquid glass"). |
   | `base.css` | the page itself: the box model, `[hidden]`, `body` (with the band of colour), `main`, `h1`. |
   | `components.css` | the shared pieces, each one class: **field** (`label`, `input`, `textarea`, `select`, `.hint`, `.count`), **button** (every `<button>`, and `.button-link`, `.button-quiet`, `.button-pill`, with the turned-off look once), **card** (`.card`), **disclosure** (`.disclosure`, a card while open), **menu** (`.menu`, the "⋯"), **tabs** (`.tabs`), **status** (`.status`), **avatar** (`.avatar`, `.avatar-colour-1` … `6`), **post** (`.timeline`, `.post`, its slots `head`, `body`, `foot`, `menu`, and its states: deleted, hidden by reports, a reply, under the mouse, on a phone), and **hidden** (`.visually-hidden`). Then the **layout** (classic-layout): **top-bar** (`.top-bar`, `.top-bar-inner`, `.top-bar-title`), **columns** (`.columns`, `.dashboard`, `.stream`), **stream** (`.stream-header`), **profile** (`.profile-card`, `.profile-counts`) and **trends** (`.trends`, `.trends-list`). |
   | `features.css` | each feature's own small block, under its name. A block only **arranges** components and uses tokens: where things sit and the room between them. |
@@ -896,6 +896,106 @@ components, with a few lines in `features.css`.
   (`:focus-visible`), not after a click. The example words in an empty box are `--quiet`.
 - Not in this version: moving or animated glass, a picture behind the glass, glass on each post,
   any layout change.
+- **Replaced by "Liquid glass" (below):** the glass on the cards, the stream and an open
+  disclosure, `.glass-strong`, the full-screen wash, `--glass`, `--glass-edge`,
+  `--glass-highlight`, `--card` and `--raised`. The method of the contrast test stays.
+
+## Liquid glass
+
+The owner: "The liquid glass isn't very glassy. Go look at the actual Apple design language
+documents. The Apple UI is very, very slick." The plan (`docs/plans/liquid-glass.md`) read that
+design language: the Human Interface Guidelines pages *Materials*, *Color*, *Toolbars*, *Tab bars*
+and *Layout*; the articles *Adopting Liquid Glass* and *Applying Liquid Glass to custom views*;
+and the WWDC25 talks *Meet Liquid Glass* and *Get to know the new design system*. It also looked at
+people who rebuilt it on the web (kube.io, LogRocket, WebTricks, two open-source projects). The
+sources are named here, never in the code. This is **Part A**: glass, layers, fallbacks and
+movement in CSS only. **Part B** (later) adds `glass.js`: the bent edge, the light that follows the
+pointer and the tab pill that slides.
+
+- **The layers, back to front.** The page: a calm, nearly neutral `--background` with a faint glow
+  of colour at the top only (`body::before`, three soft spots centred on the top edge). The
+  **content layer**: the cards, the stream and its posts, solid `--surface` with large smooth
+  corners and a very soft shadow. The **scroll edge** (`.scroll-edge`, from 920px wide): a strip
+  of the page fixed under the bar, solid above the bar and gone by its lower half, with a small
+  blur, so posts fade softly into the top of the screen instead of being cut by a line, and can
+  still be seen through the bar. The **control layer**: glass.
+- **Why the cards are not glass.** The guidelines say glass is "a distinct functional layer for
+  controls and navigation", not for the content layer, and "avoid glass on glass". Glass over a
+  soft even wash has nothing to show, which is why the old look read as frosted plastic. A small
+  amount of good glass over real, moving posts (their words, circles and pictures) is what looks
+  like glass. So only four things are glass: the **top bar** (a capsule, set in by `--bar-inset`
+  from the top and the sides, sticky, the posts scrolling under it), an open **"⋯" menu**,
+  **"3 new posts"**, and (Part B) the tab pill. The controls *inside* the bar are fills
+  (`--fill`, `--fill-raised`), never glass on glass. The Post button stays a solid colour: it is
+  the one main action.
+- **The recipe** (`.glass` in `components.css`, four parts, one element and its two
+  pseudo-elements, `isolation: isolate` keeps them inside it):
+  1. **Frost:** `backdrop-filter: var(--glass-filter)` = `blur(--glass-blur)`
+     `contrast(--glass-range)` `saturate(--glass-saturate)`, then `--glass-tint` on it.
+     `contrast()` below 1 squeezes what is behind toward middle grey, so a black or a white picture
+     under the bar can never stay fully black or white, and the tint can be more see-through than
+     before (55% light, 65% dark, was 80%/84%). The blur is 12px (was 24px): real liquid glass is
+     much clearer than frost. The menu is larger glass, so it is thicker: `--glass-tint-thick` and
+     `--glass-filter-thick` (a 24px blur, so the words of the post under it never read through).
+  2. **Rim** (`::before`): a hairline gradient (`--rim`), bright at the top-left and bottom-right
+     corners and dim along the sides, cut to the edge with a mask.
+  3. **Depth** (`box-shadow`): `--glass-depth` (light inside the top edge, a dimmer line along the
+     bottom, a faint glow inside) and `--shadow-float` (a thin dark line, `--rim-shade`, so white
+     glass still shows on a white post, and two soft shadows).
+  4. **Sheen** (`::after`, under the words): a soft light near the top (`--glass-sheen`), brighter
+     while the glass is pressed.
+- **Concentric corners.** Inner corners are worked out from outer ones, so the curves share a
+  centre: `--radius-field` and `--radius` (a box in a card, a picture in a post) are
+  `--radius-large` (22px) minus `--card-pad`; a menu row is `--radius-popover` minus
+  `--popover-pad`. Everything in the bar is a capsule and the bar's padding is one token on all
+  four sides, so a capsule at either end is concentric with the bar's round end.
+  `corner-shape: squircle` (a smoother corner) is added on cards, the stream, the menu and
+  pictures; browsers that cannot draw it keep the round corner.
+- **Movement.** `--duration-quick` (160ms) for a press, `--duration-morph` (360ms) for something
+  that opens; `--ease-spring`, a spring with a small overshoot written as a `linear()` list (a
+  plain `cubic-bezier` where that is not supported). A button on glass shrinks a little while
+  pressed; the menu grows out of its "⋯"; "3 new posts" slides down from under the bar. Every
+  `transition` and `animation` uses the two duration tokens, and Reduce Motion sets both to `0s`.
+- **The fallbacks** are tokens only, at the end of `tokens.css`, in this order (with both
+  settings on, more contrast wins):
+
+  | When | The glass becomes | What stays |
+  |---|---|---|
+  | The browser cannot blur | solid `--glass-solid`, no filter | rim, depth, sheen, capsule, motion |
+  | Reduce Transparency | **frosted solid**: `--glass-solid`, a little off the surface colour so the bar is still its own layer; no blur; the scroll edge without blur; the rim a crisp `--rim-shade` line | capsule, floating inset, shadows, motion |
+  | Increase Contrast | **black or white**: `--glass-solid`, `--surface` and `--fill-raised` white or black, `--text` black or white, a `--border` edge on every control, no sheen and no glow, no glow of colour on the page, a darker line between posts | capsule, shadows, motion |
+  | Reduce Motion | nothing changes in looks | everything; movement jumps to its end |
+
+  On the style guide, **"Show as: Glass / Reduced transparency / More contrast"** puts
+  `data-look` on both columns, and `tokens.css` repeats the two blocks for `[data-look="frosted"]`
+  and `[data-look="contrast"]` (a test checks they are the same). Every token block is written
+  for `:root, [data-look]`, so a column can show any look whatever this computer asks for. This
+  is how the owner, whose Mac has Reduce Transparency and Increase Contrast on, can see the glass.
+- **How the contrast test works now.** `ColoursTest` does what the browser does. It reads
+  `--glass-filter` and applies its steps in order to every colour that can be behind the glass:
+  `contrast(c)` as `(x − 0.5) × c + 0.5` on each sRGB channel (checked in Chrome: black under
+  `contrast(0.6)` becomes #333333, as this predicts, not the lighter grey a linear-light filter
+  would give; Safari was not checked), then `saturate()` with the numbers of the Filter Effects
+  standard; blur only mixes colours already there, so the halfway colours stand for it. Behind the
+  glass: the page and its glow (and halfway between each two), `--surface`, a post under the mouse,
+  the six circle colours, the button colour, and pure black and pure white (pictures). Then it lays
+  the tint on each, and the sheen at its brightest on that. Words on the glass, the tabs' track,
+  the raised pill and the search box: 4.5 to 1; the focus ring: 3 to 1; the solid looks: 4.5 with
+  less transparency, **7** with more contrast (the higher WCAG level). The lowest results: text on
+  the bar 5.41 (dark, a white picture under it), the search box's example words 4.96 (dark), the
+  focus ring 3.18 (dark, on the bar), words off the glass 5.68 (light, quiet words on the lilac
+  glow), the edge of a box 3.85; with more contrast 7.11. **Decoration, not checked:** the rim,
+  the glow, `--rim-shade`, `--separator`, the shadows and the scroll edge.
+- **Performance.** At most four rules with a backdrop filter (the glass, the menu's thicker frost,
+  the scroll edge): never on a card, the stream, a list of posts or a post (a test). Pressing and
+  opening are CSS only; nothing runs while the page scrolls.
+- **Phones (under 920px).** The capsule scrolls away with the page, as the bar did; its last group
+  (Colours and Log out) wraps, and the view tabs are a little narrower so all three fit on one line.
+- **Part B (not built yet).** `glass.js`: a displacement map drawn for the bar's exact size (a
+  squircle height profile, its slope as red and green) in an SVG filter used through
+  `backdrop-filter: url(#lens-bar)`, given only to Chromium through `html.refracts` (a test
+  already allows `url(#lens` only there); the light that follows the pointer (`--light-x`,
+  `--light-y`); and the current tab's pill sliding to the tab you choose.
 
 ## 8. Build or borrow
 

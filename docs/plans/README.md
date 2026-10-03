@@ -74,6 +74,7 @@ Several branches are built at the same time, and they all touch the same few fil
 | `place` | Where a post was written |
 | `japanese` | The app in Japanese as well as English |
 | `classic-style` | The look of classic (2009–2014) Twitter, in our own colours: one card, letter circles, names in blue |
+| `liquid-glass` | Glass only on the floating controls (a capsule bar the posts scroll under, the ⋯ menu, "3 new posts"); solid cards with concentric corners; calm page; slick solid looks for less transparency and more contrast. Part A built; Part B (bent edge, pointer light, sliding tab pill) later |
 
 Already done, so no plan: the live character count, refusing empty or too-long posts, and unique
 account names (part of `accounts`).

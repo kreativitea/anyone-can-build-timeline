@@ -27,11 +27,11 @@ piece of text the browser keeps and sends back by itself), never from a name in 
 | `page-only/tokens.css`, `base.css`, `components.css`, `features.css` | Exact copies of the four style files in `with-backend/`. Change those, then copy them here. |
 | `page-only/app.js` | Checks the rules and keeps the posts in this window's `sessionStorage`. There are no likes in this version. |
 | `with-backend/index.html` | The parts of the screen, in three areas (see "Classic layout"): the top bar (app name, view tabs, search, Colours, Log out); the left column (Log in and Sign up forms when signed out; the profile card, the post box, Email and Blocked accounts when signed in; the status line; the trends); the right column (the timeline, search results, My bookmarks). A tiny script in `<head>` that sets the colours before the page is drawn. |
-| `with-backend/tokens.css` | The design system's **tokens**: every colour (written once for light and dark, as `light-dark(LIGHT, DARK)`), type size, space, corner, line and size, by name, and the glass and its three solid fallbacks at the end. The only file with raw values. |
+| `with-backend/tokens.css` | The design system's **tokens**: every colour (written once for light and dark, as `light-dark(LIGHT, DARK)`), type size, space, corner, line, size and movement, by name, and at the end the fallback looks (no blur, less transparency, more contrast, less motion) and the style guide's two "Show as" looks. Every block is written for `:root, [data-look]`. The only file with raw values. |
 | `with-backend/base.css` | The page itself: the box model, `[hidden]`, `body` (the band of colour at the top), `main`, `h1`. |
-| `with-backend/components.css` | The shared **components**, each one class: field, button (`.button-link`, `.button-quiet`, `.button-pill`), `.card`, `.disclosure`, `.menu`, `.tabs`, `.status`, `.avatar`, `.post` with its slots and states, `.visually-hidden`, and the **glass** surfaces `.glass` and `.glass-strong`. Then the **layout** components: `.top-bar`, `.columns`, `.dashboard`, `.stream`, `.stream-header`, `.profile-card`, `.trends`. All posts in one glass card, a hairline between them. |
+| `with-backend/components.css` | The shared **components**, each one class: field, button (`.button-link`, `.button-quiet`, `.button-pill`), `.card`, `.disclosure`, `.menu`, `.tabs`, `.status`, `.avatar`, `.post` with its slots and states, `.visually-hidden`, and `.glass` (the floating control layer). Then the **layout** components: `.top-bar` (a floating glass capsule, with `.top-bar-group`), `.scroll-edge`, `.columns`, `.dashboard`, `.stream`, `.stream-header`, `.profile-card`, `.trends`. All posts in one solid card, an inset hairline between them. |
 | `with-backend/features.css` | Each feature's own small block, under its name. It only arranges components, with tokens. |
-| `with-backend/design.html` | The style guide, at `/design.html`: every token and every component, light and dark side by side, with sample posts. For builders: English only, not in `words.js`. |
+| `with-backend/design.html` | The style guide, at `/design.html`: every token and every component, light and dark side by side, with sample posts, and a "Show as: Glass / Reduced transparency / More contrast" switch. For builders: English only, not in `words.js`. |
 | `with-backend/app.js` | Asks the server who is logged in, sends sign-ups, logins, log-outs, posts, likes and likes taken back, and asks for new posts and new like counts every second. Remembers the Colours choice in `localStorage`. It keeps a half-written post in this browser's `localStorage`, one per account, removed after posting or logging out. It shows who liked each post, and asks for the names only when a count changes. It searches posts (`GET /search`) and shows the results in their own view. It asks for the newest page of posts, older pages on scroll, and holds new posts behind a "3 new posts" button while you read lower down. It sends bookmarks and bookmarks taken back, and asks for your bookmarks (never every second). It remembers the last place typed (`timeline-place`), forgotten on log out. It edits and deletes your own posts, shows earlier versions, and asks for changes (`GET /changes`) every second, before new posts. Each post shows a coloured circle with the first letter of the display name (`avatarPart`; the colour comes from the account name, `avatarColour`). It draws the profile card (`profileCard`, counts asked again by `askForCounts` after a post, a delete and every minute), the trends (`askForTrends`, `showTrends`: on load, after a login, a post or a delete, and every 60 seconds, never every second), and the right column's header (`showStreamHeading`, called by `showView`). |
 | `with-backend/server.py` | The backend, in three labelled parts: **controller**, **model**, **view**. |
 | `with-backend/words.js` | Every word the page shows, by key (`WORDS`). English only for now; Japanese comes later. |
@@ -202,46 +202,45 @@ DESIGN.md, "Design system". **Look at `/design.html` first** (run the server, op
 - **Nothing on screen may change** when you only tidy the style. Compare the page before and after
   (light and dark, wide and phone), for example by dumping `getComputedStyle` of every element.
 
-## Glass style
+## Liquid glass
 
-The surface is frosted glass over a soft wash of colour (DESIGN.md, "Glass style"). The layout is
-the classic layout, unchanged.
+Glass is only for the **floating control layer** (DESIGN.md, "Liquid glass"). Part A is built;
+Part B (`glass.js`: the bent edge, the pointer light, the sliding tab pill) comes later.
 
-- **The wash** is drawn in `base.css` on `body::before` (fixed to the screen, behind everything)
-  from `--background` and `--wash-1`, `--wash-2`, `--wash-3`: gradients only, no picture. The style
-  guide's columns use the same wash with `class="wash"`.
-- **`.glass`** (in `components.css`) is a see-through surface: `--glass` fill, `--glass-filter`
-  (blur `--glass-blur` and `--glass-saturate`; always written twice, `-webkit-backdrop-filter` for
-  Safari and `backdrop-filter`), a `--hairline` edge in `--glass-edge`, `--glass-shine` (a faint
-  `--glass-highlight` line along the top) and `--shadow-soft`. `.card`, an open `.disclosure` and
-  `.stream` are glass. **`.glass-strong`** is more solid (`--glass-strong`, `--shadow-raised`): the
-  top bar, an open "⋯" menu and "3 new posts". A new box is a `.card`, so it is glass already.
-- **A post is never glass** (no `backdrop-filter` on `.post` or a list of posts; a test checks
-  it): blurring every post would make scrolling slow. Posts are plain rows on the stream's glass.
-  The lists inside the stream are not a second layer of glass.
-- **The three fallbacks are tokens only**, at the end of `tokens.css`: no blur in the browser
-  (`@supports not`), `prefers-reduced-transparency: reduce` and `prefers-contrast: more` make
-  `--glass` and `--glass-strong` the solid `--card` and `--glass-filter` `none`; more contrast also
-  makes every hairline a whole pixel of `--border`. So a new glass surface needs no fallback of its
-  own: use the tokens.
-- **Other tokens:** `--field` (the soft fill of a box to type in), `--track` and `--raised` (the
-  view tabs as a segmented control, and the heart and the star), `--shadow` (the shadow colour),
-  `--hairline` (1px, 0.5px on a sharp screen). Corners are large: `--radius-large` 18px for cards,
-  `--radius-field` 12px for boxes, and every button, the search box, the Colours switch and the
-  tabs are pills (`--radius-pill`).
-- **Colours are checked on the glass** (`ColoursTest`): the test lays each see-through fill over
-  every wash colour (and halfway between each two), the way the browser does, and checks the words
-  on the result (4.5 to 1), and the focus ring and the edge of a box to type in (3 to 1). A new
-  colour that words sit on goes in `surfaces()` there. `--glass-edge`, `--glass-highlight` and
-  `--shadow` are decoration and are not checked.
+- **Only controls are glass:** the top bar (a capsule the posts scroll under), an open "⋯" menu
+  and "3 new posts", each with `class="glass"` or in the `.glass` rule. Cards, the stream, a
+  disclosure, lists of posts and posts are the **content layer**: solid `--surface`, never glass.
+  **No glass on glass:** a control inside the bar is a fill (`--fill`, `--fill-raised`). A new
+  box is a `.card`, so it is solid already.
+- **At most four rules with a backdrop filter** (a test): today the glass, the menu's thicker
+  frost and the scroll edge. Always write `-webkit-backdrop-filter` too, and only a token as the
+  value (`--glass-filter`, `--glass-filter-thick`, `--edge-filter`), so the fallbacks can turn it off.
+- **The fallbacks are tokens only**, at the end of `tokens.css`, in this order: no blur, Reduce
+  Transparency (frosted solid), Increase Contrast (black or white, an edge on every control),
+  Reduce Motion (both durations `0s`). A new surface needs no fallback of its own. The style
+  guide's `[data-look="frosted"]` and `[data-look="contrast"]` blocks repeat the two middle ones
+  exactly (a test checks): change both together.
+- **Movement** uses `--duration-quick` or `--duration-morph` in every `transition` and
+  `animation` (a test checks), so Reduce Motion stops it.
+- **Corners are concentric:** a box in a card is `--radius-field`, a picture `--radius`, a menu
+  row `--radius-menu-row`, each worked out from the outer corner minus the padding. Rectangles get
+  `corner-shape: var(--corner-shape)`; capsules stay `--radius-pill`.
+- **The bent edge (Part B)** may only be given through `html.refracts` (a test checks).
+- **Colours are checked on the glass** (`ColoursTest`): the test applies `--glass-filter`'s
+  `contrast()` and `saturate()` to everything that can be behind the glass (the page, a card, a
+  post under the mouse, the circles, a button, black and white), lays the tint and the sheen on
+  it, and checks the words (4.5 to 1), the focus ring (3 to 1), and the two solid looks (4.5, and
+  7 with more contrast). A new colour that words sit on goes in `surfaces()` there.
 - A button shows the focus ring only for the keyboard (`button:focus-visible`); a box to type in
   always does. A `.button-link` is underlined only under the mouse or the keyboard.
+- To see the glass on a computer with Reduce Transparency on, use the style guide's "Show as"
+  switch, or Chrome's developer tools (Rendering, emulate CSS media features).
 
 ## Classic layout
 
 The page is laid out like a 2012 timeline (DESIGN.md, "Classic layout"). Three areas:
 
-- **The top bar** (`<header class="top-bar">`, strong glass): the app's name, `#views` (the view tabs),
+- **The top bar** (`<header class="top-bar">`, a floating capsule of glass): the app's name, `#views` (the view tabs),
   `#search-form`, the Colours switch and `#logout` (shown only when signed in). It is sticky; under
   920px it scrolls away. Something else that stays on screen while you scroll uses
   `top: var(--sticky-top)`, so it stops under the bar.
