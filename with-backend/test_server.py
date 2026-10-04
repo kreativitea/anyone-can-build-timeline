@@ -4095,6 +4095,13 @@ class RealServerTest(unittest.TestCase):
                          "An email could not be printed: the mail server is down\n")
         self.assertEqual(len(self.get("/posts?after=0")), 3)
 
+    def test_the_server_gives_the_page_its_glass_script(self):
+        # liquid-glass Part B.
+        with self.window.open(self.base + "/glass.js") as answer:
+            self.assertEqual(answer.status, 200)
+            self.assertTrue(answer.headers["Content-Type"].startswith("text/javascript"))
+            self.assertIn("function lensMap(", answer.read().decode("utf-8"))
+
 
 class JourneyTest(unittest.TestCase):
     """One whole journey, through all three levels at once.
@@ -7084,7 +7091,7 @@ class ClassicStyleTest(unittest.TestCase):
 
     def test_nothing_names_the_company(self):
         files = [("with-backend", name) for name in
-                 ("index.html", "app.js", "words.js", "design.html") + DESIGN_FILES]
+                 ("index.html", "app.js", "words.js", "design.html", "glass.js") + DESIGN_FILES]
         files += [("page-only", name) for name in ("index.html", "app.js") + DESIGN_FILES]
         for folder, name in files:
             with self.subTest(file=folder + "/" + name):
@@ -7156,6 +7163,8 @@ class DesignSystemTest(unittest.TestCase):
         # A token used only by another token (--author in --focus-ring) counts.
         used = set(re.findall(r"var\(--([\w-]+)\)", "\n".join(self.others.values())))
         used |= set(re.findall(r"var\(--([\w-]+)\)", self.tokens))
+        # liquid-glass Part B: glass.js reads a few numbers from tokens.css.
+        used |= set(re.findall(r'token\("--([\w-]+)"\)', self.read("glass.js")))
         for token in self.defined:
             with self.subTest(token=token):
                 self.assertIn(token, used)
@@ -7176,6 +7185,10 @@ class DesignSystemTest(unittest.TestCase):
         on_guide = set()
         for attribute in re.findall(r'class="([^"]*)"', self.guide):
             on_guide.update(attribute.split())
+        # liquid-glass Part B: a class glass.js puts on (refracts, has-pill,
+        # is-pressed) is a state, not a component; the guide loads glass.js, so
+        # the guide shows it too.
+        on_guide.update(re.findall(r'classList\.(?:add|toggle)\("([\w-]+)"', self.read("glass.js")))
         for name in sorted(classes):
             with self.subTest(component=name):
                 self.assertIn(name, on_guide)
@@ -7273,6 +7286,7 @@ class GlassStyleTest(unittest.TestCase):
                 self.assertIn("--glass-tint-thick: var(--glass-solid);", block)
                 self.assertIn("--glass-filter: none;", block)
                 self.assertIn("--glass-filter-thick: none;", block)
+                self.assertIn("--glass-filter-lens: none;", block)
                 self.assertIn("--edge-filter: none;", block)
         more = self.block("@media (prefers-contrast: more)")
         for line in ("--control-edge: var(--border);", "--hairline: var(--line);",
@@ -7316,7 +7330,9 @@ class GlassStyleTest(unittest.TestCase):
         for value in plain:
             with self.subTest(value=value):
                 self.assertIn(value, ("var(--glass-filter)", "var(--glass-filter-thick)",
-                                      "var(--edge-filter)", "none"))
+                                      "var(--edge-filter)", "none",
+                                      # Part B: the lens, then the same frost.
+                                      "var(--lens) var(--glass-filter-lens)"))
 
     def test_only_the_control_layer_is_glass(self):
         # The content layer is never glass: no glass on glass, and blurring
@@ -7364,6 +7380,94 @@ class GlassStyleTest(unittest.TestCase):
             if "url(#lens" in body:
                 with self.subTest(rule=selectors):
                     self.assertTrue(selectors.startswith("html.refracts"))
+
+    def test_the_lens_is_only_on_the_bar_and_new_posts(self):
+        # liquid-glass Part B: one rule, under html.refracts, after the plain
+        # glass rule, and only for the bar and "3 new posts" (at most two lenses).
+        lensed = [(selectors, body) for selectors, body in self.rules if "var(--lens)" in body]
+        self.assertEqual(len(lensed), 1)
+        selectors, body = lensed[0]
+        self.assertEqual([part.strip() for part in selectors.split(",")],
+                         ["html.refracts .top-bar", "html.refracts .new-posts"])
+        self.assertIn("backdrop-filter: var(--lens) var(--glass-filter-lens);", body)
+        self.assertLess(self.components.index("\n.glass,\n"),
+                        self.components.index("html.refracts .top-bar,"))
+        # The default --lens bends nothing; glass.js gives each piece of glass its own.
+        self.assertIn("--lens: blur(0px);", self.tokens)
+        self.assertIn('"url(#" + id + ")"', self.read("glass.js"))
+
+    def test_the_lens_frost_has_the_same_colours_as_the_glass(self):
+        # ColoursTest checks the colours of --glass-filter. The lens's frost is
+        # only less blurred (blur mixes colours already there), so the same
+        # contrast results hold for it.
+        defined = {}   # each token as it is first written (the fallbacks set "none")
+        for name, value in re.findall(r"^\s*--([\w-]+):\s*([^;]+);", self.tokens, re.MULTILINE):
+            defined.setdefault(name, value)
+        self.assertIn("contrast(var(--glass-range))", defined["glass-filter-lens"])
+        self.assertEqual(defined["glass-filter-lens"],
+                         defined["glass-filter"].replace("--glass-blur)", "--glass-blur-lens)"))
+
+    def test_the_lens_filter_reads_its_map_in_srgb(self):
+        # Without sRGB the browser reads the map's colours in another colour
+        # space, and 128 no longer means "do not move".
+        script = self.read("glass.js")
+        self.assertIn('filter.setAttribute("color-interpolation-filters", "sRGB");', script)
+        self.assertIn('createElementNS(SVG, "feDisplacementMap")', script)
+        self.assertIn('setAttribute("xChannelSelector", "R")', script)
+        self.assertIn('setAttribute("yChannelSelector", "G")', script)
+
+    def test_the_bent_rim_never_reaches_the_words_in_the_bar(self):
+        # The rim stays inside the capsule's round ends and padding.
+        defined = dict(re.findall(r"^\s*--([\w-]+):\s*([^;]+);", self.tokens, re.MULTILINE))
+        bezel = float(defined["lens-bezel"].replace("px", ""))
+        bar = float(defined["bar-height"].replace("px", ""))
+        self.assertLessEqual(bezel, bar / 2)
+
+    def test_the_lens_is_only_for_a_browser_that_draws_it(self):
+        script = self.read("glass.js")
+        check = script[script.index("function glassCanRefract()"):]
+        check = check[:check.index("\n  }\n")]
+        for needed in ("navigator.userAgentData", 'CSS.supports("backdrop-filter"',
+                       '!asks("(prefers-reduced-transparency: reduce)")',
+                       '!asks("(prefers-contrast: more)")'):
+            with self.subTest(check=needed):
+                self.assertIn(needed, check)
+        self.assertIn('classList.toggle("refracts", glassCanRefract())', script)
+
+    def test_the_light_and_the_pill_follow_the_rules(self):
+        script = self.read("glass.js")
+        # The light follows only a mouse, and never with less motion.
+        self.assertIn('asks("(hover: hover) and (pointer: fine)") && '
+                      '!asks("(prefers-reduced-motion: reduce)")', script)
+        self.assertIn("requestAnimationFrame(place)", script)
+        self.assertNotIn('"scroll"', script)   # nothing runs while the page scrolls
+        self.assertIn("var(--light-x) var(--light-y)", self.tokens)
+        # The pill moves with the duration tokens, so less motion stops it.
+        pill = re.search(r"\n\.tabs\.has-pill::before \{(.*?)\}", self.components,
+                         re.DOTALL).group(1)
+        for line in ("translate: var(--pill-x) var(--pill-y);", "var(--duration-morph)",
+                     "background: var(--fill-raised);"):
+            with self.subTest(line=line):
+                self.assertIn(line, pill)
+
+    def test_the_glass_script_only_adds(self):
+        # The page works the same without glass.js: it is loaded last, deferred,
+        # builds nothing with HTML, keeps nothing, and catches its own errors.
+        script = self.read("glass.js")
+        for unsafe in ("innerHTML", "outerHTML", "insertAdjacentHTML", "document.write",
+                       "localStorage", "sessionStorage", "fetch("):
+            with self.subTest(unsafe=unsafe):
+                self.assertNotIn(unsafe, script)
+        self.assertGreaterEqual(script.count("catch (error)"), 2)
+        for name in ("index.html", "design.html"):
+            with self.subTest(page=name):
+                page = self.read(name)
+                self.assertEqual(page.count('<script src="glass.js" defer></script>'), 1)
+                # The last script on the page.
+                self.assertEqual(page.rindex("<script"), page.index('<script src="glass.js"'))
+        self.assertNotIn("glass.js", self.read("..", "page-only", "index.html"))
+        self.assertEqual(server.PAGE_FILES["/glass.js"],
+                         ("glass.js", "text/javascript; charset=utf-8"))
 
     def test_the_page_is_calm_with_a_glow_at_the_top(self):
         base = self.read("base.css")

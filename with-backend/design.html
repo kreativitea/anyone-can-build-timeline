@@ -205,7 +205,10 @@
       middle grey and made more colourful, then --glass-tint lies on it; 2. the rim
       (::before), bright at two corners and dim along the sides; 3. the depth: light
       inside the edge, a thin dark line outside, two soft shadows; 4. the sheen (::after),
-      a soft light near the top that brightens while you press. Press one to see it.</p>
+      a soft light near the top that brightens while you press. Press one to see it.
+      glass.js adds three touches: in Chrome and Edge the rim of the bar and of
+      "3 new posts" bends what is behind it (the lens, only under html.refracts); the light
+      follows the mouse over any glass (.is-lit) and glows where you press (.is-pressed).</p>
     <div class="guide-row">
       <div class="glass guide-glass">.glass</div>
       <button type="button" class="new-posts glass">3 new posts</button>
@@ -248,6 +251,8 @@
     <div class="card guide-nest"><div>A box in a card</div></div>
 
     <h3>tabs: <code>.tabs</code></h3>
+    <p class="guide-note">The current tab is a raised pill. With glass.js, it is one pill
+      (.tabs.has-pill) that slides with a small spring to the tab you press. Press one.</p>
     <nav class="tabs">
       <button type="button" aria-current="page">Timeline</button>
       <button type="button">My bookmarks</button>
@@ -424,6 +429,19 @@
       });
     }
 
+    // liquid-glass Part B: press a tab in a sample row of tabs to see the
+    // current tab's pill slide to it (glass.js moves the pill).
+    for (const button of columns.querySelectorAll(".tabs > button")) {
+      button.addEventListener("click", function () {
+        for (const other of button.parentElement.children) {
+          other.toggleAttribute("aria-current", other === button);
+          if (other === button) {
+            other.setAttribute("aria-current", "page");
+          }
+        }
+      });
+    }
+
     // The token tables: read tokens.css itself, so every token is listed with
     // its value and its note. Each row shows a sample drawn with the token.
     function sampleFor(name, written) {
@@ -496,5 +514,7 @@
       }
     });
   </script>
+  <!-- liquid-glass Part B: the bent edge, the light and the sliding tab pill. -->
+  <script src="glass.js" defer></script>
 </body>
 </html>

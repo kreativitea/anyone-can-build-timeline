@@ -1,4 +1,4 @@
-Status: Part A built on branch liquid-glass, awaiting merge
+Status: merged (Part A) · Part B built on branch liquid-glass, awaiting merge
 
 # Liquid glass
 

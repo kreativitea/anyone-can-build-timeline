@@ -209,8 +209,9 @@ button:disabled:not(.button-pill) {
       brighter while the glass is pressed.
    The fallbacks (less transparency, more contrast, no blur) are tokens only
    (tokens.css), so they need nothing here.
-   Part B (not built yet) adds the bent edge for the browsers that can draw it,
-   under html.refracts, after these rules. */
+   Part B (glass.js) adds the bent edge for the browsers that can draw it,
+   under html.refracts, after these rules; the light that follows the pointer
+   (--light-x, --light-y, in the sheen) and .is-pressed. */
 .glass,
 .top-bar,
 .menu[open] > ul {
@@ -253,10 +254,14 @@ button:disabled:not(.button-pill) {
   transition: opacity var(--duration-quick) ease;
 }
 
-/* Pressed, the glass lights up from inside. */
+/* Pressed, the glass lights up from inside. glass.js also makes the light a
+   spot that follows the mouse (.is-lit), and a larger glow where you press
+   (.is-pressed). */
 .glass:active::after,
 .top-bar:active::after,
-.menu[open] > ul:active::after {
+.menu[open] > ul:active::after,
+.is-lit::after,
+.is-pressed::after {
   opacity: 1;
 }
 
@@ -272,6 +277,21 @@ button:disabled:not(.button-pill) {
 .top-bar button:active,
 .menu li > button:active {
   scale: var(--press-scale);
+}
+
+/* The lens (liquid-glass Part B): the bar and "3 new posts" bend what is
+   behind their rim, before the frost. Only when glass.js has put
+   class="refracts" on <html>: it does that only in a browser that draws an
+   SVG filter behind an element (Chromium), and never when the computer asks
+   for less transparency or more contrast. --lens is set on each element by
+   glass.js (url(#lens-1)...), because each needs a map of its own size. The
+   frost is a little clearer (--glass-filter-lens), so the bend shows. When it
+   is none (the frosted and contrast looks), the whole value is not valid, so
+   the browser draws no backdrop filter at all, as it should. */
+html.refracts .top-bar,
+html.refracts .new-posts {
+  -webkit-backdrop-filter: var(--lens) var(--glass-filter-lens);
+  backdrop-filter: var(--lens) var(--glass-filter-lens);
 }
 
 /* Glass that appears grows out of where it comes from, with a small spring. */
@@ -775,6 +795,42 @@ html:has(.top-bar) {
 .top-bar .tabs > button[aria-current="page"] {
   border-color: var(--control-edge);
   background: var(--fill-raised);
+}
+
+/* liquid-glass Part B: the sliding pill. When glass.js runs, the current
+   tab's raised look is one pill (::before) under the tabs, and it slides,
+   with a small spring, to the tab you choose. glass.js sets where it is
+   (--pill-x, --pill-y) and its size. Without glass.js, the current tab keeps
+   its own raised look (above). */
+.tabs.has-pill {
+  position: relative;
+  isolation: isolate;
+}
+
+.tabs.has-pill::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: -1;
+  box-sizing: border-box;
+  width: var(--pill-width);
+  height: var(--pill-height);
+  translate: var(--pill-x) var(--pill-y);
+  border: var(--hairline) solid var(--control-edge);
+  border-radius: var(--radius-pill);
+  background: var(--fill-raised);
+  box-shadow: var(--shadow-raised);
+  transition: translate var(--duration-morph) var(--ease-spring),
+    width var(--duration-morph) var(--ease-spring),
+    height var(--duration-morph) var(--ease-spring);
+}
+
+.tabs.has-pill > button[aria-current="page"],
+.tabs.has-pill > button[aria-pressed="true"] {
+  border-color: transparent;
+  background: none;
+  box-shadow: none;
 }
 
 /* The scroll edge: a strip under the bar, fixed to the top of the screen.

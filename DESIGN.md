@@ -908,9 +908,9 @@ design language: the Human Interface Guidelines pages *Materials*, *Color*, *Too
 and *Layout*; the articles *Adopting Liquid Glass* and *Applying Liquid Glass to custom views*;
 and the WWDC25 talks *Meet Liquid Glass* and *Get to know the new design system*. It also looked at
 people who rebuilt it on the web (kube.io, LogRocket, WebTricks, two open-source projects). The
-sources are named here, never in the code. This is **Part A**: glass, layers, fallbacks and
-movement in CSS only. **Part B** (later) adds `glass.js`: the bent edge, the light that follows the
-pointer and the tab pill that slides.
+sources are named here, never in the code. **Part A** is glass, layers, fallbacks and movement
+in CSS only. **Part B** adds `glass.js`: the bent edge, the light that follows the pointer and the
+tab pill that slides (the end of this section).
 
 - **The layers, back to front.** The page: a calm, nearly neutral `--background` with a faint glow
   of colour at the top only (`body::before`, three soft spots centred on the top edge). The
@@ -991,11 +991,58 @@ pointer and the tab pill that slides.
   opening are CSS only; nothing runs while the page scrolls.
 - **Phones (under 920px).** The capsule scrolls away with the page, as the bar did; its last group
   (Colours and Log out) wraps, and the view tabs are a little narrower so all three fit on one line.
-- **Part B (not built yet).** `glass.js`: a displacement map drawn for the bar's exact size (a
-  squircle height profile, its slope as red and green) in an SVG filter used through
-  `backdrop-filter: url(#lens-bar)`, given only to Chromium through `html.refracts` (a test
-  already allows `url(#lens` only there); the light that follows the pointer (`--light-x`,
-  `--light-y`); and the current tab's pill sliding to the tab you choose.
+- **Part B: `glass.js`.** One small file of our own (no library), loaded last with `defer` by
+  the page and the style guide (not by `page-only/`). It **only adds**: each of its three parts is
+  inside `try`, and without it the page is exactly Part A. Its numbers are tokens in `tokens.css`.
+  1. **The lens** (the bent edge). For the bar and for "3 new posts", `glass.js` draws a
+     *displacement map* the element's own size on a `<canvas>`: for each pixel, its distance to the
+     capsule's edge; inside the rim (`--lens-bezel`, 14px) it is moved toward the middle, most at the
+     very edge, fading out as `(1 − t)²` across the rim. Red is left/right, green up/down, 128 is
+     "do not move". The map goes into an `feImage` in a hidden `<svg>`, with an
+     `feDisplacementMap` (`scale` = `--lens-scale`, 40: at most 20px), in a `<filter>` with
+     `color-interpolation-filters="sRGB"` (without it 128 does not mean "do not move"). Each
+     element gets its own filter (`lens-1`, `lens-2`, …, so the guide's several bars each fit)
+     and `--lens: url(#lens-N)`. One CSS rule uses it, only under `html.refracts`:
+     `backdrop-filter: var(--lens) var(--glass-filter-lens)`. The lens's frost blurs 6px
+     (`--glass-blur-lens`) instead of 12px: looked at in Chrome, a 12px blur smeared the bend away
+     completely. The squeeze toward grey and the tint are the same, so `ColoursTest` (which never
+     counted the blur) holds, and a test checks the two filters differ only in the blur. A
+     "squircle" height profile, as the plan first said, bent only the outer 2–3 pixels, and the
+     blur hid that too, so the rim uses the softer curve. The bar's words never sit on the rim
+     (`--lens-bezel` ≤ half `--bar-height`, a test). Over the striped and gradient test pictures
+     the words on the bar read as before: the lens only moves pixels that are already there.
+  2. **The light.** The sheen is worked out on each piece of glass from `--light-x` and
+     `--light-y` (resting at 30% 0%). With a mouse, `glass.js` sets them on the glass under the
+     pointer, at most once per frame, and adds `.is-lit`: the sheen becomes a smaller, brighter
+     spot (`--light-size-near`) that follows the pointer, and the rim catches the light there too.
+     Pressing adds `.is-pressed`, a wider glow (`--light-size-press`). The sheen's colour never
+     changes (it is the one `ColoursTest` checks at its brightest). Not on a touch screen
+     (`(hover: hover) and (pointer: fine)`), and not with Reduce Motion; there the plain `:active`
+     glow stays.
+  3. **The tab pill.** `glass.js` watches every `.tabs` (`MutationObserver` on `aria-current`,
+     `aria-pressed`, `hidden` and new buttons; `ResizeObserver` for another language or a wrap)
+     and puts `.has-pill` on it, with `--pill-x`, `--pill-y`, `--pill-width`, `--pill-height`
+     from the current tab. `.tabs.has-pill::before` is the raised pill, moved with
+     `--duration-morph` and `--ease-spring`, so it slides with a small overshoot (and jumps with
+     Reduce Motion). The current tab itself loses its own raised look only then. `showView` in
+     `app.js` does not change.
+- **Browser support for Part B.** The lens: Chromium only (Chrome, Edge, Brave, Arc, Opera),
+  checked as `navigator.userAgentData` plus `CSS.supports("backdrop-filter", "url(#lens) …")`,
+  never `@supports` alone: Safari may accept the value and then draw no backdrop at all. Safari and
+  Firefox keep Part A's frosted glass, with the light and the pill. With Reduce Transparency,
+  Increase Contrast or forced colours `html.refracts` is not set (and is taken off if the setting
+  changes while the page is open); in the guide's "Show as" looks `--glass-filter-lens` is `none`,
+  which makes the lens rule's value invalid, so no backdrop filter is drawn, as in Part A. Checked
+  by hand in Chromium (the app's browser pane) at 1280 light and dark and at 375 (touch emulated:
+  no light); Safari and Firefox were not opened, and Reduce Motion was checked in the code and the
+  tests, not emulated.
+- **Performance budget (Part B).** Still at most four rules with a backdrop filter (the lens rule
+  is the fourth, and replaces the plain one on its two elements), at most two elements with a lens.
+  The map is drawn when the element changes size (at most every 100ms while it keeps changing),
+  never on scroll: about 5ms for the 1180 × 46 bar in Chrome (27ms the very first time). The
+  light changes two custom properties on one element per frame; nothing runs while the page
+  scrolls. A frame-time check while scrolling was not possible in the hidden test browser; check
+  it by hand with the performance panel.
 
 ## 8. Build or borrow
 

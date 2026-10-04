@@ -162,6 +162,10 @@
   /* Larger glass is thicker: the "⋯" menu blurs more, so the words of the
      post under it never read through it. */
   --glass-blur-thick: 24px;
+  /* Glass that bends its edge (the lens, Part B) is clearer, so the bend can
+     be seen: a 12px blur would smear it away. The squeeze toward grey and the
+     tint stay the same, so the words on it stay as easy to read. */
+  --glass-blur-lens: 6px;
   /* The scroll edge: the light blur where posts fade out under the bar. */
   --edge-blur: 4px;
   /* A button on glass shrinks a little while it is pressed; the sheen is a
@@ -170,6 +174,30 @@
   --press-scale: 0.96;
   --sheen-rest: 0.7;
   --open-scale: 0.9;
+
+  /* liquid-glass Part B (glass.js reads these numbers here, so they live in
+     one place). The lens: the bent rim of the bar and of "3 new posts" is
+     --lens-bezel wide, and moves what is behind by at most --lens-scale / 2
+     pixels. --lens is the bend itself: glass.js gives each piece of glass its
+     own (url(#lens-1)...), and this one changes nothing. */
+  --lens-bezel: 14px;
+  --lens-scale: 40;
+  --lens: blur(0px);
+  /* Where the light sits on the glass (the middle of the sheen). glass.js
+     moves it to the pointer; this is where it rests. */
+  --light-x: 30%;
+  --light-y: 0%;
+  /* How big the light is: wide and soft at rest; a smaller spot while the
+     pointer is on the glass (.is-lit), so you can see it follow. */
+  --light-size: 120% 80%;
+  --light-size-near: 180px 90px;
+  --light-size-press: 360px 180px;   /* pressed, the glass lights up from inside */
+  /* The current tab's pill: where it is in its row of tabs, and its size.
+     glass.js sets them from the current tab. */
+  --pill-x: 0px;
+  --pill-y: 0px;
+  --pill-width: 0px;
+  --pill-height: 0px;
 
   /* Movement. Quick for a press, a little longer for something that opens.
      --ease-spring is a spring with a small overshoot, as a list of points;
@@ -231,6 +259,7 @@
   --radius-bar: calc(var(--bar-height) / 2);
   --glass-filter: blur(var(--glass-blur)) contrast(var(--glass-range)) saturate(var(--glass-saturate));
   --glass-filter-thick: blur(var(--glass-blur-thick)) contrast(var(--glass-range)) saturate(var(--glass-saturate));
+  --glass-filter-lens: blur(var(--glass-blur-lens)) contrast(var(--glass-range)) saturate(var(--glass-saturate));
   --edge-filter: blur(var(--edge-blur));
   /* The glass's thickness: light along the top edge, a dimmer line along the
      bottom, and a faint glow inside. Then its lift: a thin dark line around it
@@ -244,8 +273,27 @@
   --shadow-raised: 0 1px 3px var(--shadow);
   /* The rim: a line all around the glass, bright at two corners and dim along the sides. */
   --rim: linear-gradient(135deg, var(--rim-bright), var(--rim-dim) 30%, var(--rim-dim) 70%, var(--rim-bright));
-  /* The sheen: a soft light near the top left. */
-  --glass-sheen: radial-gradient(120% 80% at 30% 0%, var(--sheen), transparent 60%);
+  /* The sheen: a soft light near the top left (or where the pointer is). */
+  --glass-sheen: radial-gradient(var(--light-size) at var(--light-x) var(--light-y), var(--sheen), transparent 60%);
+}
+
+/* liquid-glass Part B: the sheen is worked out again on each piece of glass,
+   so it follows the light glass.js puts there (--light-x, --light-y). */
+.glass,
+.top-bar,
+.menu[open] > ul {
+  --glass-sheen: radial-gradient(var(--light-size) at var(--light-x) var(--light-y), var(--sheen), transparent 60%);
+  /* The rim catches the light too: brighter where the light is. */
+  --rim: radial-gradient(var(--light-size-near) at var(--light-x) var(--light-y), var(--rim-bright), transparent),
+    linear-gradient(135deg, var(--rim-bright), var(--rim-dim) 30%, var(--rim-dim) 70%, var(--rim-bright));
+}
+
+.is-lit {
+  --light-size: var(--light-size-near);
+}
+
+.is-pressed {
+  --light-size: var(--light-size-press);
 }
 
 /* classic-layout: under 920px wide the columns stack and the bar scrolls away
@@ -293,6 +341,7 @@
     --glass-tint-thick: var(--glass-solid);
     --glass-filter: none;
     --glass-filter-thick: none;
+    --glass-filter-lens: none;
     --edge-filter: none;
   }
 }
@@ -306,6 +355,7 @@
     --glass-tint-thick: var(--glass-solid);
     --glass-filter: none;
     --glass-filter-thick: none;
+    --glass-filter-lens: none;
     --edge-filter: none;
     --rim-bright: var(--rim-shade);
     --rim-dim: var(--rim-shade);
@@ -321,6 +371,7 @@
     --glass-tint-thick: var(--glass-solid);
     --glass-filter: none;
     --glass-filter-thick: none;
+    --glass-filter-lens: none;
     --edge-filter: none;
     --glass-solid: light-dark(#ffffff, #000000);
     --surface: light-dark(#ffffff, #000000);
@@ -348,6 +399,7 @@
   --glass-tint-thick: var(--glass-solid);
   --glass-filter: none;
   --glass-filter-thick: none;
+  --glass-filter-lens: none;
   --edge-filter: none;
   --rim-bright: var(--rim-shade);
   --rim-dim: var(--rim-shade);
@@ -358,6 +410,7 @@
   --glass-tint-thick: var(--glass-solid);
   --glass-filter: none;
   --glass-filter-thick: none;
+  --glass-filter-lens: none;
   --edge-filter: none;
   --glass-solid: light-dark(#ffffff, #000000);
   --surface: light-dark(#ffffff, #000000);

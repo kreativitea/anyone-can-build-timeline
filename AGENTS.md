@@ -34,6 +34,7 @@ piece of text the browser keeps and sends back by itself), never from a name in 
 | `with-backend/design.html` | The style guide, at `/design.html`: every token and every component, light and dark side by side, with sample posts, and a "Show as: Glass / Reduced transparency / More contrast" switch. For builders: English only, not in `words.js`. |
 | `with-backend/app.js` | Asks the server who is logged in, sends sign-ups, logins, log-outs, posts, likes and likes taken back, and asks for new posts and new like counts every second. Remembers the Colours choice in `localStorage`. It keeps a half-written post in this browser's `localStorage`, one per account, removed after posting or logging out. It shows who liked each post, and asks for the names only when a count changes. It searches posts (`GET /search`) and shows the results in their own view. It asks for the newest page of posts, older pages on scroll, and holds new posts behind a "3 new posts" button while you read lower down. It sends bookmarks and bookmarks taken back, and asks for your bookmarks (never every second). It remembers the last place typed (`timeline-place`), forgotten on log out. It edits and deletes your own posts, shows earlier versions, and asks for changes (`GET /changes`) every second, before new posts. Each post shows a coloured circle with the first letter of the display name (`avatarPart`; the colour comes from the account name, `avatarColour`). It draws the profile card (`profileCard`, counts asked again by `askForCounts` after a post, a delete and every minute), the trends (`askForTrends`, `showTrends`: on load, after a login, a post or a delete, and every 60 seconds, never every second), and the right column's header (`showStreamHeading`, called by `showView`). |
 | `with-backend/server.py` | The backend, in three labelled parts: **controller**, **model**, **view**. |
+| `with-backend/glass.js` | Liquid glass, Part B. Only adds, and the page works the same without it: the lens (an SVG filter per bar and per "3 new posts", with a displacement map drawn for its size, given only to Chromium through `html.refracts`), the light that follows the mouse over glass (`--light-x`, `--light-y`, `.is-lit`, `.is-pressed`), and the current tab's sliding pill (`.tabs.has-pill`). Reads its numbers from `tokens.css`. Not loaded by `page-only/`. |
 | `with-backend/words.js` | Every word the page shows, by key (`WORDS`). English only for now; Japanese comes later. |
 | `with-backend/outbox.py` | Carries emails out, on its own thread: `ConsoleOutbox` prints each one in the terminal (the running server); `KeptOutbox` keeps them in a list (the tests). Nothing is really sent. |
 | `with-backend/email_words.py` | The words of every email, `en` and `ja` (`EMAIL_WORDS`). The server may not hold Japanese in `server.py`, so they live here. |
@@ -204,17 +205,19 @@ DESIGN.md, "Design system". **Look at `/design.html` first** (run the server, op
 
 ## Liquid glass
 
-Glass is only for the **floating control layer** (DESIGN.md, "Liquid glass"). Part A is built;
-Part B (`glass.js`: the bent edge, the pointer light, the sliding tab pill) comes later.
+Glass is only for the **floating control layer** (DESIGN.md, "Liquid glass"). Part A is the CSS;
+Part B is `glass.js`: the bent edge, the pointer light and the sliding tab pill.
 
 - **Only controls are glass:** the top bar (a capsule the posts scroll under), an open "⋯" menu
   and "3 new posts", each with `class="glass"` or in the `.glass` rule. Cards, the stream, a
   disclosure, lists of posts and posts are the **content layer**: solid `--surface`, never glass.
   **No glass on glass:** a control inside the bar is a fill (`--fill`, `--fill-raised`). A new
   box is a `.card`, so it is solid already.
-- **At most four rules with a backdrop filter** (a test): today the glass, the menu's thicker
-  frost and the scroll edge. Always write `-webkit-backdrop-filter` too, and only a token as the
-  value (`--glass-filter`, `--glass-filter-thick`, `--edge-filter`), so the fallbacks can turn it off.
+- **At most four rules with a backdrop filter** (a test): the glass, the menu's thicker frost, the
+  scroll edge and the lens. All four are used now: a new one needs a very good reason. Always
+  write `-webkit-backdrop-filter` too, and only a token as the value (`--glass-filter`,
+  `--glass-filter-thick`, `--edge-filter`, and the lens's `var(--lens) var(--glass-filter-lens)`),
+  so the fallbacks can turn it off.
 - **The fallbacks are tokens only**, at the end of `tokens.css`, in this order: no blur, Reduce
   Transparency (frosted solid), Increase Contrast (black or white, an edge on every control),
   Reduce Motion (both durations `0s`). A new surface needs no fallback of its own. The style
@@ -225,7 +228,17 @@ Part B (`glass.js`: the bent edge, the pointer light, the sliding tab pill) come
 - **Corners are concentric:** a box in a card is `--radius-field`, a picture `--radius`, a menu
   row `--radius-menu-row`, each worked out from the outer corner minus the padding. Rectangles get
   `corner-shape: var(--corner-shape)`; capsules stay `--radius-pill`.
-- **The bent edge (Part B)** may only be given through `html.refracts` (a test checks).
+- **The bent edge (Part B)** may only be given through `html.refracts` (a test checks), in the
+  one rule for `.top-bar` and `.new-posts`: `backdrop-filter: var(--lens) var(--glass-filter-lens)`.
+  `glass.js` sets `html.refracts` only in Chromium (`navigator.userAgentData`, not `@supports`
+  alone), and never with Reduce Transparency, Increase Contrast or forced colours. It makes one
+  `<filter id="lens-N">` per element (each needs a map of its own size) and sets `--lens` on it.
+  Never give the lens to more elements: each one costs a filter pass while the page scrolls.
+- **`glass.js` only adds.** Everything in it is inside `try`; without it, the page is Part A. It
+  uses no `innerHTML`, no storage and no `fetch`, never runs on `scroll`, and moves the light at
+  most once per frame, only for a mouse, never with Reduce Motion. Its numbers are tokens
+  (`--lens-bezel`, `--lens-scale`), read with `getComputedStyle`. A class it sets (`refracts`,
+  `has-pill`, `is-lit`, `is-pressed`) is a state, not a component.
 - **Colours are checked on the glass** (`ColoursTest`): the test applies `--glass-filter`'s
   `contrast()` and `saturate()` to everything that can be behind the glass (the page, a card, a
   post under the mouse, the circles, a button, black and white), lays the tint and the sheen on

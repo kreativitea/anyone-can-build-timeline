@@ -47,6 +47,8 @@ PAGE_FILES = {
     "/design.html": ("design.html", "text/html; charset=utf-8"),
     "/app.js": ("app.js", "text/javascript; charset=utf-8"),
     "/words.js": ("words.js", "text/javascript; charset=utf-8"),
+    # liquid-glass Part B: the bent edge, the light on the glass, the sliding tab pill.
+    "/glass.js": ("glass.js", "text/javascript; charset=utf-8"),
 }
 
 # The name of the cookie that carries the session token.
