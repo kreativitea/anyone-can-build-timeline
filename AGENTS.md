@@ -605,6 +605,10 @@ Write code that runs on Python 3.9: no `match` statements, and no `X | Y` in typ
 `make test`. Every test must pass before and after a change. A new feature gets a new test in
 `with-backend/test_server.py`.
 
+A manual pass on the running server, as several people at once, with screenshots:
+`docs/qa/RUNBOOK.md`. Each run is kept in `docs/qa/runs/` (a dated entry and its evidence). A new
+route or a new rule between people gets a step in the runbook too.
+
 Four kinds of test live there:
 
 - `ModelTests` calls the model directly, with a database made only for the test.

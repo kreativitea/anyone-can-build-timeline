@@ -1,0 +1,528 @@
+Timeline is running at http://localhost:8011
+The posts are kept in /Users/toshi/Code/kansai-gaidai/anyone-can-build-timeline/.claude/worktrees/qa-runbook/with-backend/timeline.db
+Emails are printed here, not sent.
+Press Ctrl+C to stop.
+127.0.0.1 - - [09/Oct/2026 16:48:44] "GET /sessions HTTP/1.1" 401 -
+127.0.0.1 - - [09/Oct/2026 16:48:44] "GET /nope HTTP/1.1" 404 -
+127.0.0.1 - - [09/Oct/2026 16:48:44] "GET /server.py HTTP/1.1" 404 -
+127.0.0.1 - - [09/Oct/2026 16:48:46] "GET / HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:48:46] "GET /tokens.css HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:48:46] "GET /base.css HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:48:46] "GET /features.css HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:48:46] "GET /words.js HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:48:46] "GET /components.css HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:48:46] "GET /app.js HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:48:46] "GET /glass.js HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:48:46] "GET /sessions HTTP/1.1" 401 -
+127.0.0.1 - - [09/Oct/2026 16:48:46] "GET /favicon.ico HTTP/1.1" 404 -
+127.0.0.1 - - [09/Oct/2026 16:48:46] "GET /reports HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:49:08] "GET /sessions HTTP/1.1" 401 -
+127.0.0.1 - - [09/Oct/2026 16:49:08] "GET /nope HTTP/1.1" 404 -
+127.0.0.1 - - [09/Oct/2026 16:49:08] "GET /server.py HTTP/1.1" 404 -
+127.0.0.1 - - [09/Oct/2026 16:49:09] "POST /accounts HTTP/1.1" 201 -
+127.0.0.1 - - [09/Oct/2026 16:49:09] "POST /accounts HTTP/1.1" 201 -
+127.0.0.1 - - [09/Oct/2026 16:49:10] "POST /accounts HTTP/1.1" 201 -
+127.0.0.1 - - [09/Oct/2026 16:49:10] "POST /accounts HTTP/1.1" 201 -
+127.0.0.1 - - [09/Oct/2026 16:49:10] "GET /sessions HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:49:11] "POST /accounts HTTP/1.1" 400 -
+127.0.0.1 - - [09/Oct/2026 16:49:11] "POST /accounts HTTP/1.1" 400 -
+127.0.0.1 - - [09/Oct/2026 16:49:11] "POST /accounts HTTP/1.1" 400 -
+127.0.0.1 - - [09/Oct/2026 16:49:11] "POST /accounts HTTP/1.1" 400 -
+127.0.0.1 - - [09/Oct/2026 16:49:11] "POST /accounts HTTP/1.1" 400 -
+127.0.0.1 - - [09/Oct/2026 16:49:13] "POST /sessions HTTP/1.1" 401 -
+127.0.0.1 - - [09/Oct/2026 16:49:13] "POST /sessions HTTP/1.1" 401 -
+127.0.0.1 - - [09/Oct/2026 16:49:13] "POST /sessions HTTP/1.1" 201 -
+127.0.0.1 - - [09/Oct/2026 16:49:13] "GET /sessions HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:49:14] "DELETE /sessions HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:49:14] "GET /sessions HTTP/1.1" 401 -
+127.0.0.1 - - [09/Oct/2026 16:49:14] "GET /sessions HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:49:15] "POST /sessions HTTP/1.1" 201 -
+127.0.0.1 - - [09/Oct/2026 16:49:17] "GET / HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:49:17] "GET /tokens.css HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:49:17] "GET /base.css HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:49:17] "GET /features.css HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:49:17] "GET /components.css HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:49:17] "GET /app.js HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:49:17] "GET /words.js HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:49:17] "GET /glass.js HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:49:17] "GET /sessions HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:49:17] "GET /bookmarks HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:49:17] "GET /blocks HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:49:17] "GET /email HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:49:17] "GET /reports HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:49:17] "GET /favicon.ico HTTP/1.1" 404 -
+127.0.0.1 - - [09/Oct/2026 16:49:48] "POST /posts HTTP/1.1" 401 -
+127.0.0.1 - - [09/Oct/2026 16:49:48] "POST /posts HTTP/1.1" 400 -
+127.0.0.1 - - [09/Oct/2026 16:49:48] "POST /posts HTTP/1.1" 400 -
+127.0.0.1 - - [09/Oct/2026 16:49:48] "POST /posts HTTP/1.1" 400 -
+127.0.0.1 - - [09/Oct/2026 16:49:48] "POST /posts HTTP/1.1" 413 -
+127.0.0.1 - - [09/Oct/2026 16:49:48] "PATCH /accounts HTTP/1.1" 404 -
+127.0.0.1 - - [09/Oct/2026 16:49:49] "POST /posts HTTP/1.1" 201 -
+2026-10-09T07:49:49Z  Aiko Tanaka @aiko: "Good morning from the library #study" · Osaka
+127.0.0.1 - - [09/Oct/2026 16:49:49] "POST /posts HTTP/1.1" 201 -
+2026-10-09T07:49:49Z  Ben Ito @ben: "Lunch at the cafeteria #food"
+127.0.0.1 - - [09/Oct/2026 16:49:49] "POST /posts HTTP/1.1" 201 -
+2026-10-09T07:49:49Z  Chika Mori @chika: "Hello @aiko see https://example.com/page."
+127.0.0.1 - - [09/Oct/2026 16:49:49] "POST /posts HTTP/1.1" 201 -
+2026-10-09T07:49:49Z  Dan Sato @dan: "Dan here, first post #study"
+127.0.0.1 - - [09/Oct/2026 16:49:49] "POST /posts HTTP/1.1" 201 -
+2026-10-09T07:49:49Z  Aiko Tanaka @aiko: "pretending to be ben"
+127.0.0.1 - - [09/Oct/2026 16:49:51] "POST /posts HTTP/1.1" 400 -
+127.0.0.1 - - [09/Oct/2026 16:49:51] "POST /posts HTTP/1.1" 400 -
+127.0.0.1 - - [09/Oct/2026 16:49:51] "POST /posts HTTP/1.1" 400 -
+127.0.0.1 - - [09/Oct/2026 16:49:51] "POST /posts HTTP/1.1" 400 -
+127.0.0.1 - - [09/Oct/2026 16:49:51] "POST /posts HTTP/1.1" 400 -
+127.0.0.1 - - [09/Oct/2026 16:49:52] "POST /posts HTTP/1.1" 201 -
+2026-10-09T07:49:52Z  Dan Sato @dan: "My desk today #study"
+127.0.0.1 - - [09/Oct/2026 16:49:52] "POST /posts HTTP/1.1" 400 -
+127.0.0.1 - - [09/Oct/2026 16:49:52] "POST /posts HTTP/1.1" 400 -
+127.0.0.1 - - [09/Oct/2026 16:49:52] "GET /pictures/6 HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:49:56] "GET / HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:49:56] "GET /tokens.css HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:49:56] "GET /app.js HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:49:56] "GET /base.css HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:49:56] "GET /features.css HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:49:56] "GET /components.css HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:49:56] "GET /words.js HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:49:56] "GET /glass.js HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:49:56] "GET /sessions HTTP/1.1" 401 -
+127.0.0.1 - - [09/Oct/2026 16:49:56] "GET /reports HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:49:56] "GET /favicon.ico HTTP/1.1" 404 -
+127.0.0.1 - - [09/Oct/2026 16:49:56] "GET /pictures/6 HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:50:09] "POST /likes HTTP/1.1" 201 -
+127.0.0.1 - - [09/Oct/2026 16:50:09] "POST /likes HTTP/1.1" 201 -
+127.0.0.1 - - [09/Oct/2026 16:50:09] "POST /likes HTTP/1.1" 201 -
+127.0.0.1 - - [09/Oct/2026 16:50:09] "POST /likes HTTP/1.1" 400 -
+127.0.0.1 - - [09/Oct/2026 16:50:09] "POST /likes HTTP/1.1" 201 -
+127.0.0.1 - - [09/Oct/2026 16:50:09] "POST /likes HTTP/1.1" 400 -
+127.0.0.1 - - [09/Oct/2026 16:50:09] "POST /likes HTTP/1.1" 400 -
+127.0.0.1 - - [09/Oct/2026 16:50:09] "POST /likes HTTP/1.1" 401 -
+127.0.0.1 - - [09/Oct/2026 16:50:09] "DELETE /likes HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:50:09] "DELETE /likes HTTP/1.1" 400 -
+127.0.0.1 - - [09/Oct/2026 16:50:11] "GET /likers?post_id=1 HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:50:11] "GET /sessions HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:50:12] "POST /posts HTTP/1.1" 201 -
+2026-10-09T07:50:12Z  Ben Ito @ben: "Nice, see you there @aiko"
+127.0.0.1 - - [09/Oct/2026 16:50:12] "POST /posts HTTP/1.1" 400 -
+127.0.0.1 - - [09/Oct/2026 16:50:12] "POST /posts HTTP/1.1" 400 -
+127.0.0.1 - - [09/Oct/2026 16:50:12] "POST /posts HTTP/1.1" 201 -
+2026-10-09T07:50:12Z  Aiko Tanaka @aiko: "Thanks! See you at 3"
+127.0.0.1 - - [09/Oct/2026 16:50:14] "GET / HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:50:14] "GET /tokens.css HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:50:14] "GET /base.css HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:50:14] "GET /components.css HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:50:14] "GET /features.css HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:50:14] "GET /words.js HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:50:14] "GET /glass.js HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:50:14] "GET /app.js HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:50:14] "GET /sessions HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:50:15] "GET /bookmarks HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:50:15] "GET /blocks HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:50:15] "GET /reports HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:50:15] "GET /email HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:50:15] "GET /favicon.ico HTTP/1.1" 404 -
+127.0.0.1 - - [09/Oct/2026 16:50:15] "GET /pictures/6 HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:50:31] "POST /bookmarks HTTP/1.1" 201 -
+127.0.0.1 - - [09/Oct/2026 16:50:31] "POST /bookmarks HTTP/1.1" 201 -
+127.0.0.1 - - [09/Oct/2026 16:50:31] "POST /blocks HTTP/1.1" 401 -
+127.0.0.1 - - [09/Oct/2026 16:50:31] "POST /blocks HTTP/1.1" 400 -
+127.0.0.1 - - [09/Oct/2026 16:50:31] "POST /blocks HTTP/1.1" 400 -
+127.0.0.1 - - [09/Oct/2026 16:50:31] "POST /blocks HTTP/1.1" 201 -
+127.0.0.1 - - [09/Oct/2026 16:50:31] "POST /blocks HTTP/1.1" 400 -
+127.0.0.1 - - [09/Oct/2026 16:50:31] "GET /blocks HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:50:31] "GET /blocks HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:50:31] "GET /blocks HTTP/1.1" 401 -
+127.0.0.1 - - [09/Oct/2026 16:50:32] "GET /bookmarks HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:50:33] "GET /pictures/6 HTTP/1.1" 404 -
+127.0.0.1 - - [09/Oct/2026 16:50:35] "GET / HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:50:35] "GET /tokens.css HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:50:35] "GET /base.css HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:50:35] "GET /components.css HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:50:35] "GET /features.css HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:50:35] "GET /app.js HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:50:35] "GET /words.js HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:50:35] "GET /glass.js HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:50:35] "GET /sessions HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:50:35] "GET /blocks HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:50:35] "GET /favicon.ico HTTP/1.1" 404 -
+127.0.0.1 - - [09/Oct/2026 16:50:35] "GET /bookmarks HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:50:35] "GET /email HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:50:35] "GET /reports HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:50:39] "GET /?q=%23study HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:50:39] "GET /tokens.css HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:50:39] "GET /base.css HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:50:39] "GET /components.css HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:50:39] "GET /features.css HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:50:39] "GET /words.js HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:50:39] "GET /app.js HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:50:39] "GET /glass.js HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:50:39] "GET /sessions HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:50:39] "GET /blocks HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:50:39] "GET /email HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:50:39] "GET /reports HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:50:39] "GET /bookmarks HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:50:39] "GET /favicon.ico HTTP/1.1" 404 -
+127.0.0.1 - - [09/Oct/2026 16:50:42] "POST /likes HTTP/1.1" 400 -
+127.0.0.1 - - [09/Oct/2026 16:50:42] "POST /posts HTTP/1.1" 400 -
+127.0.0.1 - - [09/Oct/2026 16:50:42] "POST /bookmarks HTTP/1.1" 201 -
+127.0.0.1 - - [09/Oct/2026 16:50:42] "POST /posts HTTP/1.1" 201 -
+2026-10-09T07:50:42Z  Dan Sato @dan: "Dan still posts"
+127.0.0.1 - - [09/Oct/2026 16:50:44] "GET / HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:50:44] "GET /tokens.css HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:50:44] "GET /base.css HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:50:44] "GET /components.css HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:50:44] "GET /features.css HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:50:44] "GET /app.js HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:50:44] "GET /words.js HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:50:44] "GET /glass.js HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:50:44] "GET /sessions HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:50:44] "GET /favicon.ico HTTP/1.1" 404 -
+127.0.0.1 - - [09/Oct/2026 16:50:44] "GET /email HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:50:44] "GET /reports HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:50:44] "GET /blocks HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:50:44] "GET /bookmarks HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:50:44] "GET /pictures/6 HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:50:48] "GET /likers?post_id=1 HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:50:48] "GET /likers?post_id=1 HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:50:48] "DELETE /likes HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:50:48] "POST /likes HTTP/1.1" 400 -
+127.0.0.1 - - [09/Oct/2026 16:51:03] "POST /posts HTTP/1.1" 201 -
+2026-10-09T07:51:03Z  Dan Sato @dan: "Dan replies to Chika"
+127.0.0.1 - - [09/Oct/2026 16:51:05] "PATCH /posts HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:51:05] "GET /versions?post_id=9 HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:51:05] "GET /versions?post_id=9 HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:51:06] "POST /likes HTTP/1.1" 201 -
+127.0.0.1 - - [09/Oct/2026 16:51:06] "POST /posts HTTP/1.1" 201 -
+2026-10-09T07:51:06Z  Aiko Tanaka @aiko: "reply to someone I blocked"
+127.0.0.1 - - [09/Oct/2026 16:51:08] "DELETE /blocks HTTP/1.1" 401 -
+127.0.0.1 - - [09/Oct/2026 16:51:08] "DELETE /blocks HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:51:08] "DELETE /blocks HTTP/1.1" 400 -
+127.0.0.1 - - [09/Oct/2026 16:51:08] "GET /blocks HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:51:08] "GET /bookmarks HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:51:08] "GET /pictures/6 HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:51:08] "POST /likes HTTP/1.1" 201 -
+127.0.0.1 - - [09/Oct/2026 16:51:10] "GET / HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:51:10] "GET /base.css HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:51:10] "GET /tokens.css HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:51:10] "GET /features.css HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:51:10] "GET /components.css HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:51:10] "GET /words.js HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:51:10] "GET /app.js HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:51:10] "GET /glass.js HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:51:10] "GET /sessions HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:51:10] "GET /favicon.ico HTTP/1.1" 404 -
+127.0.0.1 - - [09/Oct/2026 16:51:10] "GET /blocks HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:51:10] "GET /bookmarks HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:51:10] "GET /email HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:51:10] "GET /reports HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:51:10] "GET /pictures/6 HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:51:25] "POST /blocks HTTP/1.1" 201 -
+127.0.0.1 - - [09/Oct/2026 16:51:25] "POST /blocks HTTP/1.1" 201 -
+127.0.0.1 - - [09/Oct/2026 16:51:25] "POST /likes HTTP/1.1" 400 -
+127.0.0.1 - - [09/Oct/2026 16:51:25] "POST /likes HTTP/1.1" 400 -
+127.0.0.1 - - [09/Oct/2026 16:51:25] "POST /posts HTTP/1.1" 400 -
+127.0.0.1 - - [09/Oct/2026 16:51:25] "DELETE /blocks HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:51:25] "POST /likes HTTP/1.1" 400 -
+127.0.0.1 - - [09/Oct/2026 16:51:25] "DELETE /blocks HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:51:25] "POST /likes HTTP/1.1" 201 -
+127.0.0.1 - - [09/Oct/2026 16:51:27] "PATCH /posts HTTP/1.1" 403 -
+127.0.0.1 - - [09/Oct/2026 16:51:27] "DELETE /posts HTTP/1.1" 403 -
+127.0.0.1 - - [09/Oct/2026 16:51:27] "PATCH /posts HTTP/1.1" 401 -
+127.0.0.1 - - [09/Oct/2026 16:51:27] "DELETE /posts HTTP/1.1" 401 -
+127.0.0.1 - - [09/Oct/2026 16:51:27] "PATCH /posts HTTP/1.1" 400 -
+127.0.0.1 - - [09/Oct/2026 16:51:27] "PATCH /posts HTTP/1.1" 400 -
+127.0.0.1 - - [09/Oct/2026 16:51:27] "PATCH /posts HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:51:27] "GET /versions?post_id=5 HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:51:28] "POST /likes HTTP/1.1" 201 -
+127.0.0.1 - - [09/Oct/2026 16:51:28] "POST /bookmarks HTTP/1.1" 201 -
+127.0.0.1 - - [09/Oct/2026 16:51:28] "DELETE /posts HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:51:28] "GET /bookmarks HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:51:59] "GET /pictures/6 HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:52:10] "GET /pictures/6 HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:52:10] "GET /nope HTTP/1.1" 404 -
+127.0.0.1 - - [09/Oct/2026 16:52:29] "DELETE /likes HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:52:29] "POST /blocks HTTP/1.1" 201 -
+127.0.0.1 - - [09/Oct/2026 16:52:29] "POST /blocks HTTP/1.1" 201 -
+127.0.0.1 - - [09/Oct/2026 16:52:29] "POST /likes HTTP/1.1" 400 -
+127.0.0.1 - - [09/Oct/2026 16:52:29] "POST /likes HTTP/1.1" 400 -
+127.0.0.1 - - [09/Oct/2026 16:52:29] "POST /posts HTTP/1.1" 400 -
+127.0.0.1 - - [09/Oct/2026 16:52:29] "DELETE /blocks HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:52:29] "POST /likes HTTP/1.1" 400 -
+127.0.0.1 - - [09/Oct/2026 16:52:29] "DELETE /blocks HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:52:29] "POST /likes HTTP/1.1" 201 -
+127.0.0.1 - - [09/Oct/2026 16:52:31] "PATCH /posts HTTP/1.1" 403 -
+127.0.0.1 - - [09/Oct/2026 16:52:31] "DELETE /posts HTTP/1.1" 403 -
+127.0.0.1 - - [09/Oct/2026 16:52:31] "PATCH /posts HTTP/1.1" 401 -
+127.0.0.1 - - [09/Oct/2026 16:52:31] "DELETE /posts HTTP/1.1" 401 -
+127.0.0.1 - - [09/Oct/2026 16:52:31] "PATCH /posts HTTP/1.1" 400 -
+127.0.0.1 - - [09/Oct/2026 16:52:31] "PATCH /posts HTTP/1.1" 400 -
+127.0.0.1 - - [09/Oct/2026 16:52:31] "PATCH /posts HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:52:31] "GET /versions?post_id=8 HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:52:33] "POST /posts HTTP/1.1" 201 -
+2026-10-09T07:52:33Z  Aiko Tanaka @aiko: "This one will be deleted"
+127.0.0.1 - - [09/Oct/2026 16:52:33] "POST /likes HTTP/1.1" 201 -
+127.0.0.1 - - [09/Oct/2026 16:52:33] "POST /bookmarks HTTP/1.1" 201 -
+127.0.0.1 - - [09/Oct/2026 16:52:33] "PATCH /posts HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:52:33] "DELETE /posts HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:52:33] "GET /bookmarks HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:52:44] "DELETE /posts HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:52:44] "PATCH /posts HTTP/1.1" 400 -
+127.0.0.1 - - [09/Oct/2026 16:52:44] "POST /likes HTTP/1.1" 400 -
+127.0.0.1 - - [09/Oct/2026 16:52:44] "POST /bookmarks HTTP/1.1" 400 -
+127.0.0.1 - - [09/Oct/2026 16:52:44] "POST /posts HTTP/1.1" 400 -
+127.0.0.1 - - [09/Oct/2026 16:52:44] "POST /reports HTTP/1.1" 400 -
+127.0.0.1 - - [09/Oct/2026 16:52:46] "GET / HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:52:46] "GET /tokens.css HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:52:46] "GET /base.css HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:52:46] "GET /components.css HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:52:46] "GET /features.css HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:52:46] "GET /words.js HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:52:46] "GET /glass.js HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:52:46] "GET /app.js HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:52:46] "GET /sessions HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:52:46] "GET /favicon.ico HTTP/1.1" 404 -
+127.0.0.1 - - [09/Oct/2026 16:52:46] "GET /blocks HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:52:46] "GET /bookmarks HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:52:46] "GET /email HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:52:46] "GET /reports HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:52:46] "GET /pictures/6 HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:52:50] "DELETE /posts HTTP/1.1" 403 -
+127.0.0.1 - - [09/Oct/2026 16:52:50] "DELETE /posts HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:52:50] "DELETE /posts HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:53:06] "POST /posts HTTP/1.1" 201 -
+2026-10-09T07:53:06Z  Dan Sato @dan: "Buy cheap watches here #spam"
+127.0.0.1 - - [09/Oct/2026 16:53:07] "POST /accounts HTTP/1.1" 201 -
+127.0.0.1 - - [09/Oct/2026 16:53:07] "POST /reports HTTP/1.1" 401 -
+127.0.0.1 - - [09/Oct/2026 16:53:07] "POST /reports HTTP/1.1" 400 -
+127.0.0.1 - - [09/Oct/2026 16:53:07] "POST /reports HTTP/1.1" 400 -
+127.0.0.1 - - [09/Oct/2026 16:53:07] "POST /reports HTTP/1.1" 400 -
+127.0.0.1 - - [09/Oct/2026 16:53:07] "POST /reports HTTP/1.1" 201 -
+127.0.0.1 - - [09/Oct/2026 16:53:07] "POST /reports HTTP/1.1" 400 -
+127.0.0.1 - - [09/Oct/2026 16:53:07] "DELETE /reports HTTP/1.1" 400 -
+127.0.0.1 - - [09/Oct/2026 16:53:08] "POST /reports HTTP/1.1" 201 -
+127.0.0.1 - - [09/Oct/2026 16:53:08] "POST /reports HTTP/1.1" 201 -
+127.0.0.1 - - [09/Oct/2026 16:53:09] "GET /reports HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:53:09] "GET /reports HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:53:09] "GET /reports HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:53:11] "GET / HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:53:11] "GET /tokens.css HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:53:11] "GET /components.css HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:53:11] "GET /base.css HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:53:11] "GET /features.css HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:53:11] "GET /words.js HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:53:11] "GET /app.js HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:53:11] "GET /glass.js HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:53:11] "GET /sessions HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:53:11] "GET /blocks HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:53:11] "GET /bookmarks HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:53:11] "GET /favicon.ico HTTP/1.1" 404 -
+127.0.0.1 - - [09/Oct/2026 16:53:11] "GET /reports HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:53:11] "GET /email HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:53:11] "GET /pictures/6 HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:53:14] "GET / HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:53:14] "GET /tokens.css HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:53:14] "GET /base.css HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:53:14] "GET /features.css HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:53:14] "GET /components.css HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:53:14] "GET /glass.js HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:53:14] "GET /words.js HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:53:14] "GET /app.js HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:53:14] "GET /sessions HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:53:14] "GET /email HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:53:14] "GET /blocks HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:53:14] "GET /reports HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:53:14] "GET /bookmarks HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:53:14] "GET /favicon.ico HTTP/1.1" 404 -
+127.0.0.1 - - [09/Oct/2026 16:53:15] "GET /pictures/6 HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:53:18] "DELETE /reports HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:53:18] "DELETE /reports HTTP/1.1" 400 -
+127.0.0.1 - - [09/Oct/2026 16:53:33] "POST /bookmarks HTTP/1.1" 201 -
+127.0.0.1 - - [09/Oct/2026 16:53:33] "POST /bookmarks HTTP/1.1" 400 -
+127.0.0.1 - - [09/Oct/2026 16:53:33] "POST /bookmarks HTTP/1.1" 400 -
+127.0.0.1 - - [09/Oct/2026 16:53:33] "GET /bookmarks HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:53:33] "GET /bookmarks HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:53:33] "GET /bookmarks HTTP/1.1" 401 -
+127.0.0.1 - - [09/Oct/2026 16:53:33] "GET /bookmarks?user_id=2 HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:53:33] "DELETE /bookmarks HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:53:33] "DELETE /bookmarks HTTP/1.1" 400 -
+127.0.0.1 - - [09/Oct/2026 16:53:35] "GET /email HTTP/1.1" 401 -
+127.0.0.1 - - [09/Oct/2026 16:53:35] "POST /email HTTP/1.1" 400 -
+127.0.0.1 - - [09/Oct/2026 16:53:35] "POST /email HTTP/1.1" 400 -
+127.0.0.1 - - [09/Oct/2026 16:53:35] "POST /email HTTP/1.1" 201 -
+==================== EMAIL (printed here, not sent) ====================
+| To:      aiko@example.com
+| Subject: Confirm your email address for Timeline / Timeline のメアド確認してね
+| 
+| To confirm this address, copy this link into your browser:
+| http://localhost:8011/#confirm-email=ipgRh5UQlXxpMbg7BJX3bkRh9qwpci-AL0OhEnOqq-4
+| 
+| The link works once, for 24 hours. If you did not ask for this, ignore this email.
+| 
+| このアドレスを確認するなら、このリンクをブラウザにコピーしてね:
+| http://localhost:8011/#confirm-email=ipgRh5UQlXxpMbg7BJX3bkRh9qwpci-AL0OhEnOqq-4
+| 
+| リンクは1回だけ、24時間使えるよ。心当たりがなかったら、このメールは無視してOK！
+============================= END OF EMAIL =============================
+127.0.0.1 - - [09/Oct/2026 16:53:35] "POST /email HTTP/1.1" 429 -
+127.0.0.1 - - [09/Oct/2026 16:53:35] "GET /email HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:53:35] "GET /email HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:53:39] "POST /email-confirmations HTTP/1.1" 400 -
+127.0.0.1 - - [09/Oct/2026 16:53:39] "POST /email-confirmations HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:53:39] "POST /email-confirmations HTTP/1.1" 400 -
+127.0.0.1 - - [09/Oct/2026 16:53:39] "GET /email HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:53:53] "POST /posts HTTP/1.1" 201 -
+2026-10-09T07:53:53Z  Aiko Tanaka @aiko: "Who is coming to the study group on Friday? #study"
+127.0.0.1 - - [09/Oct/2026 16:53:54] "POST /posts HTTP/1.1" 201 -
+2026-10-09T07:53:54Z  Ben Ito @ben: "Me! I will bring snacks"
+==================== EMAIL (printed here, not sent) ====================
+| To:      aiko@example.com
+| Subject: Ben Ito (@ben) replied to your post / Ben Ito (@ben) から返信きたよ
+| 
+| Ben Ito (@ben) replied to your post.
+| 
+| Their reply:
+| "Me! I will bring snacks"
+| 
+| Your post:
+| "Who is coming to the study group on Friday? #study"
+| 
+| See it: http://localhost:8011/#post-14
+| 
+| To stop these emails, turn off "Email me when someone replies" on Timeline.
+| 
+| Ben Ito (@ben) があなたの投稿に返信したよ。
+| 
+| 返信:
+| "Me! I will bring snacks"
+| 
+| あなたの投稿:
+| "Who is coming to the study group on Friday? #study"
+| 
+| 見てみて: http://localhost:8011/#post-14
+| 
+| このメールがいらなかったら、Timeline で返信メールをオフにしてね。
+============================= END OF EMAIL =============================
+127.0.0.1 - - [09/Oct/2026 16:53:55] "POST /posts HTTP/1.1" 201 -
+2026-10-09T07:53:55Z  Aiko Tanaka @aiko: "Great, thanks Ben"
+127.0.0.1 - - [09/Oct/2026 16:53:56] "POST /posts HTTP/1.1" 201 -
+2026-10-09T07:53:56Z  Chika Mori @chika: "Reply to Ben (Ben has no address)"
+127.0.0.1 - - [09/Oct/2026 16:54:00] "DELETE /reply-emails HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:54:00] "POST /posts HTTP/1.1" 201 -
+2026-10-09T07:54:00Z  Chika Mori @chika: "I can come too"
+127.0.0.1 - - [09/Oct/2026 16:54:01] "POST /reply-emails HTTP/1.1" 400 -
+127.0.0.1 - - [09/Oct/2026 16:54:01] "POST /reply-emails HTTP/1.1" 400 -
+127.0.0.1 - - [09/Oct/2026 16:54:01] "DELETE /email HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:54:01] "GET /email HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:54:14] "POST /reply-emails HTTP/1.1" 401 -
+127.0.0.1 - - [09/Oct/2026 16:54:14] "POST /reply-emails HTTP/1.1" 400 -
+127.0.0.1 - - [09/Oct/2026 16:54:14] "POST /email HTTP/1.1" 201 -
+==================== EMAIL (printed here, not sent) ====================
+| To:      dan@example.com
+| Subject: Confirm your email address for Timeline / Timeline のメアド確認してね
+| 
+| To confirm this address, copy this link into your browser:
+| http://localhost:8011/#confirm-email=ZAoNY6Rv27db62fsZJIIRc-G6BZyBThTHCQCUFrFfYM
+| 
+| The link works once, for 24 hours. If you did not ask for this, ignore this email.
+| 
+| このアドレスを確認するなら、このリンクをブラウザにコピーしてね:
+| http://localhost:8011/#confirm-email=ZAoNY6Rv27db62fsZJIIRc-G6BZyBThTHCQCUFrFfYM
+| 
+| リンクは1回だけ、24時間使えるよ。心当たりがなかったら、このメールは無視してOK！
+============================= END OF EMAIL =============================
+127.0.0.1 - - [09/Oct/2026 16:54:14] "POST /reply-emails HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:54:14] "GET /email HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:54:14] "POST /posts HTTP/1.1" 201 -
+2026-10-09T07:54:14Z  Chika Mori @chika: "Reply to unconfirmed Dan"
+127.0.0.1 - - [09/Oct/2026 16:54:15] "GET /email HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:54:18] "GET /?q=%23study HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:54:18] "GET /tokens.css HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:54:18] "GET /base.css HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:54:18] "GET /components.css HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:54:18] "GET /features.css HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:54:18] "GET /words.js HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:54:18] "GET /glass.js HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:54:18] "GET /app.js HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:54:18] "GET /sessions HTTP/1.1" 401 -
+127.0.0.1 - - [09/Oct/2026 16:54:18] "GET /reports HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:54:18] "GET /favicon.ico HTTP/1.1" 404 -
+127.0.0.1 - - [09/Oct/2026 16:54:18] "GET /pictures/6 HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:54:34] "POST /posts HTTP/1.1" 400 -
+127.0.0.1 - - [09/Oct/2026 16:54:34] "POST /posts HTTP/1.1" 201 -
+2026-10-09T07:54:34Z  Eve New @eve: "Eve post 1"
+127.0.0.1 - - [09/Oct/2026 16:54:34] "POST /posts HTTP/1.1" 201 -
+2026-10-09T07:54:34Z  Eve New @eve: "Eve post 2"
+127.0.0.1 - - [09/Oct/2026 16:54:34] "POST /posts HTTP/1.1" 201 -
+2026-10-09T07:54:34Z  Eve New @eve: "Eve post 3"
+127.0.0.1 - - [09/Oct/2026 16:54:34] "POST /posts HTTP/1.1" 201 -
+2026-10-09T07:54:34Z  Eve New @eve: "Eve post 4"
+127.0.0.1 - - [09/Oct/2026 16:54:34] "POST /posts HTTP/1.1" 201 -
+2026-10-09T07:54:34Z  Eve New @eve: "Eve post 5"
+127.0.0.1 - - [09/Oct/2026 16:54:34] "POST /posts HTTP/1.1" 429 -
+127.0.0.1 - - [09/Oct/2026 16:54:34] "POST /posts HTTP/1.1" 429 -
+127.0.0.1 - - [09/Oct/2026 16:54:34] "POST /posts HTTP/1.1" 201 -
+2026-10-09T07:54:34Z  Ben Ito @ben: "Ben is not slowed down by Eve"
+127.0.0.1 - - [09/Oct/2026 16:54:36] "POST /sessions HTTP/1.1" 401 -
+127.0.0.1 - - [09/Oct/2026 16:54:36] "POST /sessions HTTP/1.1" 401 -
+127.0.0.1 - - [09/Oct/2026 16:54:36] "POST /sessions HTTP/1.1" 401 -
+127.0.0.1 - - [09/Oct/2026 16:54:36] "POST /sessions HTTP/1.1" 401 -
+127.0.0.1 - - [09/Oct/2026 16:54:36] "POST /sessions HTTP/1.1" 401 -
+127.0.0.1 - - [09/Oct/2026 16:54:36] "POST /sessions HTTP/1.1" 429 -
+127.0.0.1 - - [09/Oct/2026 16:54:36] "POST /sessions HTTP/1.1" 201 -
+127.0.0.1 - - [09/Oct/2026 16:54:36] "GET /sessions HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:54:37] "GET /sessions HTTP/1.1" 401 -
+127.0.0.1 - - [09/Oct/2026 16:54:38] "POST /posts HTTP/1.1" 401 -
+127.0.0.1 - - [09/Oct/2026 16:54:38] "DELETE /sessions HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:54:38] "GET /sessions HTTP/1.1" 401 -
+127.0.0.1 - - [09/Oct/2026 16:54:38] "POST /sessions HTTP/1.1" 201 -
+127.0.0.1 - - [09/Oct/2026 16:54:40] "GET / HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:54:40] "GET /tokens.css HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:54:40] "GET /base.css HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:54:40] "GET /components.css HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:54:40] "GET /features.css HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:54:40] "GET /words.js HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:54:40] "GET /glass.js HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:54:40] "GET /app.js HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:54:40] "GET /sessions HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:54:40] "GET /blocks HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:54:40] "GET /email HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:54:40] "GET /favicon.ico HTTP/1.1" 404 -
+127.0.0.1 - - [09/Oct/2026 16:54:40] "GET /bookmarks HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:54:40] "GET /reports HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:54:40] "GET /pictures/6 HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:54:44] "GET / HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:54:44] "GET /tokens.css HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:54:44] "GET /base.css HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:54:44] "GET /features.css HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:54:44] "GET /components.css HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:54:44] "GET /app.js HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:54:44] "GET /words.js HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:54:44] "GET /glass.js HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:54:44] "GET /sessions HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:54:44] "GET /favicon.ico HTTP/1.1" 404 -
+127.0.0.1 - - [09/Oct/2026 16:54:44] "GET /blocks HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:54:44] "GET /email HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:54:44] "GET /bookmarks HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:54:44] "GET /reports HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:54:46] "GET /pictures/6 HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:55:31] "GET / HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:55:31] "GET /index.html HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:55:31] "GET /design.html HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:55:31] "GET /app.js HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:55:31] "GET /words.js HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:55:31] "GET /glass.js HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:55:31] "GET /tokens.css HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:55:31] "GET /base.css HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:55:31] "GET /components.css HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:55:31] "GET /features.css HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:55:33] "GET /design.html HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:55:34] "GET /base.css HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:55:34] "GET /tokens.css HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:55:34] "GET /components.css HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:55:34] "GET /features.css HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:55:34] "GET /glass.js HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:55:34] "GET /tokens.css HTTP/1.1" 200 -
+127.0.0.1 - - [09/Oct/2026 16:55:34] "GET /favicon.ico HTTP/1.1" 404 -
+127.0.0.1 - - [09/Oct/2026 16:55:50] "POST /posts HTTP/1.1" 201 -
+2026-10-09T07:55:50Z  Chika Mori @chika: "zero width space in place" · Osa​ka
+127.0.0.1 - - [09/Oct/2026 16:55:50] "PATCH /posts HTTP/1.1" 200 -
